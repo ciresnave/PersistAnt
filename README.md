@@ -4,9 +4,10 @@ A **thin** persistence layer over [Apache OpenDAL](https://opendal.apache.org/),
 stored by key**. Programs declare the storage guarantees they need; PersistAnt refuses a backend that cannot
 give them, instead of silently doing something weaker.
 
-> Status: 0.3.0 has capability declaration with refusal, atomic replace on the `fs` and `memory`
+> Status: 0.4.0 has capability declaration with refusal, atomic replace on the `fs` and `memory`
 > backends, typed records with schema versions, and in-memory, capability-masking and
-> fault-injecting fakes. Migrations, locks and expiry are still to come. The API is async.
+> fault-injecting fakes, and a blocking facade (`persistant::blocking`) for synchronous code. Migrations,
+> locks and expiry are still to come. The main API is async.
 
 ## Usage
 
@@ -54,6 +55,31 @@ assert_eq!(store.get_record::<Agent>("agents/scout").await?, None);
 # Ok(())
 # }
 ```
+
+## Synchronous callers
+
+`persistant::blocking::Store` has the same operations (`open`, `read`, `replace`, `delete`, `put_record`,
+`get_record`) without `async`. It runs the work on a worker thread of its own with a private runtime, so
+it is safe to call from plain code, from inside another tokio runtime of either flavour, and from many
+threads. (OpenDAL's own blocking operator needs to be created inside a running runtime and panics when
+called from within one, so it is not used.) Inside an async task the call still blocks that task's thread:
+use the async `Store` there.
+
+```rust
+use persistant::{blocking::Store, Config, Need, Needs};
+
+let store = Store::open(Config::Memory, Needs::new().with(Need::Read).with(Need::Write).with(Need::AtomicReplace))?;
+store.replace("greeting", b"hello".to_vec())?;
+assert_eq!(store.read("greeting")?, b"hello");
+# Ok::<(), persistant::Error>(())
+```
+
+**Cost.** Each call crosses to the worker and back: about 40 to 60 microseconds on the `memory` backend
+(median, 1 byte to 4 KiB, one Windows 11 machine). On `fs` the larger cost is OpenDAL's file path: for a
+4 KiB value a read took about 1.5 ms against 0.1 ms for `std::fs::read`, and an atomic replace about 5 ms
+against 0.7 ms for a plain, non-atomic `std::fs::write` (the sync before the rename). For multi-MiB values the
+ratio falls to roughly 1.2 to 1.7 times `std::fs`. `cargo run --release --example blocking_cost` measures it on
+your machine; measure before putting it on a hot path.
 
 ## Testing your own failure handling
 

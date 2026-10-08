@@ -230,55 +230,28 @@ impl Store {
 
     /// Store `record` under `key` as a versioned envelope, replacing atomically.
     pub async fn put_record<R: Record>(&self, key: &str, record: &R) -> Result<()> {
-        let envelope = serde_json::json!({
-            "kind": R::KIND,
-            "schema": R::SCHEMA,
-            "data": serde_json::to_value(record).map_err(|e| Error::Encode(e.to_string()))?,
-        });
-        let bytes = serde_json::to_vec(&envelope).map_err(|e| Error::Encode(e.to_string()))?;
-        self.replace(key, bytes).await
+        self.replace(key, encode_record(record)?).await
     }
 
     /// Read the record at `key`: `None` if absent. An older schema goes through
     /// [`Record::upgrade`]; a newer one, or another kind, is refused.
     pub async fn get_record<R: Record>(&self, key: &str) -> Result<Option<R>> {
+        match self.read_optional(key).await? {
+            Some(bytes) => decode_record(&bytes).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Read the value at `key`, `None` if it does not exist (any other failure is an error).
+    pub(crate) async fn read_optional(&self, key: &str) -> Result<Option<Vec<u8>>> {
         if !self.declared.contains(Need::Read) {
             return Err(Error::NotDeclared(Need::Read));
         }
-        let bytes = match self.op.read(key).await {
-            Ok(b) => b.to_vec(),
-            Err(e) if e.kind() == opendal::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(Error::Backend(e.to_string())),
-        };
-        let mut env: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|e| Error::Corrupt(e.to_string()))?;
-        let kind = env["kind"]
-            .as_str()
-            .ok_or_else(|| Error::Corrupt("no `kind`".into()))?;
-        if kind != R::KIND {
-            return Err(Error::KindMismatch {
-                expected: R::KIND,
-                found: kind.to_string(),
-            });
+        match self.op.read(key).await {
+            Ok(b) => Ok(Some(b.to_vec())),
+            Err(e) if e.kind() == opendal::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(Error::Backend(e.to_string())),
         }
-        let schema = env["schema"]
-            .as_u64()
-            .and_then(|n| u32::try_from(n).ok())
-            .ok_or_else(|| Error::Corrupt("no `schema`".into()))?;
-        let mut data = env["data"].take();
-        if schema > R::SCHEMA {
-            return Err(Error::SchemaUnsupported {
-                kind: R::KIND,
-                found: schema,
-                expected: R::SCHEMA,
-            });
-        }
-        if schema < R::SCHEMA {
-            data = R::upgrade(schema, data)?;
-        }
-        serde_json::from_value(data)
-            .map(Some)
-            .map_err(|e| Error::Corrupt(e.to_string()))
     }
 
     /// Start a replacement that can be written in pieces. Dropping it without `commit` leaves the
@@ -317,6 +290,47 @@ fn unmask(mut config: Config) -> (Config, Vec<Need>, Faults) {
             plain => return (plain, hidden, faults.unwrap_or_default()),
         }
     }
+}
+
+/// Serialise `record` into its stored envelope.
+pub(crate) fn encode_record<R: Record>(record: &R) -> Result<Vec<u8>> {
+    let envelope = serde_json::json!({
+        "kind": R::KIND,
+        "schema": R::SCHEMA,
+        "data": serde_json::to_value(record).map_err(|e| Error::Encode(e.to_string()))?,
+    });
+    serde_json::to_vec(&envelope).map_err(|e| Error::Encode(e.to_string()))
+}
+
+/// Read a stored envelope back as `R`, upgrading an older schema and refusing the rest.
+pub(crate) fn decode_record<R: Record>(bytes: &[u8]) -> Result<R> {
+    let mut env: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|e| Error::Corrupt(e.to_string()))?;
+    let kind = env["kind"]
+        .as_str()
+        .ok_or_else(|| Error::Corrupt("no `kind`".into()))?;
+    if kind != R::KIND {
+        return Err(Error::KindMismatch {
+            expected: R::KIND,
+            found: kind.to_string(),
+        });
+    }
+    let schema = env["schema"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .ok_or_else(|| Error::Corrupt("no `schema`".into()))?;
+    let mut data = env["data"].take();
+    if schema > R::SCHEMA {
+        return Err(Error::SchemaUnsupported {
+            kind: R::KIND,
+            found: schema,
+            expected: R::SCHEMA,
+        });
+    }
+    if schema < R::SCHEMA {
+        data = R::upgrade(schema, data)?;
+    }
+    serde_json::from_value(data).map_err(|e| Error::Corrupt(e.to_string()))
 }
 
 /// A value PersistAnt can store under a key with a schema version.
