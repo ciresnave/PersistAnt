@@ -4,10 +4,64 @@ A **thin** persistence layer over [Apache OpenDAL](https://opendal.apache.org/),
 stored by key**. Programs declare the storage guarantees they need; PersistAnt refuses a backend that cannot
 give them, instead of silently doing something weaker.
 
-> Status: 0.2.0 has capability declaration with refusal, and atomic replace on the `fs` and `memory`
-> backends. Records, migrations, locks, expiry and the fault-injecting fake are still to come.
+> Status: 0.3.0 has capability declaration with refusal, atomic replace on the `fs` and `memory`
+> backends, typed records with schema versions, and in-memory, capability-masking and
+> fault-injecting fakes. Migrations, locks and expiry are still to come. The API is async.
 
-## What it will own
+## Usage
+
+```rust
+use persistant::{Config, Need, Needs, Record, Store};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct Agent {
+    name: String,
+    restarts: u32,
+}
+
+impl Record for Agent {
+    const KIND: &'static str = "agent";
+    const SCHEMA: u32 = 1; // bump when the shape changes, and implement `upgrade`
+}
+
+# #[tokio::main(flavor = "current_thread")]
+# async fn main() -> Result<(), persistant::Error> {
+# let dir = tempfile::tempdir().unwrap();
+# let scratch = tempfile::tempdir().unwrap();
+// Say what the program needs. A backend that cannot give it is refused here, by name.
+let needs = Needs::new()
+    .with(Need::Read)
+    .with(Need::Write)
+    .with(Need::Delete)
+    .with(Need::AtomicReplace);
+
+// On `fs`, atomic replace requires a scratch directory (`atomic_write_dir`); without it, open fails.
+let store = Store::open(
+    Config::Fs {
+        root: dir.path().to_path_buf(),
+        atomic_write_dir: Some(scratch.path().to_path_buf()),
+    },
+    needs,
+)
+.await?;
+
+let a = Agent { name: "scout".into(), restarts: 2 };
+store.put_record("agents/scout", &a).await?;
+assert_eq!(store.get_record::<Agent>("agents/scout").await?, Some(a));
+store.delete("agents/scout").await?;
+assert_eq!(store.get_record::<Agent>("agents/scout").await?, None);
+# Ok(())
+# }
+```
+
+## Testing your own failure handling
+
+`Config::Memory` is a fake store. `Config::Faulty` makes writes fail (or be interrupted half-way) after
+a count you choose, and `Config::Masked` makes a backend report that it lacks some needs, so a test can
+show that a program refuses a weaker production backend. Wrappers nest.
+
+## What it owns, and what is still to come
 
 1. **Capability declaration with refusal at startup.** A program says what it needs (atomic replace,
    create-if-absent, list by prefix, durable write). Opening a store on a backend that cannot provide it

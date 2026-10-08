@@ -30,6 +30,29 @@ pub enum Error {
     NotDeclared(Need),
     /// The backend failed; the text is the backend's own message.
     Backend(String),
+    /// Stored bytes are not a record envelope (not JSON, or fields missing).
+    Corrupt(String),
+    /// The stored record is of another kind than the one asked for.
+    KindMismatch {
+        /// Kind the program asked for.
+        expected: &'static str,
+        /// Kind found in storage.
+        found: String,
+    },
+    /// The stored schema version is one the program cannot read: newer than it knows, or older
+    /// with no upgrade path.
+    SchemaUnsupported {
+        /// The record kind.
+        kind: &'static str,
+        /// Schema version found in storage.
+        found: u32,
+        /// Schema version the program writes.
+        expected: u32,
+    },
+    /// A record could not be turned into bytes.
+    Encode(String),
+    /// A failure produced on purpose by the fault-injecting fake.
+    Injected(String),
 }
 
 impl fmt::Display for Error {
@@ -44,6 +67,20 @@ impl fmt::Display for Error {
             }
             Error::NotDeclared(need) => write!(f, "{need:?} was not declared at open"),
             Error::Backend(msg) => write!(f, "backend error: {msg}"),
+            Error::Corrupt(msg) => write!(f, "stored record is corrupt: {msg}"),
+            Error::KindMismatch { expected, found } => {
+                write!(f, "record kind `{found}` found, `{expected}` expected")
+            }
+            Error::SchemaUnsupported {
+                kind,
+                found,
+                expected,
+            } => write!(
+                f,
+                "record `{kind}` has schema {found}; this program writes {expected} and has no way to read {found}"
+            ),
+            Error::Encode(msg) => write!(f, "cannot encode record: {msg}"),
+            Error::Injected(msg) => write!(f, "injected fault: {msg}"),
         }
     }
 }

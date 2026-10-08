@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+### Added
+- Typed records: `Record` trait (`KIND`, `SCHEMA`, `upgrade`), `Store::put_record` / `get_record`
+  (JSON envelope `{kind, schema, data}`; newer schema, other kind and corrupt bytes are typed errors;
+  older schema goes through `upgrade`), `Store::delete`.
+- Fault-injecting fake: `Config::Faulty` with `Faults::{none, fail_writes_after, interrupt_writes_after}`.
+  Wrappers (`Faulty`, `Masked`) nest.
+- README usage example, compiled as a doctest.
+- New errors: `Corrupt`, `Encode`, `KindMismatch`, `SchemaUnsupported`, `Injected`.
+
 ## 0.2.0 (unreleased)
 
 ### Added
