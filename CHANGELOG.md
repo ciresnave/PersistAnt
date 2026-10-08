@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 (unreleased)
+
+### Added
+- `persistant::blocking::Store`: the same operations for synchronous callers, on a private worker
+  thread (safe inside any tokio runtime, from many threads). Tests include calls from inside current-thread
+  and multi-thread runtimes. OpenDAL's own blocking operator was evaluated and rejected (see rustdoc).
+- `examples/blocking_cost.rs`: per-call cost against `std::fs`.
+
 ## 0.3.0 (unreleased)
 
 ### Added
