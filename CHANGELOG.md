@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.4.0 (unreleased)
+## 0.4.1 (unreleased)
+
+### Changed
+- Packaging only, no code change: an explicit `include` list so the published crate holds the source,
+  tests, example, licences, README, CHANGELOG and SECURITY.md; `SECURITY.md` added (GitHub private
+  vulnerability reporting).
+
+## 0.4.0
 
 ### Added
 - `persistant::blocking::Store`: the same operations for synchronous callers, on a private worker
@@ -8,7 +15,7 @@
   and multi-thread runtimes. OpenDAL's own blocking operator was evaluated and rejected (see rustdoc).
 - `examples/blocking_cost.rs`: per-call cost against `std::fs`.
 
-## 0.3.0 (unreleased)
+## 0.3.0
 
 ### Added
 - Typed records: `Record` trait (`KIND`, `SCHEMA`, `upgrade`), `Store::put_record` / `get_record`
@@ -19,7 +26,7 @@
 - README usage example, compiled as a doctest.
 - New errors: `Corrupt`, `Encode`, `KindMismatch`, `SchemaUnsupported`, `Injected`.
 
-## 0.2.0 (unreleased)
+## 0.2.0
 
 ### Added
 - `Store::open(config, needs)`: declare the guarantees a program needs (`Need`: read, write, delete,
@@ -31,7 +38,7 @@
 - `Config::Masked`: a capability-masking test fake.
 - Depends on `opendal` 0.59 (`services-fs` only, default features off).
 
-## 0.1.0 (unreleased)
+## 0.1.0
 
 ### Added
 - Repository skeleton, CI (fmt, clippy, tests on ubuntu and windows; MSRV; cargo-deny; licence-header
