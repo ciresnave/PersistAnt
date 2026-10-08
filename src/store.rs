@@ -2,6 +2,7 @@
 //! The store: a backend opened against a declaration of what the program needs.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use opendal::Operator;
 
@@ -70,6 +71,13 @@ pub enum Config {
         /// outside it. Without it, writes go straight to the target and are not atomic.
         atomic_write_dir: Option<PathBuf>,
     },
+    /// Test fake: `inner`, failing writes on purpose as `faults` says.
+    Faulty {
+        /// The backend actually used.
+        inner: Box<Config>,
+        /// When and how to fail.
+        faults: Faults,
+    },
     /// Test fake: `inner`, pretending it cannot give the needs in `without`. Lets a test check that
     /// a program refuses a backend weaker than the one it was developed on.
     Masked {
@@ -80,17 +88,52 @@ pub enum Config {
     },
 }
 
+/// When the fault-injecting fake fails. Counts replace calls on one `Store`.
+#[derive(Debug, Clone, Default)]
+pub struct Faults {
+    /// Replace calls that succeed before failures start.
+    allow: Option<usize>,
+    /// Fail by writing half the data and abandoning the write, instead of failing up front.
+    interrupt: bool,
+}
+
+impl Faults {
+    /// Never fail.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// The first `n` replace calls succeed; every later one fails with [`Error::Injected`].
+    pub fn fail_writes_after(n: usize) -> Self {
+        Self {
+            allow: Some(n),
+            interrupt: false,
+        }
+    }
+
+    /// As [`Faults::fail_writes_after`], but a failing call first writes half its data and abandons
+    /// the write, as a crash would.
+    pub fn interrupt_writes_after(n: usize) -> Self {
+        Self {
+            allow: Some(n),
+            interrupt: true,
+        }
+    }
+}
+
 /// A backend opened against a declaration of needs.
 #[derive(Debug)]
 pub struct Store {
     op: Operator,
     declared: Needs,
+    faults: Faults,
+    writes: AtomicUsize,
 }
 
 impl Store {
     /// Open `config`, refusing it if it cannot give every need in `needs`.
     pub async fn open(config: Config, needs: Needs) -> Result<Store> {
-        let (config, masked) = unmask(config);
+        let (config, masked, faults) = unmask(config);
         let (op, name) = match &config {
             Config::Memory => (
                 Operator::new(opendal::services::Memory::default()),
@@ -106,7 +149,9 @@ impl Store {
                 }
                 (Operator::new(b), "fs")
             }
-            Config::Masked { .. } => unreachable!("unmask removes every Masked layer"),
+            Config::Masked { .. } | Config::Faulty { .. } => {
+                unreachable!("unmask removes every wrapper layer")
+            }
         };
         let op = op.map_err(|e| Error::Backend(e.to_string()))?;
         let cap = op.info().capability();
@@ -137,6 +182,8 @@ impl Store {
         Ok(Store {
             op,
             declared: needs,
+            faults,
+            writes: AtomicUsize::new(0),
         })
     }
 
@@ -155,8 +202,83 @@ impl Store {
     /// Replace the value at `key` in one step.
     pub async fn replace(&self, key: &str, bytes: Vec<u8>) -> Result<()> {
         let mut r = self.begin_replace(key).await?;
+        let n = self.writes.fetch_add(1, Ordering::SeqCst);
+        if self.faults.allow.is_some_and(|allow| n >= allow) {
+            if self.faults.interrupt {
+                r.write(bytes[..bytes.len() / 2].to_vec()).await?;
+            }
+            // dropped without commit: the old value stays
+            return Err(Error::Injected(format!(
+                "write #{} to `{key}` failed",
+                n + 1
+            )));
+        }
         r.write(bytes).await?;
         r.commit().await
+    }
+
+    /// Delete `key`. Deleting a key that does not exist is not an error.
+    pub async fn delete(&self, key: &str) -> Result<()> {
+        if !self.declared.contains(Need::Delete) {
+            return Err(Error::NotDeclared(Need::Delete));
+        }
+        self.op
+            .delete(key)
+            .await
+            .map_err(|e| Error::Backend(e.to_string()))
+    }
+
+    /// Store `record` under `key` as a versioned envelope, replacing atomically.
+    pub async fn put_record<R: Record>(&self, key: &str, record: &R) -> Result<()> {
+        let envelope = serde_json::json!({
+            "kind": R::KIND,
+            "schema": R::SCHEMA,
+            "data": serde_json::to_value(record).map_err(|e| Error::Corrupt(e.to_string()))?,
+        });
+        let bytes = serde_json::to_vec(&envelope).map_err(|e| Error::Corrupt(e.to_string()))?;
+        self.replace(key, bytes).await
+    }
+
+    /// Read the record at `key`: `None` if absent. An older schema goes through
+    /// [`Record::upgrade`]; a newer one, or another kind, is refused.
+    pub async fn get_record<R: Record>(&self, key: &str) -> Result<Option<R>> {
+        if !self.declared.contains(Need::Read) {
+            return Err(Error::NotDeclared(Need::Read));
+        }
+        let bytes = match self.op.read(key).await {
+            Ok(b) => b.to_vec(),
+            Err(e) if e.kind() == opendal::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(Error::Backend(e.to_string())),
+        };
+        let mut env: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|e| Error::Corrupt(e.to_string()))?;
+        let kind = env["kind"]
+            .as_str()
+            .ok_or_else(|| Error::Corrupt("no `kind`".into()))?;
+        if kind != R::KIND {
+            return Err(Error::KindMismatch {
+                expected: R::KIND,
+                found: kind.to_string(),
+            });
+        }
+        let schema = env["schema"]
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| Error::Corrupt("no `schema`".into()))?;
+        let mut data = env["data"].take();
+        if schema > R::SCHEMA {
+            return Err(Error::SchemaUnsupported {
+                kind: R::KIND,
+                found: schema,
+                expected: R::SCHEMA,
+            });
+        }
+        if schema < R::SCHEMA {
+            data = R::upgrade(schema, data)?;
+        }
+        serde_json::from_value(data)
+            .map(Some)
+            .map_err(|e| Error::Corrupt(e.to_string()))
     }
 
     /// Start a replacement that can be written in pieces. Dropping it without `commit` leaves the
@@ -178,14 +300,45 @@ impl Store {
     }
 }
 
-/// Strip `Masked` layers, collecting what they hide.
-fn unmask(mut config: Config) -> (Config, Vec<Need>) {
+/// Strip wrapper layers, collecting what the masks hide and the outermost faults.
+fn unmask(mut config: Config) -> (Config, Vec<Need>, Faults) {
     let mut hidden = Vec::new();
-    while let Config::Masked { inner, without } = config {
-        hidden.extend(without);
-        config = *inner;
+    let mut faults = None;
+    loop {
+        match config {
+            Config::Masked { inner, without } => {
+                hidden.extend(without);
+                config = *inner;
+            }
+            Config::Faulty { inner, faults: f } => {
+                faults.get_or_insert(f);
+                config = *inner;
+            }
+            plain => return (plain, hidden, faults.unwrap_or_default()),
+        }
     }
-    (config, hidden)
+}
+
+/// A value PersistAnt can store under a key with a schema version.
+///
+/// Stored as JSON `{"kind", "schema", "data"}`. Bump `SCHEMA` when the shape changes and implement
+/// [`Record::upgrade`] to read older data; with no upgrade, older data is refused, never guessed.
+pub trait Record: serde::Serialize + serde::de::DeserializeOwned {
+    /// Stable name of this record type.
+    const KIND: &'static str;
+    /// Current schema version, starting at 1.
+    const SCHEMA: u32;
+
+    /// Turn `data` written at schema `from` (older than `SCHEMA`) into the current shape, in one
+    /// step: the result must already be at `SCHEMA`. The default refuses.
+    fn upgrade(from: u32, data: serde_json::Value) -> Result<serde_json::Value> {
+        let _ = data;
+        Err(Error::SchemaUnsupported {
+            kind: Self::KIND,
+            found: from,
+            expected: Self::SCHEMA,
+        })
+    }
 }
 
 /// Why `need` is not met by a backend with capability `cap`, or `None` if it is.
@@ -288,7 +441,7 @@ mod tests {
             }),
             without: vec![Need::Stat],
         };
-        let (inner, hidden) = unmask(c);
+        let (inner, hidden, _) = unmask(c);
         assert!(matches!(inner, Config::Memory));
         assert_eq!(hidden, vec![Need::Stat, Need::List]);
     }
