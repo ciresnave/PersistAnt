@@ -1,0 +1,19 @@
+[package]
+name = "persistant"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+description = "A thin persistence layer over Apache OpenDAL for blobs and records by key: declared capabilities, atomic replace, typed records."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ciresnave/PersistAnt"
+readme = "README.md"
+keywords = ["storage", "persistence", "opendal", "atomic", "blob"]
+categories = ["filesystem", "database-implementations"]
+
+[lib]
+name = "persistant"
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
