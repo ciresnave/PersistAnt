@@ -10,6 +10,8 @@
 set -euo pipefail
 
 LICENCE="MIT OR Apache-2.0"
+# Source extensions checked. A tracked file of any of these without the header fails the gate.
+EXTENSIONS=('*.rs' '*.sh' '*.py' '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.go' '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' '*.ps1' '*.sql')
 MINIMUM_FILES=2   # lib.rs and this script; raise as the tree grows
 
 check_tree() { # $1 = repo root; prints missing files, one per line; returns count via stdout
@@ -22,7 +24,7 @@ check_tree() { # $1 = repo root; prints missing files, one per line; returns cou
             echo "MISSING: $file" >&2
             missing=$((missing + 1))
         fi
-    done < <(git -C "$root" ls-files -z -- '*.rs' '*.sh')
+    done < <(git -C "$root" ls-files -z -- "${EXTENSIONS[@]}")
     echo "$total $missing"
 }
 
