@@ -150,3 +150,43 @@ async fn replace_requires_the_declaration() {
         "{err:?}"
     );
 }
+
+/// Refused names ALL unmet needs, not the first.
+#[tokio::test]
+async fn refused_names_every_missing_need() {
+    let root = tempfile::tempdir().unwrap();
+    let weaker = Config::Masked {
+        inner: Box::new(fs_config(&root, None)),
+        without: vec![Need::List, Need::Stat],
+    };
+    let needs = atomic()
+        .with(Need::List)
+        .with(Need::Stat)
+        .with(Need::Delete);
+    let err = Store::open(weaker, needs).await.unwrap_err();
+    let Error::Refused { missing, .. } = err else {
+        panic!("expected Refused");
+    };
+    let named: Vec<Need> = missing.iter().map(|m| m.need).collect();
+    assert_eq!(named, vec![Need::AtomicReplace, Need::List, Need::Stat]);
+}
+
+/// The real fs service really writes through the scratch path: while a replace is in flight the
+/// scratch directory holds the partial data and the target still has the old content.
+#[tokio::test]
+async fn real_fs_writes_through_the_scratch_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let store = Store::open(fs_config(&root, Some(&scratch)), atomic())
+        .await
+        .unwrap();
+    store.replace("k", b"old".to_vec()).await.unwrap();
+    let mut r = store.begin_replace("k").await.unwrap();
+    r.write(b"new-data".to_vec()).await.unwrap();
+    let scratch_files = std::fs::read_dir(scratch.path()).unwrap().count();
+    assert!(scratch_files >= 1, "no temp file in the scratch directory");
+    assert_eq!(std::fs::read(root.path().join("k")).unwrap(), b"old");
+    r.commit().await.unwrap();
+    assert_eq!(std::fs::read(root.path().join("k")).unwrap(), b"new-data");
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
+}

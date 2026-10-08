@@ -27,6 +27,15 @@ give them, instead of silently doing something weaker.
 - **No multi-key transactions.** OpenDAL has none, so PersistAnt does not pretend to.
 - **No OS file locks, directory trees handed to other tools, or memory-mapped model files.**
 
+## Limits
+
+- **Maximum value size cannot be refused on `memory` or `fs`.** OpenDAL reports `write_total_max_size: None`
+  for them, meaning unlimited, not unknown. `Need::MaxValueSize(n)` is refused only by a backend that
+  advertises a smaller ceiling (for example Cloudflare D1, 1 MB).
+- **`atomic_write_dir` must be on the same filesystem as the root and outside it.** PersistAnt checks that it
+  is set, not where it is.
+- **`memory` counts as atomic** because a value becomes visible in one map insert on close.
+
 ## Licence
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
