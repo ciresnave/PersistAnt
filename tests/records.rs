@@ -191,3 +191,82 @@ async fn put_record_needs_the_declaration() {
         .unwrap_err();
     assert!(matches!(err, Error::NotDeclared(_)), "{err:?}");
 }
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct NoUpgrade {
+    n: u32,
+}
+impl Record for NoUpgrade {
+    const KIND: &'static str = "agent";
+    const SCHEMA: u32 = 5;
+}
+
+#[tokio::test]
+async fn default_upgrade_refuses_an_older_schema() {
+    let s = store().await;
+    s.put_record(
+        "k",
+        &Agent {
+            name: "x".into(),
+            restarts: 1,
+        },
+    )
+    .await
+    .unwrap();
+    let err = s.get_record::<NoUpgrade>("k").await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::SchemaUnsupported {
+                found: 1,
+                expected: 5,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn data_that_does_not_fit_the_type_is_corrupt() {
+    let s = store().await;
+    let env = json!({"kind": "agent", "schema": 1, "data": {"name": 7}});
+    s.replace("k", serde_json::to_vec(&env).unwrap())
+        .await
+        .unwrap();
+    let err = s.get_record::<Agent>("k").await.unwrap_err();
+    assert!(matches!(err, Error::Corrupt(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn missing_envelope_fields_are_corrupt() {
+    let s = store().await;
+    for env in [
+        json!({"schema": 1, "data": {}}),
+        json!({"kind": "agent", "data": {}}),
+    ] {
+        s.replace("k", serde_json::to_vec(&env).unwrap())
+            .await
+            .unwrap();
+        let err = s.get_record::<Agent>("k").await.unwrap_err();
+        assert!(matches!(err, Error::Corrupt(_)), "{env} -> {err:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_backend_error_other_than_not_found_is_not_none() {
+    // The key names a directory, so reading it is an error that is not NotFound.
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("d")).unwrap();
+    let s = Store::open(
+        Config::Fs {
+            root: root.path().to_path_buf(),
+            atomic_write_dir: None,
+        },
+        Needs::new().with(Need::Read),
+    )
+    .await
+    .unwrap();
+    let err = s.get_record::<Agent>("d").await.unwrap_err();
+    assert!(matches!(err, Error::Backend(_)), "{err:?}");
+}

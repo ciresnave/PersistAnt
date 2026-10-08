@@ -9,7 +9,7 @@
 - Fault-injecting fake: `Config::Faulty` with `Faults::{none, fail_writes_after, interrupt_writes_after}`.
   Wrappers (`Faulty`, `Masked`) nest.
 - README usage example, compiled as a doctest.
-- New errors: `Corrupt`, `KindMismatch`, `SchemaUnsupported`, `Injected`.
+- New errors: `Corrupt`, `Encode`, `KindMismatch`, `SchemaUnsupported`, `Injected`.
 
 ## 0.2.0 (unreleased)
 

@@ -61,7 +61,7 @@ assert_eq!(store.get_record::<Agent>("agents/scout").await?, None);
 a count you choose, and `Config::Masked` makes a backend report that it lacks some needs, so a test can
 show that a program refuses a weaker production backend. Wrappers nest.
 
-## What it will own
+## What it owns, and what is still to come
 
 1. **Capability declaration with refusal at startup.** A program says what it needs (atomic replace,
    create-if-absent, list by prefix, durable write). Opening a store on a backend that cannot provide it

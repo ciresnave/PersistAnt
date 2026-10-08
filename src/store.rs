@@ -233,9 +233,9 @@ impl Store {
         let envelope = serde_json::json!({
             "kind": R::KIND,
             "schema": R::SCHEMA,
-            "data": serde_json::to_value(record).map_err(|e| Error::Corrupt(e.to_string()))?,
+            "data": serde_json::to_value(record).map_err(|e| Error::Encode(e.to_string()))?,
         });
-        let bytes = serde_json::to_vec(&envelope).map_err(|e| Error::Corrupt(e.to_string()))?;
+        let bytes = serde_json::to_vec(&envelope).map_err(|e| Error::Encode(e.to_string()))?;
         self.replace(key, bytes).await
     }
 

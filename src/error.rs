@@ -49,6 +49,8 @@ pub enum Error {
         /// Schema version the program writes.
         expected: u32,
     },
+    /// A record could not be turned into bytes.
+    Encode(String),
     /// A failure produced on purpose by the fault-injecting fake.
     Injected(String),
 }
@@ -75,8 +77,9 @@ impl fmt::Display for Error {
                 expected,
             } => write!(
                 f,
-                "record `{kind}` has schema {found}; this program reads up to {expected} and cannot upgrade from {found}"
+                "record `{kind}` has schema {found}; this program writes {expected} and has no way to read {found}"
             ),
+            Error::Encode(msg) => write!(f, "cannot encode record: {msg}"),
             Error::Injected(msg) => write!(f, "injected fault: {msg}"),
         }
     }
