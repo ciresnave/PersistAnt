@@ -4,7 +4,8 @@ A **thin** persistence layer over [Apache OpenDAL](https://opendal.apache.org/),
 stored by key**. Programs declare the storage guarantees they need; PersistAnt refuses a backend that cannot
 give them, instead of silently doing something weaker.
 
-> Status: 0.1.0 is the repository skeleton and CI only. There is no storage API yet.
+> Status: 0.2.0 has capability declaration with refusal, and atomic replace on the `fs` and `memory`
+> backends. Records, migrations, locks, expiry and the fault-injecting fake are still to come.
 
 ## What it will own
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 (unreleased)
+
+### Added
+- `Store::open(config, needs)`: declare the guarantees a program needs (`Need`: read, write, delete,
+  stat, list, create-if-absent, atomic replace, max value size); a backend that cannot give them is
+  refused with `Error::Refused`, naming every unmet need. No silent downgrade.
+- Atomic replace (`Store::replace`, `Store::begin_replace`) on the `fs` and `memory` backends. `fs`
+  is accepted for `AtomicReplace` only when `atomic_write_dir` is configured (OpenDAL writes straight
+  to the target otherwise); using replace without declaring it is `Error::NotDeclared`.
+- `Config::Masked`: a capability-masking test fake.
+- Depends on `opendal` 0.59 (`services-fs` only, default features off).
+
 ## 0.1.0 (unreleased)
 
 ### Added
