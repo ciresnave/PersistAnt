@@ -4,7 +4,8 @@ A **thin** persistence layer over [Apache OpenDAL](https://opendal.apache.org/),
 stored by key**. Programs declare the storage guarantees they need; PersistAnt refuses a backend that cannot
 give them, instead of silently doing something weaker.
 
-> Status: 0.1.0 is the repository skeleton and CI only. There is no storage API yet.
+> Status: 0.2.0 has capability declaration with refusal, and atomic replace on the `fs` and `memory`
+> backends. Records, migrations, locks, expiry and the fault-injecting fake are still to come.
 
 ## What it will own
 
@@ -25,6 +26,18 @@ give them, instead of silently doing something weaker.
   `postgresql`, `sqlite` and `redis` services are key/value tables, not SQL.
 - **No multi-key transactions.** OpenDAL has none, so PersistAnt does not pretend to.
 - **No OS file locks, directory trees handed to other tools, or memory-mapped model files.**
+
+## Limits
+
+- **Maximum value size cannot be refused on `memory` or `fs`.** OpenDAL reports `write_total_max_size: None`
+  for them, meaning unlimited, not unknown. `Need::MaxValueSize(n)` is refused only by a backend that
+  advertises a smaller ceiling (for example Cloudflare D1, 1 MB).
+- **`atomic_write_dir` must be on the same filesystem as the root and outside it.** PersistAnt checks that it
+  is set, not where it is.
+- **An abandoned replace leaves its temporary file** in `atomic_write_dir` on `fs`; the old value is intact
+  but the scratch directory should be swept at startup. **Durability across power loss is not claimed**:
+  OpenDAL syncs the file, not the parent directory, before the rename.
+- **`memory` counts as atomic** because a value becomes visible in one map insert on close.
 
 ## Licence
 

@@ -1,6 +1,6 @@
 [package]
 name = "persistant"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.91"
 description = "A thin persistence layer over Apache OpenDAL for blobs and records by key: declared capabilities, atomic replace, typed records."
@@ -15,5 +15,8 @@ name = "persistant"
 path = "src/lib.rs"
 
 [dependencies]
+opendal = { version = "0.59.4", default-features = false, features = ["services-fs"] }
 
 [dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros"] }
