@@ -74,10 +74,12 @@ assert_eq!(store.read("greeting")?, b"hello");
 # Ok::<(), persistant::Error>(())
 ```
 
-**Cost.** Each call crosses to the worker and back: about 55 microseconds on the `memory` backend (median,
-1-byte value, one Windows 11 machine). On `fs` the dominant cost is OpenDAL's file path and, for atomic
-replace, the sync before the rename. `cargo run --release --example blocking_cost` measures it against
-plain `std::fs` on your machine; measure before putting it on a hot path.
+**Cost.** Each call crosses to the worker and back: about 40 to 60 microseconds on the `memory` backend
+(median, 1 byte to 4 KiB, one Windows 11 machine). On `fs` the larger cost is OpenDAL's file path: for a
+4 KiB value a read took about 1.5 ms against 0.1 ms for `std::fs::read`, and an atomic replace about 5 ms
+against 0.7 ms for a plain, non-atomic `std::fs::write` (the sync before the rename). For multi-MiB values the
+ratio falls to roughly 1.2 to 1.7 times `std::fs`. `cargo run --release --example blocking_cost` measures it on
+your machine; measure before putting it on a hot path.
 
 ## Testing your own failure handling
 

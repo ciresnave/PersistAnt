@@ -140,7 +140,8 @@ impl Store {
         self.replace(key, encode_record(record)?)
     }
 
-    /// Read the record at `key`, `None` if absent (see [`crate::Store::get_record`]).
+    /// Read the record at `key`, `None` if absent (see [`crate::Store::get_record`]). Decoding,
+    /// including a [`Record::upgrade`], runs on the calling thread, not the worker.
     pub fn get_record<R: Record>(&self, key: &str) -> Result<Option<R>> {
         let (s, key) = (self.inner.clone(), key.to_string());
         match self
