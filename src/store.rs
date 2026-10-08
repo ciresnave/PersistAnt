@@ -142,6 +142,9 @@ impl Store {
 
     /// Read the whole value at `key`.
     pub async fn read(&self, key: &str) -> Result<Vec<u8>> {
+        if !self.declared.contains(Need::Read) {
+            return Err(Error::NotDeclared(Need::Read));
+        }
         self.op
             .read(key)
             .await
@@ -157,10 +160,14 @@ impl Store {
     }
 
     /// Start a replacement that can be written in pieces. Dropping it without `commit` leaves the
-    /// old value in place.
+    /// old value in place, but on `fs` the unfinished temporary file stays in `atomic_write_dir`
+    /// (OpenDAL has no cleanup on drop); sweep that directory at startup. Durability across power
+    /// loss is not claimed: OpenDAL syncs the file, not the parent directory, before the rename.
     pub async fn begin_replace(&self, key: &str) -> Result<Replace> {
-        if !self.declared.contains(Need::AtomicReplace) {
-            return Err(Error::NotDeclared(Need::AtomicReplace));
+        for need in [Need::Write, Need::AtomicReplace] {
+            if !self.declared.contains(need) {
+                return Err(Error::NotDeclared(need));
+            }
         }
         let w = self
             .op
@@ -200,11 +207,16 @@ fn unmet(
         Need::CreateIfAbsent => lacks(cap.write_with_if_not_exists, "write_with_if_not_exists"),
         Need::AtomicReplace => match backend {
             // fs writes straight to the target unless a scratch directory is configured.
-            "fs" if !atomic_dir_set => {
+            "fs" if atomic_dir_set => None,
+            "fs" => {
                 Some("fs writes atomically only with atomic_write_dir set; it is not".to_string())
             }
             // memory commits a value in one map insert on close.
-            _ => None,
+            "memory" => None,
+            // A backend added later must be vetted here; until then it is refused.
+            other => Some(format!(
+                "atomic replace is not vetted for backend `{other}`"
+            )),
         },
         Need::MaxValueSize(n) => match cap.write_total_max_size {
             Some(max) if (max as u64) < n => {
@@ -242,5 +254,42 @@ impl Replace {
             .await
             .map(|_| ())
             .map_err(|e| Error::Backend(e.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_value_size_is_refused_only_above_the_advertised_ceiling() {
+        let cap = opendal::Capability {
+            write_total_max_size: Some(1000),
+            ..Default::default()
+        };
+        assert!(unmet(Need::MaxValueSize(1000), &cap, "x", false).is_none());
+        assert!(unmet(Need::MaxValueSize(1001), &cap, "x", false).is_some());
+        let unlimited = opendal::Capability::default();
+        assert!(unmet(Need::MaxValueSize(u64::MAX), &unlimited, "x", false).is_none());
+    }
+
+    #[test]
+    fn unvetted_backend_is_refused_for_atomic_replace() {
+        let cap = opendal::Capability::default();
+        assert!(unmet(Need::AtomicReplace, &cap, "s3", true).is_some());
+    }
+
+    #[test]
+    fn nested_masks_are_all_honoured() {
+        let c = Config::Masked {
+            inner: Box::new(Config::Masked {
+                inner: Box::new(Config::Memory),
+                without: vec![Need::List],
+            }),
+            without: vec![Need::Stat],
+        };
+        let (inner, hidden) = unmask(c);
+        assert!(matches!(inner, Config::Memory));
+        assert_eq!(hidden, vec![Need::Stat, Need::List]);
     }
 }

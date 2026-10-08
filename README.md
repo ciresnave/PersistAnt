@@ -34,6 +34,9 @@ give them, instead of silently doing something weaker.
   advertises a smaller ceiling (for example Cloudflare D1, 1 MB).
 - **`atomic_write_dir` must be on the same filesystem as the root and outside it.** PersistAnt checks that it
   is set, not where it is.
+- **An abandoned replace leaves its temporary file** in `atomic_write_dir` on `fs`; the old value is intact
+  but the scratch directory should be swept at startup. **Durability across power loss is not claimed**:
+  OpenDAL syncs the file, not the parent directory, before the rename.
 - **`memory` counts as atomic** because a value becomes visible in one map insert on close.
 
 ## Licence

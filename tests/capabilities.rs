@@ -119,7 +119,7 @@ async fn unmasked_backend_gives_the_same_need() {
     Store::open(Config::Memory, needs).await.unwrap();
 }
 
-/// A ceiling larger than the backend's is refused; fs advertises none, so any size is accepted.
+/// Memory advertises no ceiling, so any size is accepted (the refusal branch is unit-tested).
 #[tokio::test]
 async fn value_size_need_follows_the_advertised_ceiling() {
     let needs = Needs::new().with(Need::MaxValueSize(u64::MAX));
@@ -137,6 +137,14 @@ async fn memory_accepts_the_common_needs() {
     let store = Store::open(Config::Memory, needs).await.unwrap();
     store.replace("a", b"1".to_vec()).await.unwrap();
     assert_eq!(store.read("a").await.unwrap(), b"1");
+}
+
+/// Read is gated by its declaration too.
+#[tokio::test]
+async fn read_requires_the_declaration() {
+    let store = Store::open(Config::Memory, Needs::new()).await.unwrap();
+    let err = store.read("k").await.unwrap_err();
+    assert!(matches!(err, Error::NotDeclared(Need::Read)), "{err:?}");
 }
 
 /// No silent downgrade: replace is not offered unless AtomicReplace was declared.

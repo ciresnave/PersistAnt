@@ -7,6 +7,7 @@ use crate::Need;
 
 /// One thing a backend was asked for and cannot give, with the reason in words.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Missing {
     /// The declared need that is not met.
     pub need: Need,
