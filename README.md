@@ -4,7 +4,7 @@ A **thin** persistence layer over [Apache OpenDAL](https://opendal.apache.org/),
 stored by key**. Programs declare the storage guarantees they need; PersistAnt refuses a backend that cannot
 give them, instead of silently doing something weaker.
 
-> Status: 0.4.0 has capability declaration with refusal, atomic replace on the `fs` and `memory`
+> Status: pre-1.0 (the API may change between minor versions). It has capability declaration with refusal, atomic replace on the `fs` and `memory`
 > backends, typed records with schema versions, and in-memory, capability-masking and
 > fault-injecting fakes, and a blocking facade (`persistant::blocking`) for synchronous code. Migrations,
 > locks and expiry are still to come. The main API is async.
@@ -87,18 +87,24 @@ your machine; measure before putting it on a hot path.
 a count you choose, and `Config::Masked` makes a backend report that it lacks some needs, so a test can
 show that a program refuses a weaker production backend. Wrappers nest.
 
-## What it owns, and what is still to come
+## Scope
 
-1. **Capability declaration with refusal at startup.** A program says what it needs (atomic replace,
-   create-if-absent, list by prefix, durable write). Opening a store on a backend that cannot provide it
-   returns a typed error naming what is missing. No silent downgrade.
-2. **An atomic-replace helper** (write a temporary file, flush, rename). OpenDAL's `fs` service writes
-   atomically only when `atomic_write_dir` is configured; PersistAnt configures and tests it.
-3. **Typed records with schema versions, migrations for non-SQL stores, lock and expiry helpers, and test
-   fakes** (in-memory and fault-injecting). OpenDAL has no TTL and no locks, so those are emulated; the
-   documentation will say what is emulated and where the limits are.
-4. **One place that absorbs OpenDAL's breaking changes.** OpenDAL types stay out of the public API unless
-   unavoidable.
+**Shipped:**
+
+1. **Capability declaration with refusal at open.** A program says what it needs (`Need`: read, write,
+   delete, stat, list, create-if-absent, atomic replace, maximum value size). Opening a store on a backend
+   that cannot provide every need returns a typed error naming all that are missing. No silent downgrade.
+   Only read, write, delete and atomic replace have operations so far; `stat`, `list`, `create-if-absent`
+   and the size ceiling are checked at open but not yet usable through `Store`.
+2. **Atomic replace.** OpenDAL's `fs` service writes atomically only when `atomic_write_dir` is configured;
+   PersistAnt refuses `fs` without it when atomic replace is declared, and tests the real service.
+3. **Typed records with schema versions**, and **test fakes**: in-memory, capability-masking and
+   fault-injecting.
+4. **A blocking facade** for synchronous code.
+5. **OpenDAL types stay out of the public API**, so OpenDAL's breaking changes land in this crate.
+
+**Not yet:** migrations for non-SQL stores, lock helpers and expiry helpers. OpenDAL has no TTL and no
+locks, so those will be emulated, and the documentation will say what is emulated and where the limits are.
 
 ## What it does not do
 
