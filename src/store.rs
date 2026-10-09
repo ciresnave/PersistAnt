@@ -195,16 +195,12 @@ impl Store {
         })
     }
 
-    /// Read the whole value at `key`.
+    /// Read the whole value at `key`. A key with no value is [`Error::NotFound`], distinct from a
+    /// backend failure.
     pub async fn read(&self, key: &str) -> Result<Vec<u8>> {
-        if !self.declared.contains(Need::Read) {
-            return Err(Error::NotDeclared(Need::Read));
-        }
-        self.op
-            .read(key)
-            .await
-            .map(|b| b.to_vec())
-            .map_err(|e| Error::Backend(e.to_string()))
+        self.read_optional(key)
+            .await?
+            .ok_or_else(|| Error::NotFound(key.to_string()))
     }
 
     /// Replace the value at `key` in one step.

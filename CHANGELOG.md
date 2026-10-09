@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.4
+
+### Added
+- `Error::NotFound(key)`: `Store::read` (and the blocking facade) of a key with no value now returns
+  it instead of `Error::Backend(String)`, so a caller can tell an absent key from a disk error
+  without matching message text. `Error` is `#[non_exhaustive]`, so this is additive, but code that
+  matched `Backend` for a missing key must now match `NotFound` (closes #7).
+
 ## 0.4.3
 
 Fixes from the independent retrospective review of PRs 2 and 3.

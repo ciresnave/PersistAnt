@@ -28,6 +28,9 @@ pub enum Error {
     },
     /// An operation was used whose need was never declared at open.
     NotDeclared(Need),
+    /// `read` found no value at this key (the key is given). A disk or network failure is
+    /// [`Error::Backend`] instead.
+    NotFound(String),
     /// The backend failed; the text is the backend's own message.
     Backend(String),
     /// Stored bytes are not a record envelope (not JSON, or fields missing).
@@ -82,6 +85,7 @@ impl fmt::Display for Error {
                 Ok(())
             }
             Error::NotDeclared(need) => write!(f, "{need:?} was not declared at open"),
+            Error::NotFound(key) => write!(f, "no value at key `{key}`"),
             Error::Backend(msg) => write!(f, "backend error: {msg}"),
             Error::Corrupt(msg) => write!(f, "stored record is corrupt: {msg}"),
             Error::KindMismatch { expected, found } => {
