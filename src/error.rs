@@ -53,6 +53,9 @@ pub enum Error {
     Encode(String),
     /// A failure produced on purpose by the fault-injecting fake.
     Injected(String),
+    /// An operation panicked on the blocking facade's worker thread. The text is the panic
+    /// message when it was a string, otherwise a placeholder. The store stays usable.
+    Panicked(String),
 }
 
 impl fmt::Display for Error {
@@ -81,6 +84,7 @@ impl fmt::Display for Error {
             ),
             Error::Encode(msg) => write!(f, "cannot encode record: {msg}"),
             Error::Injected(msg) => write!(f, "injected fault: {msg}"),
+            Error::Panicked(msg) => write!(f, "operation panicked: {msg}"),
         }
     }
 }

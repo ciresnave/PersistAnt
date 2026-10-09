@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.4.1 (unreleased)
+## 0.4.2
+
+### Fixed
+- `blocking::Store`: an operation that panicked was reported as `Error::Backend("worker failed before
+  replying")` with the panic lost. It is now `Error::Panicked(message)` and the store keeps working.
+
+### Added
+- `Error::Panicked` (`Error` is `#[non_exhaustive]`, so this is additive).
+
+### Changed
+- Crate description now mentions the blocking facade (a published description changes only with a new
+  version). Docs: dropping a `blocking::Store` waits without a timeout for in-flight operations;
+  the README cost numbers name the commit they were taken at.
+
+## 0.4.1
 
 ### Changed
 - Packaging only, no code change: an explicit `include` list so the published crate holds the source,
