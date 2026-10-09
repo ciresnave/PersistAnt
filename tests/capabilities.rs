@@ -229,3 +229,16 @@ async fn a_duplicated_declaration_is_reported_once() {
     };
     assert_eq!(missing.len(), 1, "{missing:?}");
 }
+
+/// An absent key is a typed `NotFound` carrying the key, not a backend string.
+#[tokio::test]
+async fn reading_an_absent_key_is_not_found() {
+    let store = Store::open(Config::Memory, atomic()).await.unwrap();
+    let err = store.read("absent").await.unwrap_err();
+    assert!(
+        matches!(&err, Error::NotFound(k) if k == "absent"),
+        "{err:?}"
+    );
+    store.replace("present", b"v".to_vec()).await.unwrap();
+    assert_eq!(store.read("present").await.unwrap(), b"v");
+}
