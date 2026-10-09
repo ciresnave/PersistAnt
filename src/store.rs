@@ -44,7 +44,9 @@ impl Needs {
     /// Add a need.
     #[must_use]
     pub fn with(mut self, need: Need) -> Self {
-        self.0.push(need);
+        if !self.0.contains(&need) {
+            self.0.push(need);
+        }
         self
     }
 
@@ -71,7 +73,9 @@ pub enum Config {
         /// outside it. Without it, writes go straight to the target and are not atomic.
         atomic_write_dir: Option<PathBuf>,
     },
-    /// Test fake: `inner`, failing writes on purpose as `faults` says.
+    /// Test fake: `inner`, failing writes on purpose as `faults` says. Covers `replace` and the
+    /// piece-wise `begin_replace`. If `Faulty` layers are nested, the outermost one's `faults`
+    /// apply and the inner ones are ignored.
     Faulty {
         /// The backend actually used.
         inner: Box<Config>,
@@ -88,10 +92,12 @@ pub enum Config {
     },
 }
 
-/// When the fault-injecting fake fails. Counts replace calls on one `Store`.
+/// When the fault-injecting fake fails. Counts replace attempts on one `Store`: each `replace` and
+/// each `begin_replace` that passes the declared-needs check and reaches the backend, whether or
+/// not the backend then succeeds.
 #[derive(Debug, Clone, Default)]
 pub struct Faults {
-    /// Replace calls that succeed before failures start.
+    /// Replace attempts allowed to proceed before failures start.
     allow: Option<usize>,
     /// Fail by writing half the data and abandoning the write, instead of failing up front.
     interrupt: bool,
@@ -103,7 +109,8 @@ impl Faults {
         Self::default()
     }
 
-    /// The first `n` replace calls succeed; every later one fails with [`Error::Injected`].
+    /// The first `n` replace attempts proceed; every later one fails with [`Error::Injected`], at
+    /// `replace` or at `begin_replace`.
     pub fn fail_writes_after(n: usize) -> Self {
         Self {
             allow: Some(n),
@@ -111,8 +118,9 @@ impl Faults {
         }
     }
 
-    /// As [`Faults::fail_writes_after`], but a failing call first writes half its data and abandons
-    /// the write, as a crash would.
+    /// As [`Faults::fail_writes_after`], but a failing attempt first writes half of each piece it
+    /// is given (rounded up, so a one-byte value is written whole; an empty one has nothing to
+    /// write) and then fails at commit without committing, as a crash would.
     pub fn interrupt_writes_after(n: usize) -> Self {
         Self {
             allow: Some(n),
@@ -202,17 +210,6 @@ impl Store {
     /// Replace the value at `key` in one step.
     pub async fn replace(&self, key: &str, bytes: Vec<u8>) -> Result<()> {
         let mut r = self.begin_replace(key).await?;
-        let n = self.writes.fetch_add(1, Ordering::SeqCst);
-        if self.faults.allow.is_some_and(|allow| n >= allow) {
-            if self.faults.interrupt {
-                r.write(bytes[..bytes.len() / 2].to_vec()).await?;
-            }
-            // dropped without commit: the old value stays
-            return Err(Error::Injected(format!(
-                "write #{} to `{key}` failed",
-                n + 1
-            )));
-        }
         r.write(bytes).await?;
         r.commit().await
     }
@@ -254,7 +251,8 @@ impl Store {
         }
     }
 
-    /// Start a replacement that can be written in pieces. Dropping it without `commit` leaves the
+    /// Start a replacement that can be written in pieces (the fault-injecting fake applies here
+    /// too). Dropping it without `commit` leaves the
     /// old value in place, but on `fs` the unfinished temporary file stays in `atomic_write_dir`
     /// (OpenDAL has no cleanup on drop); sweep that directory at startup. Durability across power
     /// loss is not claimed: OpenDAL syncs the file, not the parent directory, before the rename.
@@ -269,7 +267,16 @@ impl Store {
             .writer(key)
             .await
             .map_err(|e| Error::Backend(e.to_string()))?;
-        Ok(Replace { w })
+        let n = self.writes.fetch_add(1, Ordering::SeqCst);
+        let mut doomed = None;
+        if self.faults.allow.is_some_and(|allow| n >= allow) {
+            let msg = format!("write #{} to `{key}` failed", n + 1);
+            if !self.faults.interrupt {
+                return Err(Error::Injected(msg));
+            }
+            doomed = Some(msg);
+        }
+        Ok(Replace { w, doomed })
     }
 }
 
@@ -329,6 +336,12 @@ pub(crate) fn decode_record<R: Record>(bytes: &[u8]) -> Result<R> {
     }
     if schema < R::SCHEMA {
         data = R::upgrade(schema, data)?;
+        return serde_json::from_value(data).map_err(|e| Error::UpgradeFailed {
+            kind: R::KIND,
+            from: schema,
+            expected: R::SCHEMA,
+            detail: e.to_string(),
+        });
     }
     serde_json::from_value(data).map_err(|e| Error::Corrupt(e.to_string()))
 }
@@ -344,7 +357,9 @@ pub trait Record: serde::Serialize + serde::de::DeserializeOwned {
     const SCHEMA: u32;
 
     /// Turn `data` written at schema `from` (older than `SCHEMA`) into the current shape, in one
-    /// step: the result must already be at `SCHEMA`. The default refuses.
+    /// step: the result must already be at `SCHEMA`. The default refuses. Upgraded data carries no
+    /// schema marker, so a result that does not fit the current type is reported as
+    /// [`Error::UpgradeFailed`]; it cannot be told from damaged old data.
     fn upgrade(from: u32, data: serde_json::Value) -> Result<serde_json::Value> {
         let _ = data;
         Err(Error::SchemaUnsupported {
@@ -397,6 +412,8 @@ fn unmet(
 /// An in-progress replacement of one key.
 pub struct Replace {
     w: opendal::Writer,
+    /// Set by the fault-injecting fake: the failure to report at commit, after half-writing.
+    doomed: Option<String>,
 }
 
 impl std::fmt::Debug for Replace {
@@ -408,6 +425,12 @@ impl std::fmt::Debug for Replace {
 impl Replace {
     /// Append a piece to the new value.
     pub async fn write(&mut self, bytes: Vec<u8>) -> Result<()> {
+        if let Some(msg) = &self.doomed {
+            let half = bytes[..bytes.len().div_ceil(2)].to_vec();
+            return self.w.write(half).await.map_err(|e| {
+                Error::Injected(format!("{msg} (and the partial write failed: {e})"))
+            });
+        }
         self.w
             .write(bytes)
             .await
@@ -416,6 +439,10 @@ impl Replace {
 
     /// Make the new value visible.
     pub async fn commit(mut self) -> Result<()> {
+        if let Some(msg) = self.doomed {
+            // dropped without close: the old value stays
+            return Err(Error::Injected(msg));
+        }
         self.w
             .close()
             .await

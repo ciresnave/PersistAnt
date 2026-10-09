@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.3
+
+Fixes from the independent retrospective review of PRs 2 and 3.
+
+### Fixed
+- `Needs::with` no longer records a need twice, so a refusal lists each missing need once.
+- The fault-injecting fake now also faults `begin_replace` (previously only `replace`); an
+  interrupted piece-wise replace half-writes each piece and fails at `commit`.
+- `Faults::interrupt_writes_after` writes half rounded up, so a one-byte value is still a partial
+  write; if the partial write itself fails the error is `Error::Injected`, not `Error::Backend`.
+- An upgraded record that does not fit the current type is `Error::UpgradeFailed`, not `Corrupt`.
+
+### Added
+- `Error::UpgradeFailed` (`Error` is `#[non_exhaustive]`, so this is additive).
+- Test: an interrupted replace leaves the old value on `memory`, which `AtomicReplace` acceptance relies on.
+
+### Changed
+- Docs: what `Faults` counts (attempts, not successes), that nested `Config::Faulty` keeps only the outermost.
+
 ## 0.4.2
 
 ### Fixed

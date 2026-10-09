@@ -143,3 +143,53 @@ async fn interrupted_write_differs_from_a_plain_failure_on_fs() {
         "and never reaches the target"
     );
 }
+
+#[tokio::test]
+async fn piecewise_replace_is_faulted_too() {
+    let s = Store::open(faulty(Faults::fail_writes_after(1)), needs())
+        .await
+        .unwrap();
+    s.replace("a", b"old".to_vec()).await.unwrap();
+    let err = s.begin_replace("a").await.unwrap_err();
+    assert!(matches!(err, Error::Injected(_)), "{err:?}");
+    assert_eq!(s.read("a").await.unwrap(), b"old");
+}
+
+#[tokio::test]
+async fn piecewise_interrupt_fails_at_commit_and_leaves_the_old_value() {
+    let s = Store::open(faulty(Faults::interrupt_writes_after(1)), needs())
+        .await
+        .unwrap();
+    s.replace("a", b"old".to_vec()).await.unwrap();
+    let mut r = s.begin_replace("a").await.unwrap();
+    r.write(b"new-".to_vec()).await.unwrap();
+    r.write(b"value".to_vec()).await.unwrap();
+    let err = r.commit().await.unwrap_err();
+    assert!(matches!(err, Error::Injected(_)), "{err:?}");
+    assert_eq!(s.read("a").await.unwrap(), b"old");
+}
+
+/// A one-byte value is still half-written (rounded up), so the crash leaves a temp file.
+#[tokio::test]
+async fn interrupted_write_of_one_byte_still_leaves_a_temp_file_on_fs() {
+    let root = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let crash = Store::open(
+        Config::Faulty {
+            inner: Box::new(Config::Fs {
+                root: root.path().to_path_buf(),
+                atomic_write_dir: Some(scratch.path().to_path_buf()),
+            }),
+            faults: Faults::interrupt_writes_after(0),
+        },
+        needs(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        crash.replace("a", b"x".to_vec()).await.unwrap_err(),
+        Error::Injected(_)
+    ));
+    assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 1);
+    assert!(!root.path().join("a").exists());
+}
