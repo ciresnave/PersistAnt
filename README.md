@@ -75,7 +75,7 @@ assert_eq!(store.read("greeting")?, b"hello");
 ```
 
 **Cost.** Each call crosses to the worker and back: about 40 to 60 microseconds on the `memory` backend
-(median, 1 byte to 4 KiB, one Windows 11 machine). On `fs` the larger cost is OpenDAL's file path: for a
+(median, 1 byte to 4 KiB, one Windows 11 machine, taken on the code of commit `e734735`; the facade and the example are unchanged on `0ceb7b1`, the 0.4.1 release). On `fs` the larger cost is OpenDAL's file path: for a
 4 KiB value a read took about 1.5 ms against 0.1 ms for `std::fs::read`, and an atomic replace about 5 ms
 against 0.7 ms for a plain, non-atomic `std::fs::write` (the sync before the rename). For multi-MiB values the
 ratio falls to roughly 1.2 to 1.7 times `std::fs`. `cargo run --release --example blocking_cost` measures it on

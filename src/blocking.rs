@@ -74,7 +74,14 @@ impl Worker {
     {
         let (tx, rx) = mpsc::channel();
         let job: Job = Box::pin(async move {
-            let _ = tx.send(fut.await);
+            // Run the work as its own task so a panic is caught by the runtime and reported,
+            // instead of dropping `tx` and leaving the caller with no reason.
+            let out = match tokio::spawn(fut).await {
+                Ok(out) => out,
+                Err(e) if e.is_panic() => Err(Error::Panicked(panic_text(e.into_panic()))),
+                Err(e) => Err(Error::Backend(format!("operation did not complete: {e}"))),
+            };
+            let _ = tx.send(out);
         });
         self.jobs
             .as_ref()
@@ -86,9 +93,22 @@ impl Worker {
     }
 }
 
+/// The message of a panic payload when it is a string, else a placeholder.
+fn panic_text(payload: Box<dyn std::any::Any + Send>) -> String {
+    match payload.downcast::<String>() {
+        Ok(s) => *s,
+        Err(p) => match p.downcast::<&'static str>() {
+            Ok(s) => (*s).to_string(),
+            Err(_) => "non-string panic payload".to_string(),
+        },
+    }
+}
+
 impl Drop for Worker {
     fn drop(&mut self) {
         // Closing the channel ends the worker's loop; wait so its files and runtime are gone.
+        // There is no timeout: the join returns only when every operation already started has
+        // finished (see the note on `Store`).
         self.jobs.take();
         if let Some(t) = self.thread.take() {
             let _ = t.join();
@@ -97,6 +117,13 @@ impl Drop for Worker {
 }
 
 /// A [`crate::Store`] for synchronous code. Same needs, same refusals, same atomic replace.
+///
+/// An operation that panics is reported as [`Error::Panicked`] and the store keeps working.
+///
+/// Dropping a `Store` waits, with no timeout, for the worker thread to finish. Operations from other
+/// threads that are still in flight run to completion first, so a drop can block as long as the
+/// slowest of them (a hung backend call blocks it indefinitely). Drop a `Store` only when no
+/// thread is mid-call, or accept that wait.
 pub struct Store {
     inner: Arc<AsyncStore>,
     worker: Worker,
@@ -151,5 +178,33 @@ impl Store {
             Some(bytes) => decode_record(&bytes).map(Some),
             None => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn panics(formatted: bool) -> Result<()> {
+        if formatted {
+            panic!("boom {}", 7);
+        }
+        panic!("static boom");
+    }
+
+    #[test]
+    fn a_panicking_operation_is_reported_and_the_worker_survives() {
+        let w = Worker::start().unwrap();
+        let err = w.run(panics(true)).unwrap_err();
+        assert!(
+            matches!(&err, Error::Panicked(m) if m == "boom 7"),
+            "{err:?}"
+        );
+        let err = w.run(panics(false)).unwrap_err();
+        assert!(
+            matches!(&err, Error::Panicked(m) if m == "static boom"),
+            "{err:?}"
+        );
+        assert_eq!(w.run(async { Ok(5) }).unwrap(), 5);
     }
 }
