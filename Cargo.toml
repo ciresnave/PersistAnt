@@ -1,6 +1,6 @@
 [package]
 name = "persistant"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
 rust-version = "1.91"
 description = "A thin persistence layer over Apache OpenDAL for blobs and records by key: declared capabilities, atomic replace, typed records, and a blocking facade for synchronous callers."

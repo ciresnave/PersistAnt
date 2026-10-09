@@ -198,3 +198,34 @@ async fn real_fs_writes_through_the_scratch_directory() {
     assert_eq!(std::fs::read(root.path().join("k")).unwrap(), b"new-data");
     assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);
 }
+
+/// (b, memory) the same guarantee on `memory`, which `unmet` accepts on a claim about OpenDAL
+/// internals: a dropped replace must leave the old value, so a future OpenDAL that inserts eagerly
+/// fails here instead of silently breaking the refusal logic.
+#[tokio::test]
+async fn interrupted_replace_leaves_old_content_on_memory() {
+    let store = Store::open(Config::Memory, atomic()).await.unwrap();
+    store.replace("k", b"old".to_vec()).await.unwrap();
+    {
+        let mut r = store.begin_replace("k").await.unwrap();
+        r.write(b"new-but-only-half".to_vec()).await.unwrap();
+        // dropped without commit
+    }
+    assert_eq!(store.read("k").await.unwrap(), b"old");
+    store.replace("k", b"new".to_vec()).await.unwrap();
+    assert_eq!(store.read("k").await.unwrap(), b"new");
+}
+
+/// A need declared twice is reported once when refused.
+#[tokio::test]
+async fn a_duplicated_declaration_is_reported_once() {
+    let weaker = Config::Masked {
+        inner: Box::new(Config::Memory),
+        without: vec![Need::Read],
+    };
+    let needs = Needs::new().with(Need::Read).with(Need::Read);
+    let Err(Error::Refused { missing, .. }) = Store::open(weaker, needs).await else {
+        panic!("expected a refusal");
+    };
+    assert_eq!(missing.len(), 1, "{missing:?}");
+}

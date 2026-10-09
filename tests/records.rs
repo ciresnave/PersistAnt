@@ -270,3 +270,50 @@ async fn a_backend_error_other_than_not_found_is_not_none() {
     let err = s.get_record::<Agent>("d").await.unwrap_err();
     assert!(matches!(err, Error::Backend(_)), "{err:?}");
 }
+
+/// Version 3 whose upgrade stops at schema 2's shape: a bug in the upgrade, not damaged data.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+struct AgentV3 {
+    name: String,
+    restart_total: u32,
+}
+impl Record for AgentV3 {
+    const KIND: &'static str = "agent";
+    const SCHEMA: u32 = 3;
+    fn upgrade(from: u32, data: Value) -> Result<Value, Error> {
+        // 1 -> 2 only (renames to `restart_count`); never reaches `restart_total`.
+        let mut data = data;
+        if from == 1 {
+            let n = data["restarts"].take();
+            data["restart_count"] = n;
+            data.as_object_mut().unwrap().remove("restarts");
+        }
+        Ok(data)
+    }
+}
+
+#[tokio::test]
+async fn an_upgrade_that_stops_short_is_not_reported_as_corrupt_storage() {
+    let s = store().await;
+    s.put_record(
+        "k",
+        &Agent {
+            name: "x".into(),
+            restarts: 4,
+        },
+    )
+    .await
+    .unwrap();
+    let err = s.get_record::<AgentV3>("k").await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::UpgradeFailed {
+                from: 1,
+                expected: 3,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}

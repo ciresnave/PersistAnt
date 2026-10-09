@@ -49,6 +49,19 @@ pub enum Error {
         /// Schema version the program writes.
         expected: u32,
     },
+    /// An older record was upgraded, but the result does not fit the current type. Either the
+    /// stored data was damaged, or [`crate::Record::upgrade`] did not bring it all the way to
+    /// `SCHEMA` (upgraded data carries no schema marker, so the two cannot be told apart).
+    UpgradeFailed {
+        /// The record kind.
+        kind: &'static str,
+        /// Schema version found in storage.
+        from: u32,
+        /// Schema version the upgrade had to reach.
+        expected: u32,
+        /// What the current type rejected.
+        detail: String,
+    },
     /// A record could not be turned into bytes.
     Encode(String),
     /// A failure produced on purpose by the fault-injecting fake.
@@ -81,6 +94,15 @@ impl fmt::Display for Error {
             } => write!(
                 f,
                 "record `{kind}` has schema {found}; this program writes {expected} and has no way to read {found}"
+            ),
+            Error::UpgradeFailed {
+                kind,
+                from,
+                expected,
+                detail,
+            } => write!(
+                f,
+                "record `{kind}` upgraded from schema {from} does not fit schema {expected}: {detail}"
             ),
             Error::Encode(msg) => write!(f, "cannot encode record: {msg}"),
             Error::Injected(msg) => write!(f, "injected fault: {msg}"),
