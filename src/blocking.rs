@@ -13,13 +13,14 @@
 //! and would put OpenDAL types in our API.
 
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 
 use crate::Store as AsyncStore;
 use crate::error::{Error, Result};
-use crate::store::{Config, Needs, Record, decode_record, encode_record};
+use crate::store::{Config, Entry, Needs, Page, Record, decode_record, encode_record};
 
 type Job = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -160,6 +161,30 @@ impl Store {
     pub fn delete(&self, key: &str) -> Result<()> {
         let (s, key) = (self.inner.clone(), key.to_string());
         self.worker.run(async move { s.delete(&key).await })
+    }
+
+    /// Size and modification time of `key` (see [`crate::Store::stat`]).
+    pub fn stat(&self, key: &str) -> Result<Entry> {
+        let (s, key) = (self.inner.clone(), key.to_string());
+        self.worker.run(async move { s.stat(&key).await })
+    }
+
+    /// One page of keys under `prefix` (see [`crate::Store::list`], including its cost).
+    pub fn list(&self, prefix: &str, after: Option<&str>, limit: NonZeroUsize) -> Result<Page> {
+        let (s, prefix, after) = (
+            self.inner.clone(),
+            prefix.to_string(),
+            after.map(str::to_string),
+        );
+        self.worker
+            .run(async move { s.list(&prefix, after.as_deref(), limit).await })
+    }
+
+    /// Write only if the key is absent (see [`crate::Store::create_if_absent`]).
+    pub fn create_if_absent(&self, key: &str, bytes: Vec<u8>) -> Result<()> {
+        let (s, key) = (self.inner.clone(), key.to_string());
+        self.worker
+            .run(async move { s.create_if_absent(&key, bytes).await })
     }
 
     /// Store `record` under `key` (see [`crate::Store::put_record`]).

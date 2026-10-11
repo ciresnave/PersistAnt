@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! The store: a backend opened against a declaration of what the program needs.
 
+use std::collections::BTreeSet;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::SystemTime;
 
 use opendal::Operator;
 
@@ -129,6 +132,31 @@ impl Faults {
     }
 }
 
+/// What is stored at one key, as reported by [`Store::stat`] and [`Store::list`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Entry {
+    /// The key.
+    pub key: String,
+    /// Size of the value in bytes.
+    pub len: u64,
+    /// When the value was last written, if the backend reports it. `None` means unknown, not
+    /// "never".
+    pub modified: Option<SystemTime>,
+}
+
+/// One page of [`Store::list`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Page {
+    /// At most `limit` entries, in ascending key order (byte order of the key, sorted by this
+    /// crate, not trusted from the backend).
+    pub entries: Vec<Entry>,
+    /// `Some(cursor)` if more keys follow: pass it as `after` to get the next page. `None` means
+    /// this page reached the end.
+    pub next: Option<String>,
+}
+
 /// A backend opened against a declaration of needs.
 #[derive(Debug)]
 pub struct Store {
@@ -219,6 +247,134 @@ impl Store {
             .delete(key)
             .await
             .map_err(|e| Error::Backend(e.to_string()))
+    }
+
+    /// Size and modification time of the value at `key`. A key with no value (or one that names a
+    /// directory) is [`Error::NotFound`]. Needs [`Need::Stat`].
+    pub async fn stat(&self, key: &str) -> Result<Entry> {
+        if !self.declared.contains(Need::Stat) {
+            return Err(Error::NotDeclared(Need::Stat));
+        }
+        match self.op.stat(key).await {
+            Ok(m) if m.is_file() => Ok(Entry {
+                key: key.to_string(),
+                len: m.content_length(),
+                modified: m.last_modified().map(SystemTime::from),
+            }),
+            Ok(_) => Err(Error::NotFound(key.to_string())),
+            Err(e) if e.kind() == opendal::ErrorKind::NotFound => {
+                Err(Error::NotFound(key.to_string()))
+            }
+            Err(e) => Err(Error::Backend(e.to_string())),
+        }
+    }
+
+    /// List up to `limit` keys that start with `prefix`, in ascending key order, strictly after
+    /// `after` if given (pass the previous page's [`Page::next`]). Needs [`Need::List`] and
+    /// [`Need::Stat`].
+    ///
+    /// `prefix` is a plain string prefix of the key, not a directory: `"img/a"` matches
+    /// `"img/a.png"` and `"img/ab/c"`. OpenDAL only lists directories, so this lists every key
+    /// under the prefix's directory part (`"img/"`) and filters: **emulated**, and the cost is a
+    /// scan of that whole directory tree. Memory is bounded by `limit`, not by the tree; time is
+    /// not, so a large tree is rescanned for every page. Keys that vanish while a page is being
+    /// built are left out.
+    pub async fn list(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: NonZeroUsize,
+    ) -> Result<Page> {
+        for need in [Need::List, Need::Stat] {
+            if !self.declared.contains(need) {
+                return Err(Error::NotDeclared(need));
+            }
+        }
+        let limit = limit.get();
+        let dir = match prefix.rfind('/') {
+            Some(i) => &prefix[..=i],
+            None => "/",
+        };
+        let backend = |e: opendal::Error| Error::Backend(e.to_string());
+        // Keep only the `limit + 1` smallest qualifying keys: the extra one says whether more follow.
+        let mut kept: BTreeSet<String> = BTreeSet::new();
+        let mut pending = vec![dir.to_string()];
+        while let Some(d) = pending.pop() {
+            let mut lister = match self.op.lister(&d).await {
+                Ok(l) => l,
+                // A directory that does not exist holds no keys.
+                Err(e) if e.kind() == opendal::ErrorKind::NotFound => continue,
+                Err(e) => return Err(backend(e)),
+            };
+            while let Some(entry) = futures_util::TryStreamExt::try_next(&mut lister)
+                .await
+                .map_err(backend)?
+            {
+                let path = entry.path();
+                if path == d || path == "/" {
+                    continue;
+                }
+                if path.ends_with('/') || entry.metadata().is_dir() {
+                    pending.push(path.to_string());
+                    continue;
+                }
+                if !path.starts_with(prefix) || after.is_some_and(|a| path <= a) {
+                    continue;
+                }
+                kept.insert(path.to_string());
+                if kept.len() > limit + 1 {
+                    kept.pop_last();
+                }
+            }
+        }
+        let mut entries = Vec::with_capacity(limit.min(kept.len()));
+        let mut more = false;
+        for key in kept {
+            if entries.len() == limit {
+                more = true;
+                break;
+            }
+            match self.stat(&key).await {
+                Ok(e) => entries.push(e),
+                Err(Error::NotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        let next = if more {
+            entries.last().map(|e| e.key.clone())
+        } else {
+            None
+        };
+        Ok(Page { entries, next })
+    }
+
+    /// Write `bytes` at `key` only if nothing is there yet; otherwise [`Error::AlreadyExists`] and
+    /// nothing changes. Needs [`Need::Write`] and [`Need::CreateIfAbsent`].
+    ///
+    /// **Native, never emulated**: a backend that cannot do this exclusively is refused at open
+    /// (see [`Need::CreateIfAbsent`]). On `fs` that means `atomic_write_dir` must be unset,
+    /// because OpenDAL's atomic path checks for the key and then renames, which two creators can
+    /// both pass. Without it the file is created exclusively but written in place, so a reader
+    /// may see a partly written value of a large create. This write is not counted by the
+    /// fault-injecting fake.
+    pub async fn create_if_absent(&self, key: &str, bytes: Vec<u8>) -> Result<()> {
+        for need in [Need::Write, Need::CreateIfAbsent] {
+            if !self.declared.contains(need) {
+                return Err(Error::NotDeclared(need));
+            }
+        }
+        match self.op.write_with(key, bytes).if_not_exists(true).await {
+            Ok(_) => Ok(()),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    opendal::ErrorKind::ConditionNotMatch | opendal::ErrorKind::AlreadyExists
+                ) =>
+            {
+                Err(Error::AlreadyExists(key.to_string()))
+            }
+            Err(e) => Err(Error::Backend(e.to_string())),
+        }
     }
 
     /// Store `record` under `key` as a versioned envelope, replacing atomically.
@@ -382,7 +538,18 @@ fn unmet(
         Need::Delete => lacks(cap.delete, "delete"),
         Need::Stat => lacks(cap.stat, "stat"),
         Need::List => lacks(cap.list, "list"),
-        Need::CreateIfAbsent => lacks(cap.write_with_if_not_exists, "write_with_if_not_exists"),
+        Need::CreateIfAbsent => {
+            match lacks(cap.write_with_if_not_exists, "write_with_if_not_exists") {
+                Some(why) => Some(why),
+                // OpenDAL's fs atomic path tests for the key, then renames: two creators both pass.
+                None if backend == "fs" && atomic_dir_set => Some(
+                    "fs create-if-absent is exclusive only without atomic_write_dir; with it the \
+                     check and the rename are separate steps"
+                        .to_string(),
+                ),
+                None => None,
+            }
+        }
         Need::AtomicReplace => match backend {
             // fs writes straight to the target unless a scratch directory is configured.
             "fs" if atomic_dir_set => None,

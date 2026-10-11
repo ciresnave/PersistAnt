@@ -8,7 +8,7 @@ mod error;
 mod store;
 
 pub use error::{Error, Missing, Result};
-pub use store::{Config, Faults, Need, Needs, Record, Replace, Store};
+pub use store::{Config, Entry, Faults, Need, Needs, Page, Record, Replace, Store};
 
 /// The crate version, as declared in `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -19,6 +19,6 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
-        assert_eq!(VERSION, "0.4.5");
+        assert_eq!(VERSION, "0.4.6");
     }
 }
