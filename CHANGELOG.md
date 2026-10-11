@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.5
+
+### Changed
+- CI only: every third-party GitHub Action is pinned to a full commit SHA read from upstream
+  (the ref is kept as a comment). No crate change.
+
 ## 0.4.4
 
 ### Added
