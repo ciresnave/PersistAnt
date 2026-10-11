@@ -75,6 +75,10 @@ pub enum Error {
     /// An operation panicked on the blocking facade's worker thread. The text is the panic
     /// message when it was a string, otherwise a placeholder. The store stays usable.
     Panicked(String),
+    /// A `blocking::Store` call was made from a thread that is a blocking facade's own worker.
+    /// Waiting there for a reply would park the worker on itself, so the call is refused instead
+    /// of deadlocking; use the async [`crate::Store`] in code that runs on a worker.
+    Reentrant,
 }
 
 impl fmt::Display for Error {
@@ -115,6 +119,11 @@ impl fmt::Display for Error {
             Error::Encode(msg) => write!(f, "cannot encode record: {msg}"),
             Error::Injected(msg) => write!(f, "injected fault: {msg}"),
             Error::Panicked(msg) => write!(f, "operation panicked: {msg}"),
+            Error::Reentrant => write!(
+                f,
+                "blocking call from a blocking store's own worker thread was refused: it would \
+                 deadlock; use the async Store there"
+            ),
         }
     }
 }

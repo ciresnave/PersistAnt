@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.9
+
+### Added
+- `Error::Reentrant` (the enum is `#[non_exhaustive]`, so this is additive): a `blocking::Store` call
+  made from a thread that is a blocking worker is refused instead of waiting on its own reply.
+  Before, such a call parked the worker's only thread and deadlocked. No public API of this crate runs
+  caller code on a worker, so this guards an invariant; it was found by audit, not reported in use.
+  Also: dropping a worker from its own thread no longer tries to join itself.
+
 ## 0.4.8
 
 ### Changed

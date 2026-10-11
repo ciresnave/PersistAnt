@@ -63,7 +63,9 @@ assert_eq!(store.get_record::<Agent>("agents/scout").await?, None);
 it is safe to call from plain code, from inside another tokio runtime of either flavour, and from many
 threads. (OpenDAL's own blocking operator needs to be created inside a running runtime and panics when
 called from within one, so it is not used.) Inside an async task the call still blocks that task's thread:
-use the async `Store` there.
+use the async `Store` there. A call made from a worker thread of a blocking `Store` is refused with
+`Error::Reentrant` rather than waiting on itself; no API of this crate runs your code on a worker, so
+this guards an invariant and is not a path you can reach today.
 
 ```rust
 use persistant::{blocking::Store, Config, Need, Needs};
