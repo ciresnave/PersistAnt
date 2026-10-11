@@ -94,8 +94,11 @@ show that a program refuses a weaker production backend. Wrappers nest.
 1. **Capability declaration with refusal at open.** A program says what it needs (`Need`: read, write,
    delete, stat, list, create-if-absent, atomic replace, maximum value size). Opening a store on a backend
    that cannot provide every need returns a typed error naming all that are missing. No silent downgrade.
-   Only read, write, delete and atomic replace have operations so far; `stat`, `list`, `create-if-absent`
-   and the size ceiling are checked at open but not yet usable through `Store`.
+   Operations: read, write, delete, atomic replace, `stat`, `list` and `create_if_absent`. `list` is
+   paged and sorted (`limit`, `after` cursor) and **emulated**: OpenDAL lists directories, so a string
+   prefix is a directory scan plus a filter (memory bounded by `limit`, time not). `create_if_absent`
+   is native or refused: on `fs` it is refused when `atomic_write_dir` is set, because OpenDAL's
+   atomic path checks then renames and two creators can both pass.
 2. **Atomic replace.** OpenDAL's `fs` service writes atomically only when `atomic_write_dir` is configured;
    PersistAnt refuses `fs` without it when atomic replace is declared, and tests the real service.
 3. **Typed records with schema versions**, and **test fakes**: in-memory, capability-masking and

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.6
+
+### Added
+- `Store::stat(key) -> Entry { key, len, modified }`; an absent key or a directory is `Error::NotFound`.
+  Needs `Need::Stat`. `modified` is `Option`: `None` is unknown.
+- `Store::list(prefix, after, limit) -> Page { entries, next }`, sorted by key, at most `limit` entries
+  (`NonZeroUsize`), `next` is the cursor to pass as `after`. Needs `Need::List` and `Need::Stat`.
+  **Emulated**: the prefix is a string prefix; the directory part is scanned and filtered, so memory is
+  bounded by `limit` but each page rescans the tree.
+- `Store::create_if_absent(key, bytes)`; `Error::AlreadyExists(key)` when the key has a value. Needs
+  `Need::Write` and `Need::CreateIfAbsent`. Native, never emulated: `fs` with `atomic_write_dir` set is
+  refused at open (OpenDAL checks then renames there, so it is not exclusive).
+- The same three operations on `blocking::Store`; `Entry` and `Page` exported.
+- Dependency: `futures-util` (already in the tree through OpenDAL), to read OpenDAL's lister.
+
 ## 0.4.5
 
 ### Changed
