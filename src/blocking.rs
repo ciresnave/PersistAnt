@@ -8,6 +8,11 @@
 //! threads at once. Inside an async task it blocks that task's thread for the duration of the
 //! call, as any blocking call does: prefer the async [`crate::Store`] there.
 //!
+//! A call made *from a worker thread* of any blocking `Store` is refused with
+//! [`Error::Reentrant`] instead of waiting: the worker's runtime has one thread, so it would wait
+//! on a reply only it could produce. No public API of this crate runs caller code on a worker
+//! today, so this guards an invariant rather than a path a caller can reach.
+//!
 //! OpenDAL's own `blocking::Operator` was evaluated and not used: it must be created inside a
 //! running tokio runtime, uses `Handle::block_on` (which panics when called from within a runtime),
 //! and would put OpenDAL types in our API.
@@ -24,6 +29,16 @@ use crate::store::{Config, Entry, Needs, Page, Record, decode_record, encode_rec
 
 type Job = Pin<Box<dyn Future<Output = ()> + Send>>;
 
+thread_local! {
+    /// True on every thread this module started as a worker. A blocking call made there would
+    /// wait on a reply that only a worker thread can produce, and a worker's runtime has one thread.
+    static ON_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn on_worker() -> bool {
+    ON_WORKER.with(std::cell::Cell::get)
+}
+
 /// The worker thread and its private runtime. Dropping it stops the thread.
 struct Worker {
     jobs: Option<tokio::sync::mpsc::UnboundedSender<Job>>,
@@ -37,6 +52,7 @@ impl Worker {
         let thread = std::thread::Builder::new()
             .name("persistant-worker".into())
             .spawn(move || {
+                ON_WORKER.with(|f| f.set(true));
                 let rt = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -73,6 +89,11 @@ impl Worker {
         Fut: Future<Output = Result<T>> + Send + 'static,
         T: Send + 'static,
     {
+        // Checked before anything is sent: waiting for the reply below would block this very
+        // thread, which is the only one that could produce it.
+        if on_worker() {
+            return Err(Error::Reentrant);
+        }
         let (tx, rx) = mpsc::channel();
         let job: Job = Box::pin(async move {
             // Run the work as its own task so a panic is caught by the runtime and reported,
@@ -112,7 +133,10 @@ impl Drop for Worker {
         // finished (see the note on `Store`).
         self.jobs.take();
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            // A thread cannot join itself; with the channel closed it ends on its own.
+            if !on_worker() {
+                let _ = t.join();
+            }
         }
     }
 }
@@ -140,6 +164,9 @@ impl Store {
     /// Open `config` against `needs`, refusing a backend that cannot give them (see
     /// [`crate::Store::open`]).
     pub fn open(config: Config, needs: Needs) -> Result<Store> {
+        if on_worker() {
+            return Err(Error::Reentrant);
+        }
         let worker = Worker::start()?;
         let inner = Arc::new(worker.run(AsyncStore::open(config, needs))?);
         Ok(Store { inner, worker })
@@ -231,5 +258,25 @@ mod tests {
             "{err:?}"
         );
         assert_eq!(w.run(async { Ok(5) }).unwrap(), 5);
+    }
+
+    /// A blocking call made from a future that is itself running on the worker used to park the
+    /// worker's only thread on its own reply: a deadlock. The call runs on its own thread so the
+    /// test can time out instead of hanging the suite.
+    #[test]
+    fn a_call_from_the_workers_own_runtime_does_not_deadlock() {
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let w = Arc::new(Worker::start().unwrap());
+            let inner = w.clone();
+            let out = w.run(async move { Ok(inner.run(async { Ok(1u8) })) });
+            let _ = done_tx.send(out);
+        });
+        let out = done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("deadlocked: the worker waited on its own reply");
+        // The outer call completes; the call made from inside it is the one refused.
+        let inner = out.expect("the outer call must succeed");
+        assert!(matches!(inner, Err(Error::Reentrant)), "{inner:?}");
     }
 }
