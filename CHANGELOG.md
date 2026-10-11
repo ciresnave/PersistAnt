@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (docs only; the PM allocates the version at gate time)
+## 0.4.8
 
 ### Changed
 - `docs/DESIGN-KINDS.md`: design for PersistAnt as the one persistence layer for every kind, relational
