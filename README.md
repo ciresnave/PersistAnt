@@ -110,10 +110,20 @@ show that a program refuses a weaker production backend. Wrappers nest.
 **Not yet:** migrations for non-SQL stores, lock helpers and expiry helpers. OpenDAL has no TTL and no
 locks, so those will be emulated, and the documentation will say what is emulated and where the limits are.
 
+## Direction
+
+**This crate is the blob and record-by-key part of a wider layer.** On 2026-10-11 the scope was widened:
+PersistAnt is to be the one persistence layer for every kind of persistence, relational databases
+included, organised as one capability vocabulary with a crate per kind. The design, with the evidence
+behind it and the decisions still open, is
+[`docs/DESIGN-KINDS.md`](https://github.com/ciresnave/PersistAnt/blob/main/docs/DESIGN-KINDS.md).
+Nothing in it is implemented yet; the list under "What it does not do" describes **this crate today**.
+
 ## What it does not do
 
-- **No SQL, queries, joins or secondary indexes.** Relational code stays on sqlx and the database. OpenDAL's
-  `postgresql`, `sqlite` and `redis` services are key/value tables, not SQL.
+- **No SQL, queries, joins or secondary indexes, yet.** This crate is blob and record-by-key only.
+  OpenDAL's `postgresql`, `sqlite` and `redis` services are key/value tables, not SQL. Relational support
+  is designed in `docs/DESIGN-KINDS.md` and is not built.
 - **No multi-key transactions.** OpenDAL has none, so PersistAnt does not pretend to.
 - **No OS file locks, directory trees handed to other tools, or memory-mapped model files.**
 
@@ -128,6 +138,11 @@ locks, so those will be emulated, and the documentation will say what is emulate
   but the scratch directory should be swept at startup. **Durability across power loss is not claimed**:
   OpenDAL syncs the file, not the parent directory, before the rename.
 - **`memory` counts as atomic** because a value becomes visible in one map insert on close.
+
+## Published versions
+
+crates.io lists 0.4.1 and 0.4.4 (API read 2026-10-11, none yanked). Later versions on `main` are not
+published; check the registry, not this line, before depending on one.
 
 ## Licence
 

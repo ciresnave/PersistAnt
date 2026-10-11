@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.8
+
+### Changed
+- `docs/DESIGN-KINDS.md`: design for PersistAnt as the one persistence layer for every kind, relational
+  included (consumer inventory, one capability vocabulary, crate hierarchy, relational API options,
+  adoption order, non-goals). Not shipped in the package; no code changes.
+- README: the "no SQL" scope line is now "no SQL yet" with a pointer to the design, and states which
+  versions crates.io holds (0.4.1 and 0.4.4 at 2026-10-11).
+
 ## 0.4.7
 
 ### Changed
