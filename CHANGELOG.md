@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.7
+
+### Changed
+- Docs only: the README says that `fs` cannot give atomic replace and exclusive create together.
+
 ## 0.4.6
 
 ### Added

@@ -98,7 +98,8 @@ show that a program refuses a weaker production backend. Wrappers nest.
    paged and sorted (`limit`, `after` cursor) and **emulated**: OpenDAL lists directories, so a string
    prefix is a directory scan plus a filter (memory bounded by `limit`, time not). `create_if_absent`
    is native or refused: on `fs` it is refused when `atomic_write_dir` is set, because OpenDAL's
-   atomic path checks then renames and two creators can both pass.
+   atomic path checks then renames and two creators can both pass. So on `fs` a program cannot have
+   both atomic replace and exclusive create from OpenDAL 0.59.4: declaring both is refused at open.
 2. **Atomic replace.** OpenDAL's `fs` service writes atomically only when `atomic_write_dir` is configured;
    PersistAnt refuses `fs` without it when atomic replace is declared, and tests the real service.
 3. **Typed records with schema versions**, and **test fakes**: in-memory, capability-masking and
