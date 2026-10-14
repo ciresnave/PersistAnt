@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.30
+
+### Added
+- `persistant-sqlx`: `PgBackend::migrate(&[Migration])` and `applied_versions()`: ordered,
+  checksummed, per-migration-transaction schema migrations that **keep sqlx's own ledger**
+  (`_sqlx_migrations`, written by sqlx's `Migrator`, SHA-384 of the text), so `sqlx migrate run`
+  and `sqlx::migrate!` read the same table and Humboldt's version-and-checksum comparison keeps
+  working (DESIGN-KINDS §5). Typed outcomes `MigrateError::{ChecksumMismatch, NewerThanProgram,
+  Dirty, Failed}` and a `MigrateReport` of what was applied. Tests against a real PostgreSQL, in
+  their own schema each: apply in order and re-run applies nothing, add a version to an existing
+  ledger, an edited applied migration is refused, a database newer than the program is refused, a
+  failing migration rolls back and names its version and error class, and the ledger's columns and
+  checksums are sqlx's (SHA-384, computed independently in the test).
+- sqlx feature `migrate` enabled; dev-dependency `sha2` for that independent check.
+
 ## 0.4.29
 
 ### Added

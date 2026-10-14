@@ -7,13 +7,17 @@
 //!
 //! Failures are classified from the server's SQLSTATE into [`persistant_relational::RelError`].
 
+mod migrate;
+
+pub use migrate::{MigrateError, MigrateReport, Migration};
+
 use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
 use sqlx::postgres::{PgArguments, PgPoolOptions, PgRow};
 use sqlx::query::Query;
 use sqlx::{Column, Postgres, Row as SqlxRow, TypeInfo, ValueRef};
 
 /// Classify an sqlx error by SQLSTATE (https://www.postgresql.org/docs/current/errcodes-appendix.html).
-fn classify(e: sqlx::Error) -> RelError {
+pub(crate) fn classify(e: sqlx::Error) -> RelError {
     match &e {
         sqlx::Error::Database(db) => {
             let constraint = db.constraint().map(str::to_string);
