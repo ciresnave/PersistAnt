@@ -6,13 +6,10 @@
 //! the test can fail). A leaf is recorded **on** only when the target passed and both controls
 //! behaved. Anything else is an off row with the reason.
 
-use crate::memory::yield_now;
+use crate::concurrency::{Task, join_all, yield_now};
 use crate::{BlobBackend, BlobError, Defect, MemoryBlob};
 use persistant_core::{CapabilityId, Config, Controls, Reason, Row, Verdict};
 use std::collections::BTreeMap;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::Poll;
 
 /// A leaf this module can decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,41 +256,6 @@ async fn list<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
         return wrong(format!("paged listing returned {seen:?}, want {want:?}"));
     }
     Ok(())
-}
-
-type Task<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
-
-/// Poll every future on this task until all are done. Runtime-agnostic: no spawn, so the
-/// interleaving is at await points; real parallelism comes from the backend's own threads.
-async fn join_all<T>(tasks: Vec<Task<'_, T>>) -> Vec<T> {
-    let mut slots: Vec<Option<T>> = tasks.iter().map(|_| None).collect();
-    let mut tasks: Vec<Option<Task<'_, T>>> = tasks.into_iter().map(Some).collect();
-    std::future::poll_fn(|cx| {
-        let mut pending = false;
-        for (i, t) in tasks.iter_mut().enumerate() {
-            let ready = match t.as_mut() {
-                Some(fut) => match fut.as_mut().poll(cx) {
-                    Poll::Ready(v) => Some(v),
-                    Poll::Pending => {
-                        pending = true;
-                        None
-                    }
-                },
-                None => None,
-            };
-            if let Some(v) = ready {
-                slots[i] = Some(v);
-                *t = None;
-            }
-        }
-        if pending {
-            Poll::Pending
-        } else {
-            Poll::Ready(())
-        }
-    })
-    .await;
-    slots.into_iter().flatten().collect()
 }
 
 async fn create_exclusive<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {

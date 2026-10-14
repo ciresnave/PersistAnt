@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.18
+
+### Added
+- Member crate `persistant-kv` (name held at 0.0.0 on crates.io; not published by this change):
+  - `KvBackend` (get, put with optional time to live, delete; optional put_if_absent, prefix_list,
+    ordered_scan, default `Unsupported`), `MemoryKv` with injectable defects, and
+    `conformance::certify` for `kv.get`, `kv.put`, `kv.delete`, `kv.ttl` (real time: 300 ms window,
+    450 ms sleep, expired entries invisible to get and listing), `kv.put_if_absent` (16 x 20
+    sampled), `kv.prefix_list` (literal prefix incl. `%` and `[`, paging, expired absent) and
+    `kv.ordered_scan` (bytewise order). Each leaf is on only with the target passing, the positive
+    control passing and every known-bad control failing.
+  - `KvOnBlob<B: BlobBackend>`, a wrapper type (not a blanket impl) storing a version/expiry
+    envelope under `kv/<key>`. `put_if_absent` needs `blob.create_exclusive` and refuses a time to
+    live and the reclaim of an expired entry (that needs compare-and-delete). Not offered:
+    `compare_and_swap`, `take`, `batch_atomic`, `ttl_remaining`, `count`.
+- `persistant-blob`: `concurrency` module (`Task`, `join_all`, `yield_now`), shared with the kv tests.
+
 ## 0.4.17
 
 ### Added
