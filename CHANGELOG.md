@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.11
+
+### Changed
+- Add `.github/CODEOWNERS` (`* @ciresnave`), the portfolio owner rule WSP-001. No code or behaviour change.
+
 ## 0.4.10
 
 ### Changed
