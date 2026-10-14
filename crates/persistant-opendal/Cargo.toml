@@ -16,5 +16,6 @@ opendal = { version = "0.59.4", default-features = false, features = ["services-
 futures-util = { version = "0.3.34", default-features = false }
 
 [dev-dependencies]
+persistant-kv = { workspace = true }
 tempfile = "3.27.0"
 tokio = { version = "1.53.2", features = ["rt", "macros"] }

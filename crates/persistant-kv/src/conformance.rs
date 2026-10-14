@@ -698,7 +698,7 @@ mod tests {
                 assert_eq!(c.row.reason, Some(Reason::Missing), "{}", c.leaf.id());
             }
         }
-        assert_eq!(rows[0].row.backend, "kv-on-blob");
+        assert_eq!(rows[0].row.backend, "kv-on-blob:memory");
     }
 
     #[tokio::test]
@@ -744,10 +744,51 @@ mod tests {
                 self.0.list(p, a, l).await
             }
         }
-        let kv = KvOnBlob::new(NoExclusive(MemoryBlob::new()));
+        let kv = KvOnBlob::with_in_place_put(NoExclusive(MemoryBlob::new()));
         let rows = certify(&kv, &Config::new(), &Config::new()).await;
         assert_eq!(state(&rows, "kv.put_if_absent"), Some(Reason::Missing));
-        assert_eq!(state(&rows, "kv.put"), None, "put falls back to write");
+        assert_eq!(state(&rows, "kv.put"), None, "in-place put was chosen");
         assert_eq!(state(&rows, "kv.ttl"), None);
+    }
+
+    #[tokio::test]
+    async fn strict_kv_on_a_blob_without_replace_atomic_refuses_put() {
+        // Control for the in-place option: the same blob, strict, gives no `kv.put`.
+        struct NoReplace(MemoryBlob);
+        impl persistant_blob::BlobBackend for NoReplace {
+            fn backend(&self) -> &str {
+                "no-replace"
+            }
+            fn version(&self) -> &str {
+                "0"
+            }
+            async fn read(&self, k: &str) -> Result<Option<Vec<u8>>, persistant_blob::BlobError> {
+                self.0.read(k).await
+            }
+            async fn write(&self, k: &str, v: Vec<u8>) -> Result<(), persistant_blob::BlobError> {
+                self.0.write(k, v).await
+            }
+            async fn delete(&self, k: &str) -> Result<(), persistant_blob::BlobError> {
+                self.0.delete(k).await
+            }
+            async fn stat(
+                &self,
+                k: &str,
+            ) -> Result<Option<persistant_blob::Entry>, persistant_blob::BlobError> {
+                self.0.stat(k).await
+            }
+            async fn list(
+                &self,
+                p: &str,
+                a: Option<&str>,
+                l: usize,
+            ) -> Result<persistant_blob::Page, persistant_blob::BlobError> {
+                self.0.list(p, a, l).await
+            }
+        }
+        let kv = KvOnBlob::new(NoReplace(MemoryBlob::new()));
+        let rows = certify(&kv, &kv.config(), &Config::new()).await;
+        assert_eq!(state(&rows, "kv.put"), Some(Reason::Missing));
+        assert_eq!(rows[0].row.config.get("put_mode"), Some("atomic"));
     }
 }
