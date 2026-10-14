@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.13
+
+### Added
+- Workspace. New member crate `persistant-core` (the name is held on crates.io at 0.0.0; this version
+  is not published by this change): `CapabilityId`, `Config` (`k=v;k=v`), `Row`/`Matrix` (the
+  `docs/DESIGN-KINDS.md` section 2.4 matrix file: read, write, merge, and the gate's lookup where an
+  unknown version, an unreadable config or no row is off and a matching `no` wins), `Verdict` (the four
+  test outcomes; an `on` row needs both the positive and the known-bad control), and a seed vocabulary
+  with a written contract per id, all off until tested. No I/O, no third-party dependencies.
+- CI runs `--workspace`; the licence-gate floor is 18.
+
+### Changed
+- The `persistant` crate is unchanged in API and behaviour; its version now comes from
+  `[workspace.package]`.
+
 ## 0.4.12
 
 ### Changed

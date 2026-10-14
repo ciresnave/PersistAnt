@@ -33,13 +33,13 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo build
-        run: cargo build --all-targets
+        run: cargo build --workspace --all-targets
 
       - name: cargo test
-        run: cargo test --no-fail-fast
+        run: cargo test --workspace --no-fail-fast
 
   msrv:
     name: MSRV (rust-version in Cargo.toml)
@@ -63,7 +63,7 @@ jobs:
       - name: cargo check on the MSRV toolchain
         run: |
           rustc --version
-          cargo check --all-targets
+          cargo check --workspace --all-targets
 
   deny:
     name: cargo deny (advisories, licences, bans, sources)
