@@ -1,7 +1,10 @@
 # PersistAnt: one persistence layer, every kind of persistence
 
-Design document. **No code, no new crates, no publish.** Written 2026-10-11 by the PersistAnt lane
-for the PM's `[TASK]` of the same day; **revised 2026-10-14** after a design conversation with CireSnave's session (§2, §3). It proposes; CireSnave and the PM decide (open decisions are in §9).
+Design document. Written 2026-10-11 by the PersistAnt lane for the PM's `[TASK]` of the same day;
+**revised 2026-10-14** after a design conversation with CireSnave's session (§2, §3), and **built
+and published as 0.4.23 the same day**: §11 says what exists, what was found by building it, and what
+is not built. Sections 1 to 10 are the design as proposed and ruled; where building contradicted
+them, §11 says so. CireSnave and the PM decide (decisions and rulings are in §9).
 
 ## 0. What this is, and how far to trust it
 
@@ -631,9 +634,9 @@ Each will go to the PM as its own `[ASK]`, one at a time, with options and a rec
 | D1 | Relational API shape (§4) | A repositories; B builder; C thin sqlx pass-through; C + KV-native-on-relational | **RULED 2026-10-14: C+ (C with KV native on relational)** |
 | D2 | Crate layout and names (§3) | the trait / adapter / driver split (core, blob, relational, kv; opendal, sqlx); one crate with features; blob-only crate plus a relational crate | **RULED 2026-10-14 (PM, reversible until first publish): the split**, 7 crates, one shared version; `persistant` as facade, no kind crate depends on a driver. The PM claims the six new names with 0.0.0 placeholders; this lane does not publish them |
 | D3 | Open-time verification (§2.3): is a live run of a test against the target (rolled-back `TEMP` objects) allowed at open, or is the gate a lookup in the recorded matrix only | matrix lookup only; matrix + opt-in live test; live test always | **RULED 2026-10-14 (PM): matrix lookup by `(backend, version, config)` is the gate; a live test at open is opt-in per program via its Needs; always-live rejected.** Unknown version stays off |
-| D4 | One relational driver: sqlx only (moves lightbulb and auth-framework's migration CLI off tokio-postgres) | sqlx only; sqlx + tokio-postgres adapter | sqlx only |
-| D5 | Sequencing against auth-framework's 0.6.0 stable and its encryption-at-rest storage redesign | design the storage-interface change **with** `persistant-kv` now; after stable ships; never | design it with `persistant-kv`: the interface is changing anyway |
-| D6 | First build slice | locks + append in blob (unblocks step 1); the capability vocabulary, row schema and conformance harness in `persistant-core`; `persistant-relational` + `persistant-sqlx` skeleton | vocabulary, row schema + harness first (everything else is tested by it), then locks/append |
+| D4 | One relational driver: sqlx only (moves lightbulb and auth-framework's migration CLI off tokio-postgres) | sqlx only; sqlx + tokio-postgres adapter | **RULED 2026-10-14 (PM): sqlx only**; add a tokio-postgres driver crate later only if a consumer shows the need (driver crates are additive under D2) |
+| D5 | Sequencing against auth-framework's 0.6.0 stable and its encryption-at-rest storage redesign | design the storage-interface change **with** `persistant-kv` now; after stable ships; never | **RULED 2026-10-14 (PM): design it with `persistant-kv` now.** Done as a mapping (§11): auth-framework's technical answer is that it needs `kv.ttl_remaining` and `kv.purge_expired` (built), not `kv.batch_atomic`, and that envelope encryption sits above the kv trait |
+| D6 | First build slice | locks + append in blob; the capability vocabulary, row schema and conformance harness in `persistant-core`; `persistant-relational` + `persistant-sqlx` skeleton | **DONE (§11).** The order actually followed: core, blob, opendal, concurrency harness, append, kv, lease, process lock, KvOnBlob over fs, relational + sqlx + KvOnRelational, matrix files, ttl_remaining + purge_expired |
 
 ## 10. UNVERIFIED
 
@@ -659,8 +662,9 @@ Each will go to the PM as its own `[ASK]`, one at a time, with options and a rec
   documentation's conformance appendix introduction was read ("at least 170 of 177 mandatory Core
   features"); its per-code list, and the SQLite and MySQL surveys, were not. OpenDAL's roughly 100
   capability fields were counted from its documentation, not re-listed here.
-- Whether `sqlx`'s generic-over-`Database` bounds permit a small `RelationalBackend` trait that the
-  `KvOnRelational` adapter can be written against without per-driver code: not spiked.
+- ~~Whether `sqlx`'s generic-over-`Database` bounds permit a small `RelationalBackend` trait~~
+  **Resolved by building (§11):** the trait does not mention sqlx's `Database`; it uses a GAT
+  transaction type and a narrow `Value`, and `persistant-sqlx` implements it for PostgreSQL.
 - Whether UniSQL can express the KV adapter's statements (upsert-and-return, `DELETE ... RETURNING`,
   `ON CONFLICT`) for every target: its analyser exists (`unisql::analyse`, main@37182e1 = 0.0.3); the
   adapter statements were not run through it.
@@ -668,3 +672,63 @@ Each will go to the PM as its own `[ASK]`, one at a time, with options and a rec
 - The `persistant-opendal` and `persistant-sqlx` names were 404 on the crates.io API on 2026-10-13
   (`persistant` 200 as the control). UniSQL's crate name and publication are CireSnave's; it is a private,
   unpublished repository today.
+
+## 11. Status: what was built, what building found, what is not built
+
+Written 2026-10-14 at main 0.4.24 (0.4.23 is on crates.io: `persistant`, `persistant-core`,
+`-blob`, `-relational`, `-kv`, `-opendal`, `-sqlx`). Citations are crate paths at that commit.
+
+### 11.1 What exists
+
+| Crate | Contents | Certified by |
+|---|---|---|
+| `persistant-core` | `CapabilityId`, `Config` (`k=v;k=v`), `Row`/`Matrix` (the §2.4 file: read, write, merge, the gate lookup), `Verdict` (an `on` row needs both controls), seed vocabulary with a contract per id | unit tests with negative controls |
+| `persistant-blob` | `BlobBackend` (read, write, delete, stat, list, create_exclusive, replace_atomic, append), `MemoryBlob` with injectable defects, `conformance::certify`, a runtime-agnostic concurrency harness | itself, against defects |
+| `persistant-opendal` | `OpendalBlob` (fs, memory), `ProcessLock` (`lock.process`, std only) | `matrix/opendal.tsv`; a child-kill test |
+| `persistant-kv` | `KvBackend`, `KvOnBlob` (strict or explicit in-place put), `KvOnRelational` (PostgreSQL SQL, BYTEA keys), `MemoryKv`, `Lease` (`lock.lease`) | `matrix/opendal.tsv`, `matrix/sqlx-postgres.tsv` |
+| `persistant-relational` | the small `RelationalBackend`/`RelationalTx` trait, `Value`, `Row`, `RelError` (SQLSTATE classification) | via `persistant-sqlx` |
+| `persistant-sqlx` | `PgBackend` over sqlx 0.9 (`rust-version = "1.94"`, only this crate), `PgBackend::pool()` for `sqlx::query!` | a PostgreSQL 16 service container pinned by digest |
+| `persistant` | the original OpenDAL facade, **unchanged**; it does not yet use the crates above | its own tests |
+
+`matrix/*.tsv` are the recorded results. CI regenerates them on Linux and fails on any difference.
+
+### 11.2 What building found (each is asserted in a test, not argued)
+
+1. **`fs` cannot give an atomic replace and an exclusive create together** (OpenDAL's atomic path
+   checks, then renames). So `KvOnBlob` over `fs` gives an atomic `kv.put` *or* `kv.put_if_absent`,
+   never both. The native relational backend gives both, which is what C+ needed.
+2. **A silent downgrade was in my own adapter.** `KvOnBlob::put` fell back to a plain write where the
+   blob store had no atomic replace; a reader could see half a record and nothing in the row said
+   so. It is now strict, with `with_in_place_put` as an explicit choice recorded as `put_mode`.
+3. **`lock.lease` cannot be built on blob** (safe reclaim of an expired lease needs
+   compare-and-delete). It moved onto `kv` and is real on PostgreSQL only.
+4. **OpenDAL `fs` on a case-insensitive filesystem (Windows, default macOS) treats keys differing
+   only in case as one key**, and a file `a/B` collides with a directory `a/b`. `blob.read` and
+   `kv.get` are off there. Found by the first Windows CI run, not predicted.
+5. **The literal-prefix test must avoid `*` and `?`**: they are not valid in a Windows file name.
+6. **A text key column orders by collation**: shown on PostgreSQL (`a/a` before `a/B` under
+   `en_US`), and the adapter's BYTEA keys do not. A case-insensitive order is a known-bad control.
+7. **OpenDAL's `memory` service has no append.**
+8. **Sampled races are samples.** For `fs` with `atomic_write_dir` the driver refuses
+   `create_exclusive` on known behaviour, so a lucky run cannot turn it on.
+9. **Clock-dependent leaves flake on a stalled machine** (one spurious `kv.ttl` off on a correct
+   server); they get three attempts, and a defective backend fails every one.
+
+### 11.3 Not built (so off, or unanswered)
+
+- **SQLite and MySQL backends.** `KvOnRelational` writes PostgreSQL SQL and refuses any other
+  dialect. The translator is UniSQL, which is private and unpublished; a `persistant-*` crate cannot
+  depend on it until CireSnave publishes it (§7). `unisql::Schema` and `analyse_with` exist; the
+  catalog reader that fills a `Schema` is planned in `persistant-sqlx` and not written.
+- **Migrations with checksums** (§5), **TLS policy and secret-handle connection config** (the URL is
+  a plain string today), the **typed-error vocabulary beyond SQLSTATE classes**.
+- **Tests that need a crash or a power cut:** `blob.replace_atomic` as a whole, `blob.durable`,
+  `ops.pitr`, `storage.no_plaintext_at_rest`. They have no row, so they are off.
+- **`kv.batch_atomic`, `kv.take`, `kv.count`**: not offered. auth-framework declined `batch_atomic`
+  (its design needs no multi-key atomicity); `kv.take` is a single `DELETE ... RETURNING` on
+  PostgreSQL and not yet asked for.
+- **`blob.file_mode`, `blob.create_exclusive_atomic`, `blob.max_value_size`**: no test yet.
+- **Migrating consumers** (§7 steps 1 to 7). The `persistant` facade has not moved onto these
+  crates; that needs a design note and a ruling, because it changes a published API.
+- **Verification by other lanes' suites.** Synapse's mailbox suite proves composite behaviour, not
+  leaf ids; mapping its case names to leaf ids waits for it to merge and is not asserted from here.
