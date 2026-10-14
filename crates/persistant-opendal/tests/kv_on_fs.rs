@@ -62,7 +62,12 @@ fn merged(blob: &Config, kv: &Config) -> Config {
 }
 
 /// The leaves a blob store cannot give at all (no compare-and-delete).
-const NEEDS_CAD: [&str; 3] = ["kv.compare_and_swap", "kv.compare_and_delete", "lock.lease"];
+const NEEDS_CAD: [&str; 4] = [
+    "kv.compare_and_swap",
+    "kv.compare_and_delete",
+    "lock.lease",
+    "kv.purge_expired",
+];
 
 #[tokio::test]
 async fn over_the_memory_service_every_kv_leaf_but_the_cas_family() {

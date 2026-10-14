@@ -249,6 +249,37 @@ impl<R: RelationalBackend> KvBackend for KvOnRelational<R> {
         Ok(n == 1)
     }
 
+    async fn ttl_remaining(&self, key: &str) -> Result<Option<Duration>, KvError> {
+        let rows = self
+            .db
+            .query(
+                &format!(
+                    "SELECT expires_ms - {NOW} FROM persistant_kv \
+                     WHERE k = $1 AND expires_ms IS NOT NULL AND expires_ms > {NOW}"
+                ),
+                &[Value::Bytes(key.as_bytes().to_vec())],
+            )
+            .await
+            .map_err(err)?;
+        Ok(rows
+            .first()
+            .and_then(|r| r.int(0))
+            .and_then(|ms| u64::try_from(ms).ok())
+            .map(Duration::from_millis))
+    }
+
+    async fn purge_expired(&self) -> Result<u64, KvError> {
+        self.db
+            .execute(
+                &format!(
+                    "DELETE FROM persistant_kv WHERE expires_ms IS NOT NULL AND expires_ms <= {NOW}"
+                ),
+                &[],
+            )
+            .await
+            .map_err(err)
+    }
+
     async fn prefix_list(
         &self,
         prefix: &str,

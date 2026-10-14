@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.24
+
+### Added
+- `persistant-kv`: `KvBackend::ttl_remaining` and `purge_expired` (default `Unsupported`), asked for
+  by the auth-framework lane (`get_kv_ttl`, `cleanup_expired`; ADR-011). Certified leaves
+  `kv.ttl_remaining` (a 10 s entry reports 0 < d <= 10 s, falling; none for no ttl, absent or
+  expired) and `kv.purge_expired` (expired entries counted and gone, live ones and timed ones
+  untouched). Known-bad: `TtlRemainingIsConstant`, `PurgeRemovesLive`.
+  `KvOnRelational` gives both (`expires_ms - now`; one `DELETE`); `KvOnBlob` gives `ttl_remaining`
+  but not `purge_expired` (deleting an expired entry races a concurrent put and a blob store has no
+  compare-and-delete). Memory gives both.
+- `persistant-core` vocabulary: `kv.purge_expired`.
+
+### Changed
+- `persistant-kv` conformance: the wall-clock leaves (`kv.ttl`, `kv.ttl_remaining`,
+  `kv.purge_expired`, `lock.lease`, `kv.prefix_list`) get three attempts, so a stalled machine
+  cannot turn a correct backend off; a defective backend fails every attempt.
+- Recorded matrices regenerated for the two new leaves.
+
 ## 0.4.23
 
 ### Added
