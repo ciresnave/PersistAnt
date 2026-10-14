@@ -31,6 +31,25 @@ fn state(rows: &[Certified], id: &str) -> Option<Reason> {
     if c.row.enabled { None } else { c.row.reason }
 }
 
+/// Whether the directory's filesystem treats names that differ only in case as the same name
+/// (Windows, default macOS). Probed, not assumed from the OS.
+fn case_insensitive(dir: &std::path::Path) -> bool {
+    std::fs::write(dir.join("CaseProbe"), b"x").unwrap();
+    let same = dir.join("caseprobe").exists();
+    std::fs::remove_file(dir.join("CaseProbe")).unwrap();
+    same
+}
+
+/// `blob.read` and `kv.get` check that keys differing only in case are distinct keys, so a
+/// case-insensitive filesystem finds them wrong; every other leaf is unaffected.
+fn expected(id: &str, case_insensitive: bool) -> Option<Reason> {
+    if case_insensitive && (id == "blob.read" || id == "kv.get") {
+        Some(Reason::Wrong)
+    } else {
+        None
+    }
+}
+
 const SEQUENTIAL: [&str; 5] = [
     "blob.read",
     "blob.write",
@@ -57,10 +76,11 @@ async fn memory_service_gives_everything_but_append() {
 #[tokio::test]
 async fn fs_without_atomic_write_dir_creates_exclusively_but_replaces_in_place() {
     let dir = tempfile::tempdir().unwrap();
+    let ci = case_insensitive(dir.path());
     let b = OpendalBlob::fs(dir.path(), None).unwrap();
     let rows = certify(&b, b.config(), &Config::new()).await;
     for id in SEQUENTIAL {
-        assert_eq!(state(&rows, id), None, "{}", summary(&rows));
+        assert_eq!(state(&rows, id), expected(id, ci), "{}", summary(&rows));
     }
     assert_eq!(
         state(&rows, "blob.create_exclusive"),
@@ -75,7 +95,7 @@ async fn fs_without_atomic_write_dir_creates_exclusively_but_replaces_in_place()
         summary(&rows)
     );
     for id in ["blob.append", "blob.append.concurrent_whole"] {
-        assert_eq!(state(&rows, id), None, "{}", summary(&rows));
+        assert_eq!(state(&rows, id), expected(id, ci), "{}", summary(&rows));
     }
     assert_eq!(rows[0].row.config.get("atomic_write_dir"), Some("unset"));
     let ex = rows
@@ -92,11 +112,12 @@ async fn fs_without_atomic_write_dir_creates_exclusively_but_replaces_in_place()
 #[tokio::test]
 async fn fs_with_atomic_write_dir_replaces_atomically_but_cannot_create_exclusively() {
     let root = tempfile::tempdir().unwrap();
+    let ci = case_insensitive(root.path());
     let scratch = tempfile::tempdir().unwrap();
     let b = OpendalBlob::fs(root.path(), Some(scratch.path())).unwrap();
     let rows = certify(&b, b.config(), &Config::new()).await;
     for id in SEQUENTIAL {
-        assert_eq!(state(&rows, id), None, "{}", summary(&rows));
+        assert_eq!(state(&rows, id), expected(id, ci), "{}", summary(&rows));
     }
     assert_eq!(
         state(&rows, "blob.replace_atomic.concurrent_read"),

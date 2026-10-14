@@ -12,6 +12,8 @@ use std::sync::Mutex;
 pub enum Defect {
     /// `read` drops the last byte.
     ReadTruncates,
+    /// Keys that differ only in letter case are the same key (a case-insensitive filesystem).
+    KeysFoldCase,
     /// `write` is acknowledged and not stored.
     WriteIsLost,
     /// `delete` is acknowledged and the key stays.
@@ -56,6 +58,14 @@ impl MemoryBlob {
         }
     }
 
+    fn k(&self, key: &str) -> String {
+        if self.defect == Some(Defect::KeysFoldCase) {
+            key.to_lowercase()
+        } else {
+            key.to_string()
+        }
+    }
+
     fn map(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Vec<u8>>> {
         // A poisoned lock means a test panicked mid-operation; the data is still usable.
         self.map.lock().unwrap_or_else(|e| e.into_inner())
@@ -79,7 +89,7 @@ impl BlobBackend for MemoryBlob {
     }
 
     async fn read(&self, key: &str) -> Result<Option<Vec<u8>>, BlobError> {
-        let mut v = self.map().get(key).cloned();
+        let mut v = self.map().get(&self.k(key)).cloned();
         if self.defect == Some(Defect::ReadTruncates)
             && let Some(b) = v.as_mut()
         {
@@ -90,7 +100,7 @@ impl BlobBackend for MemoryBlob {
 
     async fn write(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
         if self.defect != Some(Defect::WriteIsLost) {
-            self.map().insert(key.to_string(), bytes);
+            self.map().insert(self.k(key), bytes);
         }
         Ok(())
     }

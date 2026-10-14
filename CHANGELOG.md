@@ -18,6 +18,13 @@
   until a translator is a published dependency.
 - New known-bad control `ScanIsCaseInsensitive` (the collation trap) and two seed keys, `a/a` and
   `a/B`, which a case-insensitive or locale order puts the wrong way round.
+- Finding, from the first Windows CI run of the above: **OpenDAL `fs` on a case-insensitive
+  filesystem (Windows, default macOS) treats keys that differ only in letter case as one key**
+  (and a file `a/B` collides with a directory `a/b`). `blob.read` and `kv.get` now include a
+  case-distinct-keys check (known-bad control `KeysFoldCase` in both memory backends); on such a
+  filesystem both are off with reason `wrong`, and the opendal tests probe the filesystem rather
+  than assume the OS. The seed key `a/b/c` is now `a/c/d` so the harness does not itself provoke a
+  file/directory clash.
 - CI: a `relational` job runs the sqlx tests against a PostgreSQL 16 service container pinned by
   digest (`PERSISTANT_REQUIRE_DATABASE=1`, so a missing server fails instead of skipping), and an
   `msrv-sqlx` job; the workspace MSRV job excludes `persistant-sqlx`.

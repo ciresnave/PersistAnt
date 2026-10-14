@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 pub enum Defect {
     /// `put` is acknowledged and not stored.
     PutIsLost,
+    /// Keys that differ only in letter case are the same key.
+    KeysFoldCase,
     /// `delete` is acknowledged and the key stays.
     DeleteIsIgnored,
     /// A time to live is dropped: the entry never expires.
@@ -65,6 +67,14 @@ impl MemoryKv {
         }
     }
 
+    fn k(&self, key: &str) -> String {
+        if self.defect == Some(Defect::KeysFoldCase) {
+            key.to_lowercase()
+        } else {
+            key.to_string()
+        }
+    }
+
     fn map(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, Entry>> {
         self.map.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -109,7 +119,11 @@ impl KvBackend for MemoryKv {
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
-        Ok(self.map().get(key).filter(|e| live(e)).map(|e| e.0.clone()))
+        Ok(self
+            .map()
+            .get(&self.k(key))
+            .filter(|e| live(e))
+            .map(|e| e.0.clone()))
     }
 
     async fn put(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<(), KvError> {
@@ -122,7 +136,7 @@ impl KvBackend for MemoryKv {
             ttl
         };
         self.map()
-            .insert(key.to_string(), (value, ttl.map(|d| Instant::now() + d)));
+            .insert(self.k(key), (value, ttl.map(|d| Instant::now() + d)));
         Ok(())
     }
 
