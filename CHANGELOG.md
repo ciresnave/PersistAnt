@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.26
+
+### Changed
+- `docs/FACADE-MIGRATION.md`, docs only, no code: a design note on moving the `persistant` facade
+  onto the new crates. Gap table, the finding that a matrix-gated `AtomicReplace` needs a crash test
+  nobody has written, three options, a recommendation (additive re-exports now; a crash test next;
+  a breaking 0.5.0 only after it) and one decision (D7) for the PM and CireSnave.
+
 ## 0.4.25
 
 ### Changed
