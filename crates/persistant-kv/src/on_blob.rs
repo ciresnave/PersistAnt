@@ -66,6 +66,23 @@ fn decode(bytes: Vec<u8>) -> Result<Option<Vec<u8>>, KvError> {
     Ok(Some(bytes[9..].to_vec()))
 }
 
+/// Remaining time to live of a stored envelope: `None` if it has none or has expired.
+fn remaining(bytes: &[u8]) -> Result<Option<Duration>, KvError> {
+    if bytes.len() < 9 || bytes[0] != VERSION_BYTE {
+        return Err(KvError::Corrupt("bad envelope".to_string()));
+    }
+    let mut ms = [0u8; 8];
+    ms.copy_from_slice(&bytes[1..9]);
+    let expiry = u64::from_be_bytes(ms);
+    if expiry == 0 {
+        return Ok(None);
+    }
+    Ok(expiry
+        .checked_sub(now_ms())
+        .filter(|d| *d > 0)
+        .map(Duration::from_millis))
+}
+
 fn expired(bytes: &[u8]) -> bool {
     matches!(decode(bytes.to_vec()), Ok(None))
 }
@@ -235,4 +252,14 @@ impl<B: BlobBackend> KvBackend for KvOnBlob<B> {
     ) -> Result<KeyPage, KvError> {
         self.scan(prefix, after, limit).await
     }
+
+    async fn ttl_remaining(&self, key: &str) -> Result<Option<Duration>, KvError> {
+        match self.blob.read(&Self::blob_key(key)).await? {
+            Some(bytes) => remaining(&bytes),
+            None => Ok(None),
+        }
+    }
+
+    // `purge_expired` is not offered: deleting an expired entry races with a concurrent `put`
+    // that has just replaced it, and a blob store has no compare-and-delete to make that safe.
 }

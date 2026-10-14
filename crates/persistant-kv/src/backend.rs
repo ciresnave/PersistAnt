@@ -144,4 +144,22 @@ pub trait KvBackend: Send + Sync {
         let _ = (key, expected);
         async { Err(KvError::Unsupported("compare_and_delete".to_string())) }
     }
+
+    /// The time to live left on a **live** entry: `Some(d)` with `0 < d <= ttl` and `d` falling as
+    /// time passes; `None` for an absent or expired entry or one written without a time to live
+    /// (`kv.ttl_remaining`).
+    fn ttl_remaining(
+        &self,
+        key: &str,
+    ) -> impl Future<Output = Result<Option<Duration>, KvError>> + Send {
+        let _ = key;
+        async { Err(KvError::Unsupported("ttl_remaining".to_string())) }
+    }
+
+    /// Physically remove expired entries and return how many were removed. Visibility is
+    /// already correct without it (expired entries are invisible to `get` and listing); this is
+    /// housekeeping. A live entry is never removed (`kv.purge_expired`).
+    fn purge_expired(&self) -> impl Future<Output = Result<u64, KvError>> + Send {
+        async { Err(KvError::Unsupported("purge_expired".to_string())) }
+    }
 }

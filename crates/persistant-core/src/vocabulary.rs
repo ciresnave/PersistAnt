@@ -83,6 +83,10 @@ pub const SEED: &[(&str, &str)] = &[
         "an entry written with a time to live is invisible to get and to listing once it has expired",
     ),
     (
+        "kv.purge_expired",
+        "expired entries are physically removed and the number removed is returned; a live entry is never removed",
+    ),
+    (
         "kv.ttl_remaining",
         "the remaining time to live of a live entry can be read back",
     ),

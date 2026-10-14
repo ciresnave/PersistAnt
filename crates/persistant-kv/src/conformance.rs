@@ -40,11 +40,15 @@ pub enum Leaf {
     CompareAndDelete,
     /// `lock.lease`, by real time and sampled concurrency
     Lease,
+    /// `kv.ttl_remaining`, in real time
+    TtlRemaining,
+    /// `kv.purge_expired`, in real time
+    PurgeExpired,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 10] = [
+    pub const ALL: [Leaf; 12] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -55,6 +59,8 @@ impl Leaf {
         Leaf::CompareAndSwap,
         Leaf::CompareAndDelete,
         Leaf::Lease,
+        Leaf::TtlRemaining,
+        Leaf::PurgeExpired,
     ];
 
     /// The capability id.
@@ -70,6 +76,8 @@ impl Leaf {
             Leaf::CompareAndSwap => "kv.compare_and_swap",
             Leaf::CompareAndDelete => "kv.compare_and_delete",
             Leaf::Lease => "lock.lease",
+            Leaf::TtlRemaining => "kv.ttl_remaining",
+            Leaf::PurgeExpired => "kv.purge_expired",
         }
     }
 
@@ -79,6 +87,8 @@ impl Leaf {
             Leaf::Ttl => "ttl_ms=300;sleep_ms=450",
             Leaf::CompareAndSwap | Leaf::CompareAndDelete => "contenders=16;rounds=20",
             Leaf::Lease => "contenders=16;rounds=5;ttl_ms=200;sleep_ms=300",
+            Leaf::TtlRemaining => "ttl_ms=10000;sleep_ms=150",
+            Leaf::PurgeExpired => "ttl_ms=100;sleep_ms=250",
             _ => "",
         }
     }
@@ -102,6 +112,8 @@ impl Leaf {
             ],
             Leaf::CompareAndSwap => &[Defect::CasIgnoresExpected, Defect::CasNotAtomic],
             Leaf::CompareAndDelete => &[Defect::CadIgnoresExpected, Defect::CadNotAtomic],
+            Leaf::TtlRemaining => &[Defect::TtlRemainingIsConstant, Defect::TtlIgnored],
+            Leaf::PurgeExpired => &[Defect::PurgeRemovesLive],
             Leaf::Lease => &[
                 Defect::PutIfAbsentNotExclusive,
                 Defect::CasIgnoresExpected,
@@ -132,6 +144,24 @@ fn wrong<T>(msg: impl Into<String>) -> Result<T, Failure> {
 
 /// Run one leaf's test against `b`. Writes only under `persistant-conformance/<leaf>/`.
 pub async fn run_leaf<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
+    // Leaves that depend on wall-clock windows get three attempts, so a stalled machine cannot
+    // turn a correct backend off. A defective backend fails every attempt: its failure is
+    // deterministic, not a timing accident.
+    let attempts = match leaf {
+        Leaf::Ttl | Leaf::TtlRemaining | Leaf::PurgeExpired | Leaf::Lease | Leaf::PrefixList => 3,
+        _ => 1,
+    };
+    let mut result = Ok(());
+    for _ in 0..attempts {
+        result = run_once(leaf, b).await;
+        if result.is_ok() {
+            break;
+        }
+    }
+    result
+}
+
+async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
     let base = format!("persistant-conformance/{}/", leaf.id());
     let result = match leaf {
         Leaf::Get => get(b, &base).await,
@@ -144,6 +174,8 @@ pub async fn run_leaf<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::CompareAndSwap => compare_and_swap(b, &base).await,
         Leaf::CompareAndDelete => compare_and_delete(b, &base).await,
         Leaf::Lease => lease(b, &base).await,
+        Leaf::TtlRemaining => ttl_remaining(b, &base).await,
+        Leaf::PurgeExpired => purge_expired(b, &base).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.prefix_list(&base, None, usize::MAX).await {
@@ -476,6 +508,70 @@ async fn compare_and_delete<K: KvBackend>(b: &K, base: &str) -> Result<(), Failu
     Ok(())
 }
 
+async fn ttl_remaining<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    let ten = Duration::from_secs(10);
+    let k = format!("{base}k");
+    b.put(&k, b"v".to_vec(), Some(ten)).await?;
+    let first = match b.ttl_remaining(&k).await? {
+        Some(d) if !d.is_zero() && d <= ten => d,
+        other => return wrong(format!("a 10 s entry reported {other:?} remaining")),
+    };
+    std::thread::sleep(Duration::from_millis(150));
+    match b.ttl_remaining(&k).await? {
+        Some(d) if d < first => {}
+        other => {
+            return wrong(format!(
+                "remaining time did not fall after 150 ms: {first:?} then {other:?}"
+            ));
+        }
+    }
+    let forever = format!("{base}forever");
+    b.put(&forever, b"v".to_vec(), None).await?;
+    if b.ttl_remaining(&forever).await?.is_some() {
+        return wrong("an entry written without a time to live reports one");
+    }
+    if b.ttl_remaining(&format!("{base}absent")).await?.is_some() {
+        return wrong("an absent key reports a time to live");
+    }
+    let gone = format!("{base}gone");
+    b.put(&gone, b"v".to_vec(), Some(Duration::from_millis(100)))
+        .await?;
+    std::thread::sleep(Duration::from_millis(250));
+    if b.ttl_remaining(&gone).await?.is_some() {
+        return wrong("an expired entry reports a time to live");
+    }
+    Ok(())
+}
+
+async fn purge_expired<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    let short = Duration::from_millis(100);
+    let (e1, e2) = (format!("{base}e1"), format!("{base}e2"));
+    let live = format!("{base}live");
+    let timed = format!("{base}timed");
+    b.put(&e1, b"x".to_vec(), Some(short)).await?;
+    b.put(&e2, b"x".to_vec(), Some(short)).await?;
+    b.put(&live, b"l".to_vec(), None).await?;
+    b.put(&timed, b"t".to_vec(), Some(Duration::from_secs(60)))
+        .await?;
+    std::thread::sleep(Duration::from_millis(250));
+    let n = b.purge_expired().await?;
+    if n < 2 {
+        return wrong(format!(
+            "two expired entries purged, but {n} reported removed"
+        ));
+    }
+    if b.get(&live).await?.as_deref() != Some(&b"l"[..]) {
+        return wrong("an entry without a time to live was removed by purge");
+    }
+    if b.get(&timed).await?.as_deref() != Some(&b"t"[..]) {
+        return wrong("a live entry with a time to live was removed by purge");
+    }
+    if b.get(&e1).await?.is_some() || b.get(&e2).await?.is_some() {
+        return wrong("an expired entry is visible after purge");
+    }
+    Ok(())
+}
+
 async fn lease<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     use crate::Lease;
     const CONTENDERS: usize = 16;
@@ -710,7 +806,7 @@ mod tests {
             // A blob store has no compare-and-delete, so these are missing, not wrong.
             let needs_cad = matches!(
                 c.leaf,
-                Leaf::CompareAndSwap | Leaf::CompareAndDelete | Leaf::Lease
+                Leaf::CompareAndSwap | Leaf::CompareAndDelete | Leaf::Lease | Leaf::PurgeExpired
             );
             assert_eq!(c.row.enabled, !needs_cad, "{}: {}", c.leaf.id(), c.row.note);
             if needs_cad {

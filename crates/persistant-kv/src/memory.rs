@@ -30,6 +30,10 @@ pub enum Defect {
     ScanIsCaseInsensitive,
     /// Paged calls ignore `limit` and `after`: the same keys come back every page.
     ListIgnoresPaging,
+    /// `ttl_remaining` always reports an hour, whatever was written.
+    TtlRemainingIsConstant,
+    /// `purge_expired` removes every entry, live ones too.
+    PurgeRemovesLive,
     /// `compare_and_swap` swaps whatever is there, ignoring `expected`.
     CasIgnoresExpected,
     /// `compare_and_swap` checks, lets others run, then writes: two callers can both win.
@@ -242,5 +246,27 @@ impl KvBackend for MemoryKv {
         } else {
             Ok(false)
         }
+    }
+
+    async fn ttl_remaining(&self, key: &str) -> Result<Option<Duration>, KvError> {
+        let map = self.map();
+        let Some(e) = map.get(&self.k(key)).filter(|e| live(e)) else {
+            return Ok(None);
+        };
+        if self.defect == Some(Defect::TtlRemainingIsConstant) {
+            return Ok(Some(Duration::from_secs(3600)));
+        }
+        Ok(e.1.map(|t| t.saturating_duration_since(Instant::now())))
+    }
+
+    async fn purge_expired(&self) -> Result<u64, KvError> {
+        let mut map = self.map();
+        let before = map.len();
+        if self.defect == Some(Defect::PurgeRemovesLive) {
+            map.clear();
+        } else {
+            map.retain(|_, e| live(e));
+        }
+        Ok((before - map.len()) as u64)
     }
 }
