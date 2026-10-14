@@ -40,11 +40,16 @@ const SEQUENTIAL: [&str; 5] = [
 ];
 
 #[tokio::test]
-async fn memory_service_gives_every_certified_leaf() {
+async fn memory_service_gives_everything_but_append() {
     let b = OpendalBlob::memory().unwrap();
     let rows = certify(&b, b.config(), &Config::new()).await;
     for c in &rows {
-        assert!(c.row.enabled, "{}", summary(&rows));
+        let append = c.leaf.id().starts_with("blob.append");
+        // Finding: OpenDAL's memory service does not support append.
+        assert_eq!(c.row.enabled, !append, "{}", summary(&rows));
+        if append {
+            assert_eq!(c.row.reason, Some(Reason::Missing), "{}", summary(&rows));
+        }
     }
     assert_eq!(rows[0].row.backend, "opendal-memory");
 }
@@ -69,6 +74,9 @@ async fn fs_without_atomic_write_dir_creates_exclusively_but_replaces_in_place()
         "{}",
         summary(&rows)
     );
+    for id in ["blob.append", "blob.append.concurrent_whole"] {
+        assert_eq!(state(&rows, id), None, "{}", summary(&rows));
+    }
     assert_eq!(rows[0].row.config.get("atomic_write_dir"), Some("unset"));
     let ex = rows
         .iter()

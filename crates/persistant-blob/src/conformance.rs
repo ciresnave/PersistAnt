@@ -32,11 +32,15 @@ pub enum Leaf {
     CreateExclusive,
     /// `blob.replace_atomic.concurrent_read`, by sampled concurrency
     ReplaceConcurrentRead,
+    /// `blob.append`
+    Append,
+    /// `blob.append.concurrent_whole`, by sampled concurrency
+    AppendConcurrentWhole,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 7] = [
+    pub const ALL: [Leaf; 9] = [
         Leaf::Read,
         Leaf::Write,
         Leaf::Delete,
@@ -44,6 +48,8 @@ impl Leaf {
         Leaf::List,
         Leaf::CreateExclusive,
         Leaf::ReplaceConcurrentRead,
+        Leaf::Append,
+        Leaf::AppendConcurrentWhole,
     ];
 
     /// The capability id.
@@ -56,6 +62,8 @@ impl Leaf {
             Leaf::List => "blob.list",
             Leaf::CreateExclusive => "blob.create_exclusive",
             Leaf::ReplaceConcurrentRead => "blob.replace_atomic.concurrent_read",
+            Leaf::Append => "blob.append",
+            Leaf::AppendConcurrentWhole => "blob.append.concurrent_whole",
         }
     }
 
@@ -65,6 +73,7 @@ impl Leaf {
         match self {
             Leaf::CreateExclusive => "contenders=16;rounds=20;value_bytes=4096",
             Leaf::ReplaceConcurrentRead => "readers=4;replaces=40;value_bytes=65536",
+            Leaf::AppendConcurrentWhole => "contenders=16;records=10;value_bytes=64",
             _ => "",
         }
     }
@@ -82,6 +91,8 @@ impl Leaf {
             ],
             Leaf::CreateExclusive => &[Defect::CreateNotExclusive],
             Leaf::ReplaceConcurrentRead => &[Defect::ReplaceTearsReads],
+            Leaf::Append => &[Defect::AppendOverwrites],
+            Leaf::AppendConcurrentWhole => &[Defect::AppendTearsRecords, Defect::AppendOverwrites],
         }
     }
 }
@@ -116,6 +127,8 @@ pub async fn run_leaf<B: BlobBackend>(leaf: Leaf, b: &B) -> Result<(), Failure> 
         Leaf::List => list(b, &base).await,
         Leaf::CreateExclusive => create_exclusive(b, &base).await,
         Leaf::ReplaceConcurrentRead => replace_concurrent_read(b, &base).await,
+        Leaf::Append => append(b, &base).await,
+        Leaf::AppendConcurrentWhole => append_concurrent_whole(b, &base).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.list(&base, None, usize::MAX).await {
@@ -383,6 +396,66 @@ async fn replace_concurrent_read<B: BlobBackend>(b: &B, base: &str) -> Result<()
     Ok(())
 }
 
+async fn append<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
+    let k = format!("{base}k");
+    b.write(&k, b"head".to_vec()).await?;
+    for piece in [&b"a"[..], b"bc", b"", b"def"] {
+        b.append(&k, piece.to_vec()).await?;
+    }
+    match b.read(&k).await? {
+        Some(v) if v == b"headabcdef" => Ok(()),
+        other => wrong(format!(
+            "appends in order left {other:?}, want \"headabcdef\""
+        )),
+    }
+}
+
+async fn append_concurrent_whole<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
+    const CONTENDERS: usize = 16;
+    const RECORDS: usize = 10;
+    const LEN: usize = 64;
+    let key = format!("{base}k");
+    let key = key.as_str();
+    b.write(key, Vec::new()).await?;
+    let tasks: Vec<Task<'_, Result<(), BlobError>>> = (0..CONTENDERS)
+        .map(|i| -> Task<'_, _> {
+            Box::pin(async move {
+                for _ in 0..RECORDS {
+                    b.append(key, vec![i as u8; LEN]).await?;
+                    yield_now().await;
+                }
+                Ok(())
+            })
+        })
+        .collect();
+    for r in join_all(tasks).await {
+        r?;
+    }
+    let all = b.read(key).await?.unwrap_or_default();
+    if all.len() != CONTENDERS * RECORDS * LEN {
+        return wrong(format!(
+            "{} bytes after {} appends of {LEN}, want {}",
+            all.len(),
+            CONTENDERS * RECORDS,
+            CONTENDERS * RECORDS * LEN
+        ));
+    }
+    let mut counts = [0usize; CONTENDERS];
+    for chunk in all.chunks(LEN) {
+        let first = chunk[0] as usize;
+        if first >= CONTENDERS || chunk.iter().any(|x| *x as usize != first) {
+            return wrong("a record is interleaved with another's bytes");
+        }
+        counts[first] += 1;
+    }
+    if counts.iter().any(|c| *c != RECORDS) {
+        return wrong(format!(
+            "records per appender {counts:?}, want {RECORDS} each"
+        ));
+    }
+    Ok(())
+}
+
 /// The outcome of certifying one leaf.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Certified {
@@ -420,7 +493,14 @@ pub async fn certify<B: BlobBackend>(
             .clone()
             .with("test", format!("blob::{}", leaf.id()));
         if let Ok(t) = persistant_core::Config::parse(leaf.trials()) {
-            for key in ["contenders", "rounds", "value_bytes", "readers", "replaces"] {
+            for key in [
+                "contenders",
+                "rounds",
+                "value_bytes",
+                "readers",
+                "replaces",
+                "records",
+            ] {
                 if let Some(v) = t.get(key) {
                     md = md.with(key, v);
                 }

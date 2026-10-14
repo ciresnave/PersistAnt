@@ -2,11 +2,11 @@
 members = [".", "crates/persistant-core", "crates/persistant-blob", "crates/persistant-opendal"]
 
 [workspace.package]
-version = "0.4.16"
+version = "0.4.17"
 
 [workspace.dependencies]
-persistant-core = { version = "0.4.16", path = "crates/persistant-core" }
-persistant-blob = { version = "0.4.16", path = "crates/persistant-blob" }
+persistant-core = { version = "0.4.17", path = "crates/persistant-core" }
+persistant-blob = { version = "0.4.17", path = "crates/persistant-blob" }
 
 [package]
 name = "persistant"

@@ -123,4 +123,17 @@ pub trait BlobBackend: Send + Sync {
         let _ = (key, bytes);
         async { Err(BlobError::Unsupported("replace_atomic".to_string())) }
     }
+
+    /// Add `bytes` after the existing bytes of `key`, in call order (`blob.append`). Of
+    /// concurrent calls, each call's bytes arrive whole and exactly once
+    /// (`blob.append.concurrent_whole`). A backend that cannot promise that returns
+    /// [`BlobError::Unsupported`]; the default does.
+    fn append(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+    ) -> impl Future<Output = Result<(), BlobError>> + Send {
+        let _ = (key, bytes);
+        async { Err(BlobError::Unsupported("append".to_string())) }
+    }
 }
