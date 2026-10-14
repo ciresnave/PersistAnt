@@ -62,11 +62,15 @@ fn merged(blob: &Config, kv: &Config) -> Config {
 }
 
 /// The leaves a blob store cannot give at all (no compare-and-delete).
-const NEEDS_CAD: [&str; 4] = [
+const NEEDS_CAD: [&str; 7] = [
     "kv.compare_and_swap",
     "kv.compare_and_delete",
     "lock.lease",
     "kv.purge_expired",
+    // No multi-key transaction and no consistent snapshot on a blob store.
+    "kv.batch_atomic.rollback",
+    "kv.batch_atomic.concurrent_read",
+    "kv.ordered_scan_values",
 ];
 
 #[tokio::test]

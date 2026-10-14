@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::{KeyPage, KvBackend, KvError};
+use crate::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};
 use persistant_blob::concurrency::yield_now;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -30,6 +30,11 @@ pub enum Defect {
     ScanIsCaseInsensitive,
     /// Paged calls ignore `limit` and `after`: the same keys come back every page.
     ListIgnoresPaging,
+    /// `batch` applies its operations one at a time with other callers running in between, and
+    /// does not undo the earlier ones when a precondition later fails.
+    BatchNotAtomic,
+    /// `batch` ignores its `Require` operations.
+    BatchIgnoresRequire,
     /// `ttl_remaining` always reports an hour, whatever was written.
     TtlRemainingIsConstant,
     /// `purge_expired` removes every entry, live ones too.
@@ -268,5 +273,89 @@ impl KvBackend for MemoryKv {
             map.retain(|_, e| live(e));
         }
         Ok((before - map.len()) as u64)
+    }
+
+    async fn batch(&self, ops: &[BatchOp]) -> Result<bool, KvError> {
+        let live_value = |map: &BTreeMap<String, Entry>, key: &str| {
+            map.get(key).filter(|e| live(e)).map(|e| e.0.clone())
+        };
+        if self.defect == Some(Defect::BatchNotAtomic) {
+            // One operation at a time, yielding in between, and no undo.
+            for op in ops {
+                match op {
+                    BatchOp::Require { key, expected } => {
+                        let now = live_value(&self.map(), key);
+                        if now != *expected {
+                            return Ok(false);
+                        }
+                    }
+                    BatchOp::Put { key, value, ttl } => {
+                        self.map().insert(
+                            self.k(key),
+                            (value.clone(), ttl.map(|d| Instant::now() + d)),
+                        );
+                    }
+                    BatchOp::Delete { key } => {
+                        self.map().remove(&self.k(key));
+                    }
+                }
+                yield_now().await;
+            }
+            return Ok(true);
+        }
+        let mut map = self.map();
+        if self.defect != Some(Defect::BatchIgnoresRequire) {
+            for op in ops {
+                if let BatchOp::Require { key, expected } = op
+                    && live_value(&map, key) != *expected
+                {
+                    return Ok(false);
+                }
+            }
+        }
+        for op in ops {
+            match op {
+                BatchOp::Put { key, value, ttl } => {
+                    let k = self.k(key);
+                    map.insert(k, (value.clone(), ttl.map(|d| Instant::now() + d)));
+                }
+                BatchOp::Delete { key } => {
+                    map.remove(&self.k(key));
+                }
+                BatchOp::Require { .. } => {}
+            }
+        }
+        Ok(true)
+    }
+
+    async fn ordered_scan_values(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<ValuePage, KvError> {
+        let map = self.map();
+        let ignore_paging = self.defect == Some(Defect::ListIgnoresPaging);
+        let mut keys: Vec<(&String, &Entry)> = map
+            .iter()
+            .filter(|(k, e)| k.starts_with(prefix) && live(e))
+            .filter(|(k, _)| ignore_paging || after.is_none_or(|a| k.as_str() > a))
+            .collect();
+        if self.defect == Some(Defect::ScanIsDescending) {
+            keys.reverse();
+        }
+        let limit = if ignore_paging { usize::MAX } else { limit };
+        let more = keys.len() > limit;
+        keys.truncate(limit);
+        let entries: Vec<(String, Vec<u8>)> = keys
+            .into_iter()
+            .map(|(k, e)| (k.clone(), e.0.clone()))
+            .collect();
+        let next = if more {
+            entries.last().map(|(k, _)| k.clone())
+        } else {
+            None
+        };
+        Ok(ValuePage::new(entries, next))
     }
 }

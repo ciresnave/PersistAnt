@@ -107,6 +107,18 @@ pub const SEED: &[(&str, &str)] = &[
         "get-and-delete returns the value to exactly one of any number of concurrent callers",
     ),
     (
+        "kv.batch_atomic.rollback",
+        "a batch applies entirely or not at all: a failed precondition changes nothing, and of concurrent batches requiring the same value exactly one applies",
+    ),
+    (
+        "kv.batch_atomic.concurrent_read",
+        "one ordered scan with values sees all of a concurrent batch's writes or none of them",
+    ),
+    (
+        "kv.ordered_scan_values",
+        "an ordered scan returns each key's value with it, in ascending bytewise key order, in pages, from one consistent snapshot",
+    ),
+    (
         "kv.batch_atomic",
         "several keys written in one call are all visible or none is, to every reader, including after a crash",
     ),

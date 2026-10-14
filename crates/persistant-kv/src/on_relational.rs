@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::{KeyPage, KvBackend, KvError};
-use persistant_relational::{Dialect, RelError, RelationalBackend, Value};
+use crate::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};
+use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Value};
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 /// A [`KvBackend`] built natively on any [`RelationalBackend`] (D1, C+: "KV native on a relational
@@ -278,6 +279,125 @@ impl<R: RelationalBackend> KvBackend for KvOnRelational<R> {
             )
             .await
             .map_err(err)
+    }
+
+    async fn batch(&self, ops: &[BatchOp]) -> Result<bool, KvError> {
+        let mut tx = self.db.begin().await.map_err(err)?;
+        // Keys a precondition says are absent: their `Put` must not overwrite a row another
+        // writer inserted after the check, so it is an insert-or-reclaim-expired, and a miss
+        // refuses the batch.
+        let mut required_absent: BTreeSet<&str> = BTreeSet::new();
+        for op in ops {
+            match op {
+                BatchOp::Require { key, expected } => {
+                    let rows = tx
+                        .query(
+                            &format!(
+                                "SELECT v FROM persistant_kv WHERE k = $1 \
+                                 AND (expires_ms IS NULL OR expires_ms > {NOW}) FOR UPDATE"
+                            ),
+                            &[Value::Bytes(key.as_bytes().to_vec())],
+                        )
+                        .await
+                        .map_err(err)?;
+                    let current = rows.first().and_then(|r| r.bytes(0));
+                    if current != expected.as_deref() {
+                        tx.rollback().await.map_err(err)?;
+                        return Ok(false);
+                    }
+                    if expected.is_none() {
+                        required_absent.insert(key.as_str());
+                    }
+                }
+                BatchOp::Put { key, value, ttl } => {
+                    let insert = format!(
+                        "INSERT INTO persistant_kv (k, v, expires_ms) \
+                         VALUES ($1, $2, CASE WHEN $3 < 0 THEN NULL ELSE {NOW} + $3 END) \
+                         ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, expires_ms = EXCLUDED.expires_ms"
+                    );
+                    let insert_if_absent = format!(
+                        "{insert} \
+                         WHERE persistant_kv.expires_ms IS NOT NULL AND persistant_kv.expires_ms <= {NOW}"
+                    );
+                    let sql = if required_absent.contains(key.as_str()) {
+                        &insert_if_absent
+                    } else {
+                        &insert
+                    };
+                    let n = tx
+                        .execute(
+                            sql,
+                            &[
+                                Value::Bytes(key.as_bytes().to_vec()),
+                                Value::Bytes(value.clone()),
+                                ttl_ms(*ttl),
+                            ],
+                        )
+                        .await
+                        .map_err(err)?;
+                    if required_absent.contains(key.as_str()) && n != 1 {
+                        tx.rollback().await.map_err(err)?;
+                        return Ok(false);
+                    }
+                }
+                BatchOp::Delete { key } => {
+                    tx.execute(
+                        "DELETE FROM persistant_kv WHERE k = $1",
+                        &[Value::Bytes(key.as_bytes().to_vec())],
+                    )
+                    .await
+                    .map_err(err)?;
+                }
+            }
+        }
+        tx.commit().await.map_err(err)?;
+        Ok(true)
+    }
+
+    async fn ordered_scan_values(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<ValuePage, KvError> {
+        let mut sql = format!(
+            "SELECT k, v FROM persistant_kv WHERE k >= $1 \
+             AND (expires_ms IS NULL OR expires_ms > {NOW})"
+        );
+        let mut params = vec![Value::Bytes(prefix.as_bytes().to_vec())];
+        if let Some(upper) = upper_bound(prefix.as_bytes()) {
+            params.push(Value::Bytes(upper));
+            sql.push_str(&format!(" AND k < ${}", params.len()));
+        }
+        if let Some(a) = after {
+            params.push(Value::Bytes(a.as_bytes().to_vec()));
+            sql.push_str(&format!(" AND k > ${}", params.len()));
+        }
+        let fetch = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
+        params.push(Value::Int(fetch));
+        sql.push_str(&format!(" ORDER BY k LIMIT ${}", params.len()));
+        // One statement: one snapshot.
+        let rows = self.db.query(&sql, &params).await.map_err(err)?;
+        let mut entries = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let k = r
+                .bytes(0)
+                .and_then(|b| String::from_utf8(b.to_vec()).ok())
+                .ok_or_else(|| KvError::Corrupt("key column is not UTF-8 bytea".to_string()))?;
+            let v = r
+                .bytes(1)
+                .ok_or_else(|| KvError::Corrupt("value column is not bytea".to_string()))?
+                .to_vec();
+            entries.push((k, v));
+        }
+        let more = entries.len() > limit;
+        entries.truncate(limit);
+        let next = if more {
+            entries.last().map(|(k, _)| k.clone())
+        } else {
+            None
+        };
+        Ok(ValuePage::new(entries, next))
     }
 
     async fn prefix_list(
