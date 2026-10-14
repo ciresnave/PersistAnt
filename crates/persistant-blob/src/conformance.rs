@@ -77,7 +77,7 @@ impl Leaf {
 
     fn defects(self) -> &'static [Defect] {
         match self {
-            Leaf::Read => &[Defect::ReadTruncates],
+            Leaf::Read => &[Defect::ReadTruncates, Defect::KeysFoldCase],
             Leaf::Write => &[Defect::WriteIsLost],
             Leaf::Delete => &[Defect::DeleteIsIgnored],
             Leaf::Stat => &[Defect::StatLiesAboutLength],
@@ -147,6 +147,20 @@ async fn read<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
             Some(got) if got == value => {}
             Some(got) => return wrong(format!("wrote {value:?}, read {got:?}")),
             None => return wrong(format!("wrote {value:?}, read nothing")),
+        }
+    }
+    // Keys that differ only in letter case are different keys. A case-insensitive filesystem
+    // (the Windows and default macOS ones) fails this.
+    let upper = format!("{base}CaseKey");
+    let lower = format!("{base}casekey");
+    b.write(&upper, b"U".to_vec()).await?;
+    b.write(&lower, b"l".to_vec()).await?;
+    match b.read(&upper).await? {
+        Some(v) if v == b"U" => {}
+        other => {
+            return wrong(format!(
+                "keys differing only in case are the same key (read {other:?} after writing both)"
+            ));
         }
     }
     Ok(())

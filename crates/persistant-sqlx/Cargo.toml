@@ -1,0 +1,21 @@
+[package]
+name = "persistant-sqlx"
+version.workspace = true
+edition = "2024"
+# sqlx 0.9 needs 1.94; only this crate (and what depends on it) pays it. The workspace MSRV job
+# excludes it and a separate job checks it on its own floor.
+rust-version = "1.94"
+description = "PersistAnt's relational driver over sqlx: implements RelationalBackend for PostgreSQL, with typed error classification."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ciresnave/PersistAnt"
+keywords = ["sql", "postgres", "sqlx", "persistence"]
+categories = ["database"]
+
+[dependencies]
+persistant-core = { workspace = true }
+persistant-relational = { workspace = true }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres"] }
+
+[dev-dependencies]
+persistant-kv = { workspace = true }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros"] }

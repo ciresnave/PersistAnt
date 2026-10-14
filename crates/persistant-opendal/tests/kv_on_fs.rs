@@ -33,6 +33,25 @@ fn state(rows: &[Certified], id: &str) -> Option<Reason> {
     if c.row.enabled { None } else { c.row.reason }
 }
 
+/// Whether the directory's filesystem treats names that differ only in case as the same name
+/// (Windows, default macOS). Probed, not assumed from the OS.
+fn case_insensitive(dir: &std::path::Path) -> bool {
+    std::fs::write(dir.join("CaseProbe"), b"x").unwrap();
+    let same = dir.join("caseprobe").exists();
+    std::fs::remove_file(dir.join("CaseProbe")).unwrap();
+    same
+}
+
+/// `blob.read` and `kv.get` check that keys differing only in case are distinct keys, so a
+/// case-insensitive filesystem finds them wrong; every other leaf is unaffected.
+fn expected(id: &str, case_insensitive: bool) -> Option<Reason> {
+    if case_insensitive && (id == "blob.read" || id == "kv.get") {
+        Some(Reason::Wrong)
+    } else {
+        None
+    }
+}
+
 fn merged(blob: &Config, kv: &Config) -> Config {
     let text = [blob.to_string(), kv.to_string()]
         .into_iter()
@@ -99,6 +118,7 @@ async fn over_fs_without_atomic_write_dir_strict_put_is_refused_and_only_write_o
 #[tokio::test]
 async fn over_fs_without_atomic_write_dir_in_place_put_gives_put_if_absent_and_scans() {
     let dir = tempfile::tempdir().unwrap();
+    let ci = case_insensitive(dir.path());
     let kv = KvOnBlob::with_in_place_put(OpendalBlob::fs(dir.path(), None).unwrap());
     let rows = certify(
         &kv,
@@ -115,7 +135,12 @@ async fn over_fs_without_atomic_write_dir_in_place_put_gives_put_if_absent_and_s
         "kv.prefix_list",
         "kv.ordered_scan",
     ] {
-        assert_eq!(state(&rows, id), None, "{id}: {}", summary(&rows));
+        assert_eq!(
+            state(&rows, id),
+            expected(id, ci),
+            "{id}: {}",
+            summary(&rows)
+        );
     }
     for id in NEEDS_CAD {
         assert_eq!(
@@ -131,6 +156,7 @@ async fn over_fs_without_atomic_write_dir_in_place_put_gives_put_if_absent_and_s
 #[tokio::test]
 async fn over_fs_with_atomic_write_dir_put_is_atomic_but_put_if_absent_is_missing() {
     let root = tempfile::tempdir().unwrap();
+    let ci = case_insensitive(root.path());
     let scratch = tempfile::tempdir().unwrap();
     let kv = KvOnBlob::new(OpendalBlob::fs(root.path(), Some(scratch.path())).unwrap());
     let rows = certify(
@@ -147,7 +173,12 @@ async fn over_fs_with_atomic_write_dir_put_is_atomic_but_put_if_absent_is_missin
         "kv.prefix_list",
         "kv.ordered_scan",
     ] {
-        assert_eq!(state(&rows, id), None, "{id}: {}", summary(&rows));
+        assert_eq!(
+            state(&rows, id),
+            expected(id, ci),
+            "{id}: {}",
+            summary(&rows)
+        );
     }
     assert_eq!(
         state(&rows, "kv.put_if_absent"),

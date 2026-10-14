@@ -8,6 +8,8 @@
 //! - [`KvOnBlob`]: a wrapper type (not a blanket impl) that builds a [`KvBackend`] on any
 //!   [`persistant_blob::BlobBackend`]. What it *gives* is derived as eligible and then tested per
 //!   `(blob backend, version, config)`.
+//! - [`KvOnRelational`]: the same for any [`persistant_relational::RelationalBackend`] (D1, C+),
+//!   PostgreSQL SQL for now, keys as `BYTEA`, tested per server and version.
 //! - [`MemoryKv`]: a reference backend with injectable [`Defect`]s for known-bad controls.
 //! - [`conformance`]: the contract tests, producing matrix rows.
 //!
@@ -20,8 +22,10 @@ pub mod conformance;
 mod lease;
 mod memory;
 mod on_blob;
+mod on_relational;
 
 pub use backend::{KeyPage, KvBackend, KvError};
 pub use lease::Lease;
 pub use memory::{Defect, MemoryKv};
 pub use on_blob::KvOnBlob;
+pub use on_relational::KvOnRelational;

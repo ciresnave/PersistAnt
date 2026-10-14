@@ -63,7 +63,67 @@ jobs:
       - name: cargo check on the MSRV toolchain
         run: |
           rustc --version
-          cargo check --workspace --all-targets
+          cargo check --workspace --exclude persistant-sqlx --all-targets
+
+  msrv-sqlx:
+    name: MSRV persistant-sqlx (its own rust-version)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # sqlx 0.9 needs a newer compiler than the rest of the workspace; only this crate pays it.
+      - name: Read rust-version
+        id: msrv
+        run: |
+          v=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' crates/persistant-sqlx/Cargo.toml)
+          test -n "$v"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust ${{ steps.msrv.outputs.version }}
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: cargo check on the persistant-sqlx floor
+        run: |
+          rustc --version
+          cargo check -p persistant-sqlx --all-targets
+
+  relational:
+    name: Relational (PostgreSQL 16 service container)
+    runs-on: ubuntu-latest
+    # SUP-008 waiver reason (PM ruling 2026-10-14, service-container images): CI-only container, no
+    # credential of ours reaches it, it is reachable only from this job's runner. Pinned by digest
+    # anyway, so the waiver is only about the refresh routine: bump the digest by hand when the
+    # server major or a security patch matters. The role is the image's superuser because the tests
+    # create and drop their own tables; least privilege here means nothing else is shared with it.
+    services:
+      postgres:
+        image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+        env:
+          POSTGRES_PASSWORD: persistant-test
+          POSTGRES_DB: persistant
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PERSISTANT_TEST_DATABASE_URL: postgres://postgres:persistant-test@localhost:5432/persistant
+      # A missing URL must fail here, not skip: a skipped test must not look green.
+      PERSISTANT_REQUIRE_DATABASE: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      - name: cargo test persistant-sqlx (real PostgreSQL)
+        run: cargo test -p persistant-sqlx --no-fail-fast
 
   deny:
     name: cargo deny (advisories, licences, bans, sources)
