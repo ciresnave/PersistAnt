@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.21
+
+### Changed
+- `persistant-kv` **(behaviour change, pre-publish)**: `KvOnBlob::new` is strict: `put` needs the
+  blob store's `replace_atomic` and is refused where it has none, instead of silently writing in
+  place. `KvOnBlob::with_in_place_put` opts in explicitly; `KvOnBlob::config()` reports
+  `put_mode=atomic|in_place` so a row is recorded under the mode. Its backend name is now
+  `kv-on-blob:<blob backend>` and its version `<crate>+<blob version>`, so rows for different
+  blob stores do not collide.
+
+### Added
+- `persistant-opendal` tests run `KvOnBlob` over the real `fs` (three configurations) and `memory`
+  services. Findings, asserted: fs without `atomic_write_dir`, strict, gives no `kv.put` and only
+  the write-once `kv.put_if_absent` (every other leaf test starts by putting); with `with_in_place_put` it gives get/put/delete/ttl/put_if_absent/prefix_list/
+  ordered_scan; fs with `atomic_write_dir` gives atomic put but not `kv.put_if_absent`; memory gives
+  all but the compare-and-swap family. A strict `KvOnBlob` over fs gives `put` or `put_if_absent`,
+  never both (README 0.4.7).
+
 ## 0.4.20
 
 ### Added

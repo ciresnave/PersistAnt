@@ -14,8 +14,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// and config:
 ///
 /// - `get`, `put`, `delete`, `prefix_list`, `ordered_scan` need `blob.read`, `blob.write`,
-///   `blob.delete`, `blob.list`. `put` uses `replace_atomic` when the blob backend offers it and
-///   `write` otherwise.
+///   `blob.delete`, `blob.list`. `put` uses `replace_atomic`; where the blob backend has none it
+///   is refused, unless the store was built with [`KvOnBlob::with_in_place_put`].
 /// - `put_if_absent` needs `blob.create_exclusive`. An existing entry that has **expired** cannot
 ///   be reclaimed safely without compare-and-delete (delete-then-create lets a second reclaimer
 ///   delete the first one's fresh entry), so that case returns [`KvError::Unsupported`] rather
@@ -25,6 +25,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[derive(Debug)]
 pub struct KvOnBlob<B> {
     blob: B,
+    in_place_put: bool,
+    name: String,
+    version: String,
 }
 
 const PREFIX: &str = "kv/";
@@ -68,9 +71,43 @@ fn expired(bytes: &[u8]) -> bool {
 }
 
 impl<B: BlobBackend> KvOnBlob<B> {
-    /// Build a key-value store on `blob`.
+    /// Build a key-value store on `blob`. **Strict**: `put` needs the blob store's
+    /// `replace_atomic`, and returns [`KvError::Unsupported`] where it has none, rather than
+    /// write in place and let a reader see a half-written value.
     pub fn new(blob: B) -> Self {
-        KvOnBlob { blob }
+        Self::build(blob, false)
+    }
+
+    /// As [`KvOnBlob::new`], but `put` falls back to the blob store's plain `write` where it has
+    /// no `replace_atomic`. A concurrent `get` can then see a partly written record (reported as
+    /// [`KvError::Corrupt`]). Chosen explicitly, and recorded as the config fact
+    /// `put_mode=in_place` so a matrix row says which mode it was certified under.
+    pub fn with_in_place_put(blob: B) -> Self {
+        Self::build(blob, true)
+    }
+
+    fn build(blob: B, in_place_put: bool) -> Self {
+        let name = format!("kv-on-blob:{}", blob.backend());
+        let version = format!("{}+{}", env!("CARGO_PKG_VERSION"), blob.version());
+        KvOnBlob {
+            blob,
+            in_place_put,
+            name,
+            version,
+        }
+    }
+
+    /// The config facts a matrix row for this adapter is recorded under (merge them with the blob
+    /// backend's own facts).
+    pub fn config(&self) -> persistant_core::Config {
+        persistant_core::Config::new().with(
+            "put_mode",
+            if self.in_place_put {
+                "in_place"
+            } else {
+                "atomic"
+            },
+        )
     }
 
     /// The underlying blob backend.
@@ -121,11 +158,11 @@ impl<B: BlobBackend> KvOnBlob<B> {
 
 impl<B: BlobBackend> KvBackend for KvOnBlob<B> {
     fn backend(&self) -> &str {
-        "kv-on-blob"
+        &self.name
     }
 
     fn version(&self) -> &str {
-        env!("CARGO_PKG_VERSION")
+        &self.version
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
@@ -140,7 +177,9 @@ impl<B: BlobBackend> KvBackend for KvOnBlob<B> {
         let env = encode(&value, ttl);
         match self.blob.replace_atomic(&k, env.clone()).await {
             Ok(()) => Ok(()),
-            Err(BlobError::Unsupported(_)) => Ok(self.blob.write(&k, env).await?),
+            Err(BlobError::Unsupported(_)) if self.in_place_put => {
+                Ok(self.blob.write(&k, env).await?)
+            }
             Err(e) => Err(e.into()),
         }
     }
