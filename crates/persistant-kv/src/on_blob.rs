@@ -88,7 +88,14 @@ impl<B: BlobBackend> KvOnBlob<B> {
 
     fn build(blob: B, in_place_put: bool) -> Self {
         let name = format!("kv-on-blob:{}", blob.backend());
-        let version = format!("{}+{}", env!("CARGO_PKG_VERSION"), blob.version());
+        // Major.minor only (pre-1.0 the second number is the major): a patch bump does not
+        // re-key every recorded row, a breaking change to the adapter does.
+        let version = format!(
+            "{}.{}+{}",
+            env!("CARGO_PKG_VERSION_MAJOR"),
+            env!("CARGO_PKG_VERSION_MINOR"),
+            blob.version()
+        );
         KvOnBlob {
             blob,
             in_place_put,
