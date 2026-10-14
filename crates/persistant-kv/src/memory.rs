@@ -23,6 +23,9 @@ pub enum Defect {
     ListPrefixIsPattern,
     /// `ordered_scan` returns keys in descending order.
     ScanIsDescending,
+    /// `ordered_scan` orders case-insensitively, as a text column under a case-insensitive or
+    /// locale collation does (the trap `BYTEA` keys avoid).
+    ScanIsCaseInsensitive,
     /// Paged calls ignore `limit` and `after`: the same keys come back every page.
     ListIgnoresPaging,
     /// `compare_and_swap` swaps whatever is there, ignoring `expected`.
@@ -84,6 +87,9 @@ impl MemoryKv {
             .collect();
         if ordered && self.defect == Some(Defect::ScanIsDescending) {
             keys.reverse();
+        }
+        if ordered && self.defect == Some(Defect::ScanIsCaseInsensitive) {
+            keys.sort_by_key(|k| k.to_lowercase());
         }
         let limit = if ignore_paging { usize::MAX } else { limit };
         let more = keys.len() > limit;

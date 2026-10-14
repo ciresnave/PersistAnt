@@ -95,7 +95,11 @@ impl Leaf {
                 Defect::ListIgnoresPaging,
                 Defect::ListShowsExpired,
             ],
-            Leaf::OrderedScan => &[Defect::ScanIsDescending, Defect::ListIgnoresPaging],
+            Leaf::OrderedScan => &[
+                Defect::ScanIsDescending,
+                Defect::ScanIsCaseInsensitive,
+                Defect::ListIgnoresPaging,
+            ],
             Leaf::CompareAndSwap => &[Defect::CasIgnoresExpected, Defect::CasNotAtomic],
             Leaf::CompareAndDelete => &[Defect::CadIgnoresExpected, Defect::CadNotAtomic],
             Leaf::Lease => &[
@@ -264,7 +268,7 @@ async fn put_if_absent<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
 
 async fn seed_keys<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     for k in [
-        "a/1", "a/10", "a/2", "a/b/c", "ab", "abz", "a0x", "a%z", "a[0]x", "b/1",
+        "a/1", "a/10", "a/2", "a/b/c", "a/a", "a/B", "ab", "abz", "a0x", "a%z", "a[0]x", "b/1",
     ] {
         b.put(&format!("{base}{k}"), k.as_bytes().to_vec(), None)
             .await?;
@@ -300,7 +304,7 @@ where
 async fn prefix_list<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     seed_keys(b, base).await?;
     let full = |s: &str| format!("{base}{s}");
-    let want: BTreeSet<String> = ["a/1", "a/10", "a/2", "a/b/c"]
+    let want: BTreeSet<String> = ["a/1", "a/10", "a/2", "a/B", "a/a", "a/b/c"]
         .iter()
         .map(|s| full(s))
         .collect();
@@ -349,7 +353,9 @@ async fn ordered_scan<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     seed_keys(b, base).await?;
     let full = |s: &str| format!("{base}{s}");
     // "1" < "10" < "2" bytewise: a numeric or natural sort would put "2" before "10".
-    let want: Vec<String> = ["a/1", "a/10", "a/2", "a/b/c"]
+    // Bytewise: "1" < "10" < "2" < "B" (0x42) < "a" (0x61) < "b/c". A collation-aware or
+    // case-insensitive order puts "a/a" before "a/B".
+    let want: Vec<String> = ["a/1", "a/10", "a/2", "a/B", "a/a", "a/b/c"]
         .iter()
         .map(|s| full(s))
         .collect();

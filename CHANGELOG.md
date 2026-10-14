@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.22
+
+### Added
+- Member crate `persistant-relational` (name held at 0.0.0; not published by this change): the small
+  `RelationalBackend` / `RelationalTx` trait (execute, query, begin; dialect and server version),
+  portable `Value` / `Row`, and `RelError` with typed classification (unique, foreign key, check,
+  serialization, deadlock, unavailable, unsupported). No driver.
+- Member crate `persistant-sqlx` (name held at 0.0.0; not published by this change): `PgBackend` over
+  sqlx 0.9 (`rust-version = "1.94"`, only this crate), SQLSTATE classification, transactions that
+  roll back on drop, and the concrete `PgPool` through `PgBackend::pool` for `sqlx::query!`.
+- `persistant-kv`: `KvOnRelational<R>`, the KV kind native on a relational backend (D1, C+).
+  PostgreSQL SQL, `BYTEA` keys (bytewise order, never collation), server-clock expiry, `ON CONFLICT`
+  put_if_absent that reclaims an expired row, compare-and-swap and compare-and-delete as single
+  statements. Certified against a real PostgreSQL 16.15: **all ten kv/lock leaves on**, including
+  `lock.lease`, `kv.compare_and_swap` and `kv.compare_and_delete`. Any other dialect is refused
+  until a translator is a published dependency.
+- New known-bad control `ScanIsCaseInsensitive` (the collation trap) and two seed keys, `a/a` and
+  `a/B`, which a case-insensitive or locale order puts the wrong way round.
+- CI: a `relational` job runs the sqlx tests against a PostgreSQL 16 service container pinned by
+  digest (`PERSISTANT_REQUIRE_DATABASE=1`, so a missing server fails instead of skipping), and an
+  `msrv-sqlx` job; the workspace MSRV job excludes `persistant-sqlx`.
+
 ## 0.4.21
 
 ### Changed

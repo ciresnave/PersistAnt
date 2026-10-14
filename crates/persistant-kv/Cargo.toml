@@ -12,6 +12,7 @@ categories = ["database-implementations", "development-tools::testing"]
 [dependencies]
 persistant-core = { workspace = true }
 persistant-blob = { workspace = true }
+persistant-relational = { workspace = true }
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["rt", "macros"] }
