@@ -95,6 +95,10 @@ pub const SEED: &[(&str, &str)] = &[
         "an update applies only if the value is still the one the caller read",
     ),
     (
+        "kv.compare_and_delete",
+        "a live value equal to the expected one is removed for exactly one of any number of concurrent callers; any other value is left alone",
+    ),
+    (
         "kv.take",
         "get-and-delete returns the value to exactly one of any number of concurrent callers",
     ),

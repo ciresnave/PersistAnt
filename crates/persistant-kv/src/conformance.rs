@@ -34,11 +34,17 @@ pub enum Leaf {
     PrefixList,
     /// `kv.ordered_scan`
     OrderedScan,
+    /// `kv.compare_and_swap`, by sampled concurrency
+    CompareAndSwap,
+    /// `kv.compare_and_delete`, by sampled concurrency
+    CompareAndDelete,
+    /// `lock.lease`, by real time and sampled concurrency
+    Lease,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 7] = [
+    pub const ALL: [Leaf; 10] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -46,6 +52,9 @@ impl Leaf {
         Leaf::PutIfAbsent,
         Leaf::PrefixList,
         Leaf::OrderedScan,
+        Leaf::CompareAndSwap,
+        Leaf::CompareAndDelete,
+        Leaf::Lease,
     ];
 
     /// The capability id.
@@ -58,6 +67,9 @@ impl Leaf {
             Leaf::PutIfAbsent => "kv.put_if_absent",
             Leaf::PrefixList => "kv.prefix_list",
             Leaf::OrderedScan => "kv.ordered_scan",
+            Leaf::CompareAndSwap => "kv.compare_and_swap",
+            Leaf::CompareAndDelete => "kv.compare_and_delete",
+            Leaf::Lease => "lock.lease",
         }
     }
 
@@ -65,6 +77,8 @@ impl Leaf {
         match self {
             Leaf::PutIfAbsent => "contenders=16;rounds=20;value_bytes=1024",
             Leaf::Ttl => "ttl_ms=300;sleep_ms=450",
+            Leaf::CompareAndSwap | Leaf::CompareAndDelete => "contenders=16;rounds=20",
+            Leaf::Lease => "contenders=16;rounds=5;ttl_ms=200;sleep_ms=300",
             _ => "",
         }
     }
@@ -82,6 +96,13 @@ impl Leaf {
                 Defect::ListShowsExpired,
             ],
             Leaf::OrderedScan => &[Defect::ScanIsDescending, Defect::ListIgnoresPaging],
+            Leaf::CompareAndSwap => &[Defect::CasIgnoresExpected, Defect::CasNotAtomic],
+            Leaf::CompareAndDelete => &[Defect::CadIgnoresExpected, Defect::CadNotAtomic],
+            Leaf::Lease => &[
+                Defect::PutIfAbsentNotExclusive,
+                Defect::CasIgnoresExpected,
+                Defect::CadIgnoresExpected,
+            ],
         }
     }
 }
@@ -116,6 +137,9 @@ pub async fn run_leaf<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::PutIfAbsent => put_if_absent(b, &base).await,
         Leaf::PrefixList => prefix_list(b, &base).await,
         Leaf::OrderedScan => ordered_scan(b, &base).await,
+        Leaf::CompareAndSwap => compare_and_swap(b, &base).await,
+        Leaf::CompareAndDelete => compare_and_delete(b, &base).await,
+        Leaf::Lease => lease(b, &base).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.prefix_list(&base, None, usize::MAX).await {
@@ -343,6 +367,170 @@ async fn ordered_scan<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+async fn compare_and_swap<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 20;
+    let k = format!("{base}seq");
+    b.put(&k, b"v1".to_vec(), None).await?;
+    if !b.compare_and_swap(&k, b"v1", b"v2".to_vec(), None).await? {
+        return wrong("a swap from the current value was refused");
+    }
+    if b.get(&k).await?.as_deref() != Some(&b"v2"[..]) {
+        return wrong("a successful swap did not store the new value");
+    }
+    if b.compare_and_swap(&k, b"v1", b"v3".to_vec(), None).await? {
+        return wrong("a swap from a stale value was accepted");
+    }
+    if b.get(&k).await?.as_deref() != Some(&b"v2"[..]) {
+        return wrong("a refused swap changed the value");
+    }
+    let absent = format!("{base}absent");
+    if b.compare_and_swap(&absent, b"", b"x".to_vec(), None)
+        .await?
+        || b.get(&absent).await?.is_some()
+    {
+        return wrong("a swap on an absent key created it");
+    }
+    for round in 0..ROUNDS {
+        let key = format!("{base}r{round}");
+        let key = key.as_str();
+        b.put(key, b"0".to_vec(), None).await?;
+        let tasks: Vec<Task<'_, Result<bool, KvError>>> = (0..CONTENDERS)
+            .map(|i| -> Task<'_, _> {
+                Box::pin(b.compare_and_swap(key, b"0", vec![b'a' + i as u8], None))
+            })
+            .collect();
+        let mut winners = 0;
+        for r in join_all(tasks).await {
+            if r? {
+                winners += 1;
+            }
+        }
+        if winners != 1 {
+            return wrong(format!(
+                "round {round}: {winners} of {CONTENDERS} concurrent swaps from \"0\" won, want exactly 1"
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn compare_and_delete<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 20;
+    let k = format!("{base}seq");
+    b.put(&k, b"v".to_vec(), None).await?;
+    if b.compare_and_delete(&k, b"x").await? {
+        return wrong("a delete expecting a different value was accepted");
+    }
+    if b.get(&k).await?.is_none() {
+        return wrong("a refused delete removed the value");
+    }
+    if !b.compare_and_delete(&k, b"v").await? {
+        return wrong("a delete expecting the current value was refused");
+    }
+    if b.get(&k).await?.is_some() {
+        return wrong("a successful delete left the value");
+    }
+    if b.compare_and_delete(&k, b"v").await? {
+        return wrong("a delete on an absent key reported success");
+    }
+    for round in 0..ROUNDS {
+        let key = format!("{base}r{round}");
+        let key = key.as_str();
+        b.put(key, b"v".to_vec(), None).await?;
+        let tasks: Vec<Task<'_, Result<bool, KvError>>> = (0..CONTENDERS)
+            .map(|_| -> Task<'_, _> { Box::pin(b.compare_and_delete(key, b"v")) })
+            .collect();
+        let mut winners = 0;
+        for r in join_all(tasks).await {
+            if r? {
+                winners += 1;
+            }
+        }
+        if winners != 1 {
+            return wrong(format!(
+                "round {round}: {winners} of {CONTENDERS} concurrent deletes won, want exactly 1"
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn lease<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    use crate::Lease;
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 5;
+    let ttl = Duration::from_millis(200);
+    let long = Duration::from_secs(30);
+    let key = format!("{base}lease");
+
+    let Some(a) = Lease::acquire(b, &key, "A", long).await? else {
+        return wrong("a free lease was not granted");
+    };
+    if Lease::acquire(b, &key, "B", long).await?.is_some() {
+        return wrong("a held lease was granted to a second owner");
+    }
+    if !a.renew(long).await? {
+        return wrong("the owner could not renew its own lease");
+    }
+    if !a.release().await? {
+        return wrong("the owner could not release its own lease");
+    }
+    let Some(b1) = Lease::acquire(b, &key, "B", long).await? else {
+        return wrong("a released lease was not granted again");
+    };
+    b1.release().await?;
+
+    // Expiry and safe reclaim.
+    let Some(a) = Lease::acquire(b, &key, "A", ttl).await? else {
+        return wrong("a free lease was not granted after release");
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    let Some(b2) = Lease::acquire(b, &key, "B", long).await? else {
+        return wrong("an expired lease was not reclaimed");
+    };
+    if a.renew(long).await? {
+        return wrong("a former owner renewed a lease that another owner now holds");
+    }
+    if a.release().await? {
+        return wrong("a former owner released a lease that another owner now holds");
+    }
+    if Lease::acquire(b, &key, "C", long).await?.is_some() {
+        return wrong("the former owner's release freed the new owner's lease");
+    }
+    b2.release().await?;
+
+    // Concurrent reclaim of an expired lease: exactly one new owner per round.
+    for round in 0..ROUNDS {
+        let k = format!("{base}race{round}");
+        let k = k.as_str();
+        let Some(_old) = Lease::acquire(b, k, "old", ttl).await? else {
+            return wrong("a free lease was not granted before a race round");
+        };
+        std::thread::sleep(Duration::from_millis(300));
+        let names: Vec<String> = (0..CONTENDERS).map(|i| format!("c{i}")).collect();
+        let tasks: Vec<Task<'_, Result<bool, KvError>>> = names
+            .iter()
+            .map(|n| -> Task<'_, _> {
+                Box::pin(async move { Ok(Lease::acquire(b, k, n, long).await?.is_some()) })
+            })
+            .collect();
+        let mut winners = 0;
+        for r in join_all(tasks).await {
+            if r? {
+                winners += 1;
+            }
+        }
+        if winners != 1 {
+            return wrong(format!(
+                "race {round}: {winners} of {CONTENDERS} reclaimed an expired lease, want exactly 1"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The outcome of certifying one leaf.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Certified {
@@ -465,14 +653,14 @@ mod tests {
 
     #[tokio::test]
     async fn every_defect_turns_its_leaf_off_as_wrong() {
+        // Run the leaf directly: a full `certify` per defect would repeat every other leaf's
+        // real-time waits.
         for leaf in Leaf::ALL {
             for d in leaf.defects() {
-                let rows =
-                    certify(&MemoryKv::with_defect(*d), &Config::new(), &Config::new()).await;
-                assert_eq!(
-                    state(&rows, leaf.id()),
-                    Some(Reason::Wrong),
-                    "{d:?} vs {}",
+                let r = run_leaf(leaf, &MemoryKv::with_defect(*d)).await;
+                assert!(
+                    matches!(r, Err(Failure::Wrong(_))),
+                    "{d:?} vs {}: {r:?}",
                     leaf.id()
                 );
             }
@@ -500,7 +688,15 @@ mod tests {
         let kv = KvOnBlob::new(MemoryBlob::new());
         let rows = certify(&kv, &Config::new(), &Config::new()).await;
         for c in &rows {
-            assert!(c.row.enabled, "{}: {}", c.leaf.id(), c.row.note);
+            // A blob store has no compare-and-delete, so these are missing, not wrong.
+            let needs_cad = matches!(
+                c.leaf,
+                Leaf::CompareAndSwap | Leaf::CompareAndDelete | Leaf::Lease
+            );
+            assert_eq!(c.row.enabled, !needs_cad, "{}: {}", c.leaf.id(), c.row.note);
+            if needs_cad {
+                assert_eq!(c.row.reason, Some(Reason::Missing), "{}", c.leaf.id());
+            }
         }
         assert_eq!(rows[0].row.backend, "kv-on-blob");
     }

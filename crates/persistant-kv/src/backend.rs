@@ -80,8 +80,8 @@ pub trait KvBackend: Send + Sync {
     /// Remove `key`. Removing an absent key is `Ok` (`kv.delete`).
     fn delete(&self, key: &str) -> impl Future<Output = Result<(), KvError>> + Send;
 
-    /// Store `value` only if the key is absent. `Ok(true)` stored it, `Ok(false)` found a live
-    /// value and changed nothing. Of concurrent calls for one key exactly one gets `Ok(true)`
+    /// Store `value` only if the key is absent **or expired**. `Ok(true)` stored it, `Ok(false)`
+    /// found a live value and changed nothing. Of concurrent calls for one key exactly one gets `Ok(true)`
     /// (`kv.put_if_absent`).
     fn put_if_absent(
         &self,
@@ -116,5 +116,32 @@ pub trait KvBackend: Send + Sync {
     ) -> impl Future<Output = Result<KeyPage, KvError>> + Send {
         let _ = (prefix, after, limit);
         async { Err(KvError::Unsupported("ordered_scan".to_string())) }
+    }
+
+    /// If the **live** value at `key` equals `expected`, store `new` (with `ttl`) and return
+    /// `Ok(true)`; an absent, expired or different value returns `Ok(false)` and changes nothing.
+    /// Of concurrent callers expecting the same value exactly one gets `Ok(true)`
+    /// (`kv.compare_and_swap`).
+    fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: &[u8],
+        new: Vec<u8>,
+        ttl: Option<Duration>,
+    ) -> impl Future<Output = Result<bool, KvError>> + Send {
+        let _ = (key, expected, new, ttl);
+        async { Err(KvError::Unsupported("compare_and_swap".to_string())) }
+    }
+
+    /// If the **live** value at `key` equals `expected`, remove it and return `Ok(true)`;
+    /// otherwise `Ok(false)` and nothing changes. Of concurrent callers exactly one gets
+    /// `Ok(true)` (`kv.compare_and_delete`).
+    fn compare_and_delete(
+        &self,
+        key: &str,
+        expected: &[u8],
+    ) -> impl Future<Output = Result<bool, KvError>> + Send {
+        let _ = (key, expected);
+        async { Err(KvError::Unsupported("compare_and_delete".to_string())) }
     }
 }

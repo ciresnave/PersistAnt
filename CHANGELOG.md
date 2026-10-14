@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.19
+
+### Added
+- `persistant-kv`: `KvBackend::compare_and_swap` and `compare_and_delete` (default `Unsupported`),
+  `Lease` (`lock.lease`: acquire = `put_if_absent` with a time to live, renew = compare-and-swap,
+  release = compare-and-delete; no approximation on a backend lacking them), and contract tests for
+  `kv.compare_and_swap`, `kv.compare_and_delete` and `lock.lease` (free, held, renew, release,
+  expiry and reclaim, a former owner cannot renew or release the new owner's lease, 16 concurrent
+  reclaimers x 5 rounds; parameters in the row). Known-bad controls: `CasIgnoresExpected`,
+  `CasNotAtomic`, `CadIgnoresExpected`, `CadNotAtomic`, plus `PutIfAbsentNotExclusive` for the lease.
+- `persistant-core` vocabulary: `kv.compare_and_delete`.
+- `put_if_absent` documents that an expired entry counts as absent.
+- `KvOnBlob` offers none of the three: it has no compare-and-delete, so they are off (`missing`).
+
 ## 0.4.18
 
 ### Added
