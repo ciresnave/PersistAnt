@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.27
+
+### Added
+- `persistant-opendal::crash`: the crash half of `blob.replace_atomic` ("a crash leaves the whole
+  old value or the whole new one"), decided by killing a process mid-replace. A host binary re-runs
+  itself as the child (`PERSISTANT_CRASH_CHILD`); the parent kills it hard 12 times at varied delays
+  and requires the key to hold the whole `A...` or the whole `B...` 16 MiB value. Controls: a std
+  write-then-rename passes (positive), a slow in-place truncate-and-write is found torn
+  (known-bad). Not covered, stated: power loss (`blob.durable`), since a process kill leaves the
+  page cache intact.
+- Findings recorded in `matrix/opendal.tsv`: `blob.replace_atomic` is **on** for `opendal-fs` with
+  `atomic_write_dir`, and **missing** without it (the driver refuses: it writes in place).
+- This is the prerequisite `docs/FACADE-MIGRATION.md` named for any matrix-gated `AtomicReplace`.
+- `persistant-opendal` gains a normal dependency on `tokio` (feature `rt`), for the child's runtime.
+
 ## 0.4.26
 
 ### Changed

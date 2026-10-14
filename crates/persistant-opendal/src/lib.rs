@@ -9,6 +9,7 @@
 //! `list` is emulated: OpenDAL lists directories, so every key under the prefix's directory part
 //! is scanned and filtered, and the cost is a scan of that tree per page.
 
+pub mod crash;
 mod process_lock;
 
 pub use process_lock::ProcessLock;

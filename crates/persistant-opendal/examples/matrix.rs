@@ -33,11 +33,30 @@ fn merged(a: &Config, b: &Config) -> Config {
     Config::parse(&text).expect("config facts parse")
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
+fn main() {
+    // This binary is its own crash-test child (`blob.replace_atomic`): it returns at once unless
+    // it was started that way.
+    persistant_opendal::crash::maybe_run_child();
+
     let env = Config::new()
         .with("os", std::env::consts::OS)
         .with("arch", std::env::consts::ARCH);
+    // The crash half of `blob.replace_atomic` kills child processes, so it runs before any
+    // runtime exists.
+    let work = tempfile::tempdir().unwrap();
+    let crash_rows =
+        persistant_opendal::crash::certify_replace(work.path(), &[], &env).expect("crash test ran");
+    let tmp_work = work.path().to_string_lossy().into_owned();
+    let crash_rows = clean(crash_rows, &[tmp_work.as_str()]);
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(run(env, crash_rows));
+}
+
+async fn run(env: Config, crash_rows: Vec<Row>) {
     let mut rows: Vec<Row> = Vec::new();
 
     let root_a = tempfile::tempdir().unwrap();
@@ -60,6 +79,8 @@ async fn main() {
         let certified = persistant_blob::conformance::certify(b, b.config(), &env).await;
         rows.extend(clean(certified.into_iter().map(|c| c.row), &tmp));
     }
+
+    rows.extend(crash_rows);
 
     // KvOnBlob over each, strict; plus the explicit in-place mode on fs without a scratch dir.
     let kvs = [

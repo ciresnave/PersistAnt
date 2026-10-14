@@ -51,6 +51,15 @@ fn the_gate_reads_the_recorded_findings() {
         ),
         Lookup::On
     );
+    // The crash half is certified too: atomic with a scratch dir, refused by the driver without.
+    assert_eq!(
+        m.lookup(&id("blob.replace_atomic"), "opendal-fs", &version, &set),
+        Lookup::On
+    );
+    assert_eq!(
+        m.lookup(&id("blob.replace_atomic"), "opendal-fs", &version, &unset),
+        Lookup::Off(Reason::Missing)
+    );
     // A server or driver version nobody certified is off, not guessed.
     assert_eq!(
         m.lookup(

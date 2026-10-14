@@ -14,6 +14,7 @@ persistant-core = { workspace = true }
 persistant-blob = { workspace = true }
 opendal = { version = "0.59.4", default-features = false, features = ["services-fs"] }
 futures-util = { version = "0.3.34", default-features = false }
+tokio = { version = "1.53.2", features = ["rt"] }
 
 [dev-dependencies]
 persistant-kv = { workspace = true }
