@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.10
+
+### Changed
+- `docs/DESIGN-KINDS.md` revised, docs only, no code: a capability is a boolean that is off until an
+  automated test passes (no declared/emulated/conditional status); the vocabulary is named by
+  feature-space coverage rather than consumer demand; the matrix row schema (with `config`) and the
+  trait / adapter / driver crate plan (`persistant-core`, `-blob`, `-relational`, `-kv`, `-opendal`,
+  `-sqlx`) are written down; open decisions D2, D3 and D6 reworded.
+- README: states the versions crates.io lists (0.4.1, 0.4.4, 0.4.8, 0.4.9 at 2026-10-13).
+
 ## 0.4.9
 
 ### Added

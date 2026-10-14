@@ -1,7 +1,7 @@
 # PersistAnt: one persistence layer, every kind of persistence
 
 Design document. **No code, no new crates, no publish.** Written 2026-10-11 by the PersistAnt lane
-for the PM's `[TASK]` of the same day. It proposes; CireSnave and the PM decide (open decisions are in §9).
+for the PM's `[TASK]` of the same day; **revised 2026-10-14** after a design conversation with CireSnave's session (§2, §3). It proposes; CireSnave and the PM decide (open decisions are in §9).
 
 ## 0. What this is, and how far to trust it
 
@@ -20,6 +20,12 @@ for now that is on the eventual roadmap but not until our tools we're building a
 *"worth keeping in mind while we build but not a reason not to build it."* So: Rust projects only (§6 is
 a short "do not foreclose it" section), and dialect leakage is a **stated cost** in §4, not an argument
 against building.
+
+**What the 2026-10-14 revision changed.** Capability is a boolean, off until an automated test passes
+(§2.1); the vocabulary is named by feature-space coverage, not by consumer demand (§2.2); `Declared`,
+`emulated` and `conditional` are gone; the crate plan is trait crates, generic adapters and driver
+crates (§3); the matrix row schema, including `config`, is written down (§2.4). Anything in §1 that
+still says "needed by" is evidence of use, not a gate.
 
 **Provenance.** Facts about other projects come from read-only passes at the `origin/main` heads below,
 each read with `git show origin/main:<path>` after a `git fetch` (no checkout, no refs written). Citations
@@ -124,56 +130,95 @@ consume is `get` then `delete` (`src/server/oauth/par.rs:268-300`).
 
 ### 2.1 The shape
 
-A **capability** is a named, versionable property of a backend that a program may depend on. The
-vocabulary is one flat, namespaced list (`blob.*`, `kv.*`, `rel.*`, `lock.*`, ...). A **program declares
-needs** at open; a **backend reports capabilities**; opening is refused, with every unmet need named,
-when they do not cover the declaration. That is today's `Need`/`Needs`/`Error::Refused`
-(`src/store.rs:17-63`, `src/error.rs:21-28` @ 19c0a74), generalised from one kind to all.
+A **capability** is a named property of a backend that a program may depend on. The vocabulary is one
+flat, namespaced list (`blob.*`, `kv.*`, `rel.*`, `lock.*`, `storage.*`, `ops.*`, ...). A **program
+declares needs** at open; the gate looks up the backend's capabilities; opening is refused, with every
+unmet need named, when they do not cover the declaration. That is today's `Need`/`Needs`/`Error::Refused`
+(`src/store.rs:17-63`, `src/error.rs:21-28` @ cc934e1), generalised from one kind to all.
 
-Three properties the current code does not yet have, and that the ruling and the PM's brief require:
+**Revised 2026-10-14.** An earlier version of this section gave a capability a status (`Proven`,
+`Declared`, `Absent`) and a "how" (`native`, `emulated`, `conditional`). Both are removed. The model is:
 
-1. **A capability has a status, not just a yes.** `Proven` (the conformance suite passed it on this
-   backend and version), `Declared` (the backend's author or the operator asserts it; nobody tested),
-   `Absent`. A program may require `Proven`. Today the refusal is derived from OpenDAL's *declared*
-   `Capability` struct (FIT §B.2), plus PersistAnt's own checks (for example `atomic_write_dir` set).
-   That is *claimed*, and FIT §B.2 itself lists a service advertising a field it does not honour as the
-   risk. The suite makes it *probed*.
-2. **The vocabulary is data.** Capability ids are stable strings with a serialisable schema, not only
-   Rust enum variants, so a manifest of "what this program needs" can be written down, diffed and
-   checked outside Rust (§6) and so adding a capability is not a breaking change (`#[non_exhaustive]`
-   stays, ids are append-only).
-3. **A need may carry a parameter** (maximum value size, isolation level, dialect and minimum major
-   version). `Need::MaxValueSize(u64)` is the existing example.
+1. **A capability is a boolean** for a `(backend, version, config)`, where `config` is only what the gate
+   can read at open. **It is off until a test passes.** "Not set" is the default and the only way to be
+   off; there is no "declared" middle. A program that needs it and finds it off is refused.
+2. **Verification is always an automated test.** People and LLMs write and review tests; nobody
+   asserts a capability. Untestable means it stays off. Environment beyond what the gate can read is
+   covered by "works on my machine" with the environment recorded as metadata (§2.3, §2.4).
+3. **Four outcomes of a test**, and what each does to the vocabulary:
+   - *exact* (the result matches the capability's written contract) → **on**;
+   - *equally correct but different* (pi as `3.141592` where the test expected `3.14159`) → widen the
+     test **only if the test was stricter than the capability's written contract**; otherwise the
+     difference is a **new leaf** with its own contract, plus a generalisation over the leaves;
+   - *wrong* → **off**, and a bug report to the backend's developer;
+   - *missing* → **off**.
+4. **Leaves, chains, alternatives, composites.** A leaf names one behaviour or feature, **never a
+   backend**. Ordered refinements are a **chain**: the stronger leaf implies the weaker. Unordered
+   variants are an **OR** over leaves. A **composite** is derived from its leaves *and* the
+   composite's own contract test must also pass on every route that derives it: derivation says
+   *eligible*, the test says *on*. Test sets form a hierarchy matching the vocabulary.
+5. **Ids never change meaning.** A change in meaning is a new id. Each leaf carries a **written
+   contract** (a sentence, such as a comparator's canonicalisation), and **any test change that turns
+   a failing backend green must cite the contract wording** that justifies it, else the test was bent to
+   fit the backend.
+6. **Every test has a positive control and a known-bad control.** The positive control shows the test
+   can pass on something that is right; the known-bad one shows it can fail on something that is
+   wrong (examples in §2.2 and §3 #5).
+7. **The vocabulary is data.** Ids are stable strings with a serialisable schema, so a manifest of what a
+   program needs can be written down, diffed and checked outside Rust (§6), and adding an id is not a
+   breaking change (`#[non_exhaustive]` stays, ids are append-only). UniSQL and PersistAnt agreed
+   2026-10-12 that the ids are plain strings owned by PersistAnt, that UniSQL does not import
+   `persistant-core` (at most a dev-dependency drift test), and that each repo owns its matrix *file*
+   while this crate owns the row *schema* (§2.4).
+8. **A need may carry a parameter** (maximum value size, dialect and minimum major version).
+   `Need::MaxValueSize(u64)` is the existing example; the parameter is compared with the value the
+   test measured.
 
-### 2.2 The vocabulary, each entry traced to a consumer
+### 2.2 The vocabulary, named by coverage
 
-"Needed by" is the evidence the entry earns its place; an entry with no consumer is not in the list.
-**Native** means a real backend can give it without help; **emulated** means PersistAnt builds it from
-weaker primitives and must say so (as `list` is emulated today, README *Scope* §1).
+**The vocabulary is named by the feature space, not by who needs it.** This corrects the first version of
+this section, which admitted an id only when a consumer needed it. A vocabulary that grows by consumer
+request grows by accident, and every request is a design review. Instead:
 
-| Id | Meaning | Needed by (evidence) | Native on | Emulated / absent |
+- **Relational ids follow the SQL standard's feature codes**, so "what does this database give" is
+  answerable from a published list. PostgreSQL documents its conformance by those codes (its appendix
+  states it supports "at least 170 of 177 mandatory Core features"); that list is approximate and only
+  its introduction was read here, so SQLite's and MySQL's would be separate surveys (§10).
+- **Blob and KV ids follow OpenDAL's capability fields** (about 100) plus what the consumers in §1 do
+  that those fields do not name (create-exclusive *with* content visible, file mode).
+- **Untested is off**, so a wide list is safe: an id with no passing test claims nothing. The table
+  below is the **seed** from the consumers seen so far, not the boundary.
+- **Needs should be derived, not hand-written**: UniSQL's `analyse` reads a SQL string and returns the
+  constructs it uses, which map to `rel.*` leaves; a program's needs for its whole statement set can be
+  computed. Whether Humboldt's checked-in `.sqlx` files are a complete statement set is UNVERIFIED.
+
+"Consumer seen" below is evidence of use, not a gate. A capability here is **boolean** (§2.1);
+"usually given by" says where it is typically on, which a test must still confirm.
+
+| Id | Meaning | Consumer seen (evidence, not a gate) | Usually given by | Known not given / caveat |
 |---|---|---|---|---|
 | `blob.read` `.write` `.delete` `.stat` | bytes by key | lightbulb, agentlife, all file writers | fs, memory, s3 (OpenDAL) | — |
-| `blob.list` | ascending, paged, literal prefix | agentlife registry listing (`registry.rs:420-429`); auth KV prefix list | memory, s3, fs (directory scan) | prefix emulated on OpenDAL (today) |
+| `blob.list` | ascending, paged, literal prefix | agentlife registry listing (`registry.rs:420-429`); auth KV prefix list | memory, s3, fs (directory scan) | prefix filtering done by this crate on OpenDAL (today) |
 | `blob.replace_atomic` | reader sees old or new, never a mix | 17 hand-written sites (§1.2) | fs with scratch dir, memory | refused without `atomic_write_dir` |
 | `blob.create_exclusive` | write only if absent | agentlife/lane-restart locks, synapse keystore | fs `create_new`, s3 if-not-exists | **not together with `replace_atomic` on fs via OpenDAL** (README, 0.4.7) |
 | `blob.create_exclusive_atomic` | exclusive *and* content fully visible on creation | synapse `write_new` by `hard_link` (`keystore.rs:606-615`) | a native fs path (hard link) — **not OpenDAL** | no OpenDAL service advertises it |
-| `blob.durable` | survives power loss (file and parent directory synced) | synapse and user-request sync the file; fuel, mlmf, lane-restart do not | none via OpenDAL (no parent-dir fsync, README *Limits*) | declared only |
+| `blob.durable` | survives power loss (file and parent directory synced) | synapse and user-request sync the file; fuel, mlmf, lane-restart do not | none via OpenDAL (no parent-dir fsync, README *Limits*) | on only if the VM hard-reset test passed (below) |
 | `blob.file_mode` | owner-only permission on create | synapse (keystore, session cache, announce file, security log: 0600; keystore dir 0700) | native fs path | not in OpenDAL's capability struct (FIT §C row 10) |
 | `blob.append` | append bytes, optionally with torn-line repair | agentlife journal; 9 plain-append sites | fs | repair is ours |
 | `blob.max_value_size(n)` | one value up to n bytes | D1 1 MB ceiling (FIT §B.1) | — | refused only where a ceiling is advertised |
-| `kv.get` `.put` `.delete` | typed or byte values by key | auth-framework `store_kv/get_kv/delete_kv` | Postgres, SQLite, Redis, redb, memory | emulated over blob (record envelope) |
+| `kv.get` `.put` `.delete` | typed or byte values by key | auth-framework `store_kv/get_kv/delete_kv` | Postgres, SQLite, Redis, redb, memory | built by this crate over blob (record envelope) |
 | `kv.ttl` | per-write expiry; expired entries invisible to get **and** list; ms resolution | auth `store_kv(…, ttl)` (`core.rs:142`), OAuth/OTP/PAR windows; user-request `expires_at` | Redis, Postgres/SQLite (column + predicate) | blob: `expires_at` in the envelope + sweep (needs `blob.list`) |
-| `kv.ttl_remaining` | read back the remaining ttl | auth `get_kv_ttl` (`core.rs:157`), migration/backup re-store | Redis, SQL | emulated from the envelope |
+| `kv.ttl_remaining` | read back the remaining ttl | auth `get_kv_ttl` (`core.rs:157`), migration/backup re-store | Redis, SQL | built from the envelope by this crate |
 | `kv.put_if_absent` | atomic create | auth user-uniqueness (`user_manager.rs:477-503`); lock acquire | Redis `SET NX`, SQL `INSERT … ON CONFLICT DO NOTHING`, redb | blob: only where `blob.create_exclusive` is native |
 | `kv.compare_and_swap` | atomic update if unchanged | `users:index` (`user_manager.rs:514-526`) | SQL, redb | blob: only with if-match (s3) |
 | `kv.take` | get and delete atomically | single-use PAR/codes (`par.rs:268-300`) | SQL (`DELETE … RETURNING`), Redis `GETDEL` | — |
 | `kv.batch_atomic` | several keys all-or-nothing | auth token + access-token + user index; synapse mailbox contract | SQL, redb, Redis `MULTI` | **not on blob**; refused |
 | `kv.ordered_scan` | ascending bytewise range/prefix, paged | synapse `(role, seq)` scan; auth prefix list | redb, SQL (`ORDER BY`), blob (sorted by this crate) | Redis: `KEYS` is neither ordered nor bounded; refused |
 | `kv.count` | count under a prefix | auth `count_active_sessions` | SQL | scan |
-| `lock.lease` | exclusive lease with owner token, expiry, safe reclaim | 4 hand-written locks (§1.2) | built on `kv.put_if_absent` + `kv.ttl`, or on `blob.create_exclusive` | emulated; says so |
+| `lock.lease` | exclusive lease with owner token, expiry, safe reclaim | 4 hand-written locks (§1.2) | built on `kv.put_if_absent` + `kv.ttl`, or on `blob.create_exclusive` | built by this crate; on only if its lock test passes |
 | `lock.process` | held until the process dies, no staleness | user-request, synapse RoleLock, coderipper, baracuda (6 sites) | local fs only | not offered remotely |
-| `rel.dialect(d, min)` | the program writes SQL for dialect `d` | Humboldt, lightbulb, synapse, auth-framework | Postgres | see §4 |
+| `rel.dialect(d, min)` | the program writes SQL for dialect `d` and the backend *is* `d` at version >= `min` | Humboldt, lightbulb, synapse, auth-framework | Postgres | see §4 |
+| `rel.source_dialect(d)` | statements written in `d` are accepted and **translated** for this backend (UniSQL); each construct is a leaf (`cast.to_uuid`, `upsert.where`, ...) | UniSQL; agreed with its lane 2026-10-12 | a backend with a UniSQL dialect crate | a construct UniSQL refuses is simply not on; it never turns into a status |
 | `rel.transaction` | begin/commit/rollback | Humboldt (`routes/accounts.rs:115`), migrations | Postgres, SQLite | none |
 | `rel.isolation(level)` | read committed / repeatable read / serializable | Humboldt uses `REPEATABLE READ READ ONLY` (`transfer.rs:12`) | Postgres | — |
 | `rel.savepoint` | nested rollback | Humboldt `remove_accounts.rs:192-203` | Postgres, SQLite | — |
@@ -188,77 +233,143 @@ weaker primitives and must say so (as `list` is emulated today, README *Scope* �
 | `rel.bulk_copy` | `COPY` in/out | Humboldt backup/transfer (`transfer.rs:392,403`) | Postgres | — |
 | `rel.session_setting` | transaction-local setting readable by triggers | Humboldt erasure escape hatch (`data_deletion.rs:49-59`) | Postgres | — |
 | `rel.catalog` | read the schema (triggers, functions) | Humboldt install check (`dbtools.rs:207-257`) | Postgres | — |
-| `ops.pitr` | point-in-time recovery exists | PM's list; **not data-path** | provisioning stack reports it | **declared only; never `Proven` by this crate** |
+| `ops.pitr` | point-in-time recovery restores to a chosen instant | PM's list; **not data-path**, but testable | PostgreSQL base backup + archived WAL; verified by restoring and comparing | on only if the test (restore to instant *t*, compare to a snapshot taken at *t*) ran on that environment |
+| `storage.no_plaintext_at_rest` | a canary value written through the layer is not found as raw bytes anywhere in the data directory, WAL and temp files included | auth-framework's encryption-at-rest design (`PORTFOLIO-ROADMAP.md:505`) | an encrypted volume or engine-level encryption | positive control: the same search on an unencrypted instance **must** find the canary |
 
-Two rules keep the list honest. A capability is added only when a consumer in §1 needs it. And a
-capability the data path cannot observe (`ops.pitr`, power-loss durability) is **declared by the
-operator** and labelled so in the open-time report; the suite does not pretend to prove it.
+**How the hard-to-observe ones are tested** (each is an automated test; people and LLMs author and
+review tests, never "verify" a capability by assertion):
 
-### 2.3 Probing
+- **Power-loss durability** (`blob.durable`): write, acknowledge, hard-reset a VM, mount, read. It needs
+  the virtual disk to pass flushes through, and a positive control: an *unsynced* write must be **lost**
+  in the same run, or the test proves nothing. Not run today; no OpenDAL service passes it for `fs`
+  (README *Limits*: no parent-directory fsync).
+- **Concurrency** (`blob.create_exclusive`, `kv.put_if_absent`, `lock.*`): a stress test with recorded
+  trial parameters (threads, iterations, duration). A race that did not occur in N trials is "no
+  failure seen", which is what a passing test is; the parameters go in the row. Known-bad control:
+  OpenDAL `fs` with `atomic_write_dir` set, where exclusive create is check-then-rename (README 0.4.6
+  and 0.4.7), must fail the test.
+- **Point-in-time recovery** (`ops.pitr`): base backup, archived WAL, restore to an instant, compare.
+- **Encryption at rest**: raw-bytes canary search above.
+- **Retention** (`kv.ttl`): a short TTL and a real sleep suffice (no clock manipulation); known-bad
+  control: an entry written without TTL must still be visible afterwards.
 
-- **Blob and KV capabilities** are probed by writing, reading, listing, racing and deleting under a
-  scratch prefix. That is what the current test suite already does to the real `fs` service for atomic
-  replace (README *Scope* §2); this generalises it into a reusable harness a backend must pass.
-- **Relational capabilities** are probed inside a transaction that is rolled back, using `TEMP` objects:
-  create a temp table with a foreign key, a trigger, an expression index; take an advisory lock; try
-  `FOR UPDATE SKIP LOCKED`; `ROLLBACK`. That needs only the `TEMP` privilege. **UNVERIFIED** that every
-  deployment's role has it; §9 decision D3 asks what to do when it does not.
-- **Two places a probe runs.** (a) In CI, against each shipped backend and each supported server
-  major (Humboldt's CI already starts `postgres:16`: `ci.yml:153-160` @ b7cd95e, pass), producing a
-  checked-in matrix `backend, version → capability, status`. (b) At open, a cheap live check (server
-  version, extension, the temp-object probe if permitted) that is looked up against that matrix.
-  An unknown server version is `Declared`, never `Proven`.
-- **A consumer's own CI uses the same suite**, so "the production backend gives what I declared" is a
-  test that fails in the consumer's pipeline, not a discovery at 3 a.m. This is the single mechanism that
-  would have caught every inconsistency in §1.3's auth-framework list.
+**Rule for adding an id.** Ids are named by what the *feature space* contains, not by who asked
+(§2.2 intro). An id nobody uses costs nothing, because it is off until a test turns it on. A consumer
+sets which tests are written first, not which ids exist.
+
+### 2.3 Verification
+
+- **The gate reads facts, not behaviour.** At open it learns the backend, its version, and any
+  configuration the gate can read cheaply (a locale, a collation, a directory is set). It then *looks up*
+  the row for `(backend, version, config)` (§2.4). It does not decide behaviour itself. **An unknown
+  version has no row, so every capability is off** — the user's phrase for it was "exactly the right
+  cost": the price is an update to the matrix, not an unverified guess.
+- **Where tests run.** (a) In CI, against each shipped driver and each supported server major (Humboldt's
+  CI already starts `postgres:16`: `ci.yml:153-160` @ b7cd95e, pass), producing the checked-in matrix.
+  (b) In a consumer's own CI, with the same suite against *its* production backend, so "the backend gives
+  what I need" is a failing build, not a discovery at 3 a.m. That is the one mechanism that would have
+  caught every inconsistency in §1.3's auth-framework list.
+- **A live test at open** (rolled-back `TEMP` objects, an advisory lock, `FOR UPDATE SKIP LOCKED`) would
+  be one more place a test runs, needing the `TEMP` privilege. It is not required by this design and is
+  **decision D3**; **UNVERIFIED** that every deployment's role has the privilege.
+- **Blob and KV tests** write, read, list, race and delete under a scratch prefix, as the current suite
+  already does against the real `fs` service for atomic replace (README *Scope* §2).
+- **What "works on my machine" covers.** Behaviour that depends on the environment beyond what the gate
+  can read (filesystem type, disk cache, kernel) is verified once on the machine that ran the test, and
+  the environment is recorded as metadata (§2.4). That is a statement about that environment, not about
+  all of them, and the row says so by carrying it.
+
+### 2.4 The matrix row
+
+One recorded fact per row, in a checked-in tab-separated file per repo (UniSQL's are at
+`crates/unisql-dialect-*/matrix-<backend>-from-<source>.tsv`); a reader merges files. The row
+schema is owned here:
+
+| Field | Meaning |
+|---|---|
+| `subject_kind` | `capability` or `construct` (UniSQL's constructs map onto `rel.*` leaves) |
+| `subject` | the leaf id |
+| `backend` | the driver or dialect crate's backend name |
+| `version` | backend (server) version; no row for an unknown version means **off** |
+| `config` | `k=v;k=v` facts the gate can read at open (a locale, a collation, `case_sensitive_like`). A test that passes only under a fixture config is a row for **that** config |
+| `enabled` | `yes` or `no` (boolean, §2.1) |
+| metadata | environment (OS, filesystem type), backend version string, trial parameters (§2.2), date, test id, note |
+| `reason` | for `no`: `missing`, `wrong` or `untested` |
+
+- **A row exists per test that ran**; absence of a row is `untested`, off.
+- **A divergence a program may accept** is minted as its *own leaf* with its own contract (§2.1 #3). The
+  note carries `allowance=<name>` so UniSQL's caller-allowance name and the leaf are linked; a program
+  that accepts the divergence names that leaf in its needs, so the gate stays boolean.
+- **A known-bad run** (for example the MySQL default collation for an `Exact` leaf) is also a row, with
+  `enabled=no, reason=wrong`.
 
 ## 3. The crate hierarchy
 
 CireSnave's own sketch is `PersistAnt -> PersistAnt-Blob, PersistAnt-RelationalDatabase, etc.` This
-section fills it in. **Proposal, not a decision.** Crate names below were free on crates.io when read
-today (`persistant` returned 200 as the positive control; `persistant-core`, `-blob`, `-kv`,
-`-relational` returned 404). Every crate in the project carries one version number (CireSnave's
-standing rule, `C:\Projects\CLAUDE.md` §9).
+section fills it in. **Proposal, not a decision.** The split below came from a conversation with
+CireSnave's session on 2026-10-13: *trait crates* define a kind, *adapter* code builds one kind on
+another, *driver crates* own the third-party dependency. Crate names were free on crates.io when read
+2026-10-13 (`persistant` returned 200 as the positive control; the six below returned 404). Every crate in
+the project carries one version number (CireSnave's standing rule, `C:\Projects\CLAUDE.md` §9).
 
 ```
-persistant                (facade: re-exports; features pick kinds and backends; keeps today's API)
-├── persistant-core       (vocabulary, Needs/Capabilities/status, error taxonomy, config + secret
-│                          handles, migration framework, conformance harness, tracing field names.
-│                          No I/O dependencies: no opendal, no sqlx.)
-├── persistant-blob       (BlobBackend trait; OpenDAL-backed fs, memory, s3; atomic replace, stat,
-│                          list, create_if_absent; today's persistant code moves here)
-├── persistant-kv         (KvBackend trait; records with schema versions; ttl, put_if_absent, cas,
-│                          take, batch, ordered scan; lease lock; emulation over blob; memory; redb,
-│                          redis behind features)
-└── persistant-relational (sqlx-based Postgres, then SQLite; pool, TLS policy, checksummed migrations,
-                           typed error classification, the typed pass-through of §4, test harness;
-                           implements KvBackend natively, so it depends on persistant-kv)
+persistant                (facade: re-exports; features pick kinds and drivers; keeps today's API)
+├── persistant-core       (vocabulary, Needs, boolean capability sets, matrix row schema and reader,
+│                          error taxonomy, config + secret handles, conformance harness, tracing
+│                          field names. No I/O dependencies.)
+├── persistant-blob       (BlobBackend trait + its contract tests. No driver.)
+├── persistant-relational (RelationalBackend trait, deliberately SMALL: run a statement with
+│                          parameters, begin a transaction, report dialect and capabilities, hand out
+│                          the concrete driver handle. No driver.)
+├── persistant-kv         (KvBackend trait + contract tests; generic adapters KvOnBlob<B: BlobBackend>
+│                          and KvOnRelational<R: RelationalBackend>; memory. No driver.)
+├── persistant-opendal    (implements BlobBackend: fs, memory, s3; today's persistant code moves here)
+└── persistant-sqlx       (implements RelationalBackend: Postgres, then SQLite; pool, TLS policy,
+                           checksummed migrations, typed error classification, test harness)
 ```
 
 **Rules for the hierarchy.**
 
-1. **A backend lives in the crate that owns its driver dependency.** That is why KV-on-Postgres lives
-   in `persistant-relational` and not in `persistant-kv`: otherwise `persistant-kv` would pull sqlx.
-   The cost is the dependency direction (relational → kv); the benefit is that nobody who wants only
-   blobs compiles a database driver. (`persistant` today pulls `opendal` with `default-features =
-   false, features = ["services-fs"]`, `Cargo.toml` @ 19c0a74: the same discipline.)
-2. **Kind crates define the trait, the contract tests, and emulations over a lower kind.** `persistant-kv`
-   owns "KV on blob", clearly labelled emulated, and refuses `kv.batch_atomic` there.
-3. **Core has no I/O.** So a program that only wants to *read a manifest of needs* (a CI check, a
-   future TypeScript client, §6) depends on `persistant-core` alone.
-4. **The facade keeps `persistant::Store` working** for lightbulb and agentlife: the blob API is
+1. **No kind crate depends on a driver.** A program that wants only blobs compiles no database driver;
+   one that wants KV on Postgres compiles `persistant-kv` + `persistant-sqlx` and no OpenDAL. A new
+   driver (another blob service, another database client) is a new crate and touches no kind crate.
+   (`persistant` today pulls `opendal` with `default-features = false, features = ["services-fs"]`,
+   `Cargo.toml` @ cc934e1: the same discipline.)
+2. **Adapters are generic and live with the kind they provide.** `KvOnBlob` and `KvOnRelational` are in
+   `persistant-kv` and are **wrapper types**, not blanket `impl KvBackend for T`, because Rust has no
+   specialisation and a blanket impl would forbid a native KV backend for the same type.
+3. **An adapter's capabilities are derived as *eligible*, then tested.** `kv.put_if_absent` is eligible
+   on a relational backend that has a unique constraint with conflict handling; it is *on* only for a
+   `(backend, version, config)` row whose KV contract test passed (§2.4). The same holds for `KvOnBlob`
+   (`kv.put_if_absent` only where `blob.create_exclusive` is on).
+4. **The relational trait stays small.** If it grows toward statement builders or row mapping it becomes
+   Option B (§4.2) and carries B's leaks. Humboldt keeps `sqlx::query!` through the concrete handle the
+   trait hands out; the trait exists so the KV adapter, the capability matrix and the migration ledger
+   have one thing to call, not to hide sqlx.
+5. **The KV adapter's SQL is written once, in a source dialect (Postgres), and translated by UniSQL**
+   per target. It does not carry a hand-written statement per dialect. If UniSQL refuses a construct for
+   a target, the KV capability that depends on it is off on that target, and the refusal is the row's
+   reason; there is no per-dialect fallback table. **Traps the KV contract suite must include** (each
+   with a known-bad run, §2.1): PostgreSQL text `ORDER BY` follows the database's collation, and MySQL's
+   default collation (`utf8mb4_0900_ai_ci`) is case-insensitive, so keys must be `BYTEA`/`BLOB` or a
+   binary collation or `kv.ordered_scan` is wrong in a way that passes a lower-case test.
+6. **Core has no I/O.** So a program that only wants to *read a manifest of needs* or the recorded matrix
+   (a CI check, a future TypeScript client, §6) depends on `persistant-core` alone.
+7. **The facade keeps `persistant::Store` working** for lightbulb and agentlife: the blob API is
    re-exported unchanged until a breaking minor says otherwise (pre-1.0 the *second* number is the
    major, CLAUDE.md §9).
-5. **MSRV.** `persistant` is 1.91 (OpenDAL's). sqlx 0.9.0 is 1.94.0 (FIT §D.d, from the crates.io API),
-   so only `persistant-relational` and the facade-with-relational need 1.94. CireSnave permitted raising
+8. **MSRV.** `persistant` is 1.91 (OpenDAL's). sqlx 0.9.0 is 1.94.0 (FIT §D.d, from the crates.io API),
+   so only `persistant-sqlx` and the facade-with-relational need 1.94. CireSnave permitted raising
    a project's MSRV on 2026-10-08 (`CLAUDE.md` §9); each crate declares its own.
+9. **UniSQL is a dependency of the adapter, not of the traits**, and it is not on crates.io (§7).
+   Nothing in `persistant-core`, `-blob`, `-relational`, `-opendal` or `-sqlx` needs it.
 
 **Backend registration.** There is **no global registry.** A configuration is serialisable data with a
 URL scheme (`fs:`, `memory:`, `postgres:`, `sqlite:`, `redis:`); the facade's `open` matches the scheme
-among the backends compiled in. A third-party or consumer-private backend implements the kind trait and
-is passed in (`open_with`). Both paths go through the same gate: declare needs → report capabilities
-with status → refuse or open. Reason: a registry makes "what can this binary do?" a runtime accident;
-and the configuration must stay plain data for §6.
+among the drivers compiled in. A third-party or consumer-private backend implements the kind trait and
+is passed in (`open_with`). Both paths go through the same gate: declare needs → look up the capability
+row → refuse or open. Reason: a registry makes "what can this binary do?" a runtime accident; and the
+configuration must stay plain data for §6.
 
 **Where blob metadata and KV rows live is configuration, not code.** One Postgres instance can hold a
 program's relational schema and its KV table. That is the integration the ruling asks for and §4.4 makes
@@ -379,10 +490,13 @@ integrated into the same stack, each of which is a concrete, testable property:
 
 1. **One declaration, one refusal.** A program that needs `kv.ttl` and `rel.foreign_key` declares both in
    one `Needs`; one `open` refuses or accepts. No separate "database config" path.
-2. **The relational backend is also the best KV backend.** `persistant-relational` implements
-   `KvBackend` on a table with `(key, value, expires_at)`: TTL, put-if-absent, CAS, take, batch and
-   ordered scan are *native* there, which blob backends cannot give (§2.2). auth-framework's token/session
-   problems (§1.3) are solved by this, not by a builder.
+2. **Relational is also a good KV backend.** `persistant-kv` offers `KvOnRelational<R>` for any
+   `RelationalBackend` `R` (a wrapper type, not a blanket impl, since Rust has no specialisation): a
+   table with `(key, value, expires_at)` where TTL, put-if-absent, CAS, take, batch and ordered scan are
+   *derivable* from the relational capabilities, which blob backends cannot give (§2.2). "Derivable" is
+   not "on": each KV capability is on for a given `(R, version, config)` only after the KV contract
+   tests pass there (§3). auth-framework's token/session problems (§1.3) are solved by this, not by a
+   builder.
 3. **One pool, one config, one migration ledger.** The KV table is created by the same checksummed
    migration framework as the program's own schema, over the same pool and TLS policy.
 4. **A transaction can span both kinds on the same engine.** `rel.transaction` hands back a transaction
@@ -402,7 +516,7 @@ integrated into the same stack, each of which is a concrete, testable property:
 | **Migrations with checksums** | One ledger concept for SQL schema and for non-SQL record rewrites (resumable, idempotent, ordered, checksummed, refuses a newer stamp). Must **keep sqlx's `_sqlx_migrations` table shape** so Humboldt's transfer tool, which compares versions *and* checksums (`transfer.rs:9-10`), keeps working: constraint, not preference. | Three SQL mechanisms in four repos (§1.2 #5); auth-framework has no checksum (`src/migrations/mod.rs:41-205`); synapse runs `sqlx::migrate!` **and** a hand-rolled table (`storage/migrations.rs:46-76`) plus a redb format stamp (`mailbox.rs:760-819`) |
 | **Test fakes and fault injection** | Today: memory, `Masked` (pretend a capability is missing), `Faulty` (fail or interrupt the Nth write) for blob. Extend `Masked` and `Faulty` to every kind. **Limit, stated:** there is no honest fake of Postgres semantics. The relational harness is a real ephemeral database (what `#[sqlx::test]` already does for Humboldt, 499 tests) with fault injection at the statement/commit boundary; an in-memory SQLite is offered only as a backend that *declares* a smaller capability set, so a Postgres-SQL program is refused rather than falsely passing. | synapse `FailingStore`/`CrashingStore`, lightbulb `FlakyStore` (FIT §D.f); Humboldt tests assert trigger refusals |
 | **Secret-handle connection config** | A DSN is never a bare `String` in a `Debug`-printable struct: it is a handle (env var name, file, or a `with-secret` reference) resolved at open and redacted in every format. | Humboldt reads `DATABASE_URL` with `expect` (`config.rs:8-9`); auth-framework's `StorageConfig::Postgres { connection_string }` is a plain field (`config/mod.rs:89-107`); whether it is `Debug`-printed anywhere is UNVERIFIED |
-| **Typed refusal** | Exists (`Error::Refused { backend, missing }`, `src/error.rs:23-28`): extend `Missing` with the capability id and its status (`Absent`/`Declared`-not-`Proven`). Errors are plain data (no `Box<dyn Error>` in variants a client must read). | §6 |
+| **Typed refusal** | Exists (`Error::Refused { backend, missing }`, `src/error.rs:23-28`): `Missing` carries the capability id. A capability is boolean (§2.1), so the refusal says which ids were off and, as data, the row's reason (`missing`, `wrong`, `untested`, §2.4). Errors are plain data (no `Box<dyn Error>` in variants a client must read). | §6 |
 | **Observability** | One set of `tracing` span/field names (`persist.kind`, `persist.backend`, `persist.op`, `persist.capability`), no value or key *content* by default (keys can be secrets), counters left to the consumer's subscriber. | consumers already use `tracing` (auth-framework); nothing exotic wanted |
 
 ## 6. Do not foreclose other languages (later, not now)
@@ -442,11 +556,11 @@ biggest benefit for least risk, and each step names the capability it needs that
 |---|---|---|---|---|---|
 | 1 | lightbulb, agentlife (already consumers) | Catch up from 0.4.1 / 0.4.4; delete the residue (lightbulb's scratch lock, agentlife's `FileLock`/`RestoreLock` and temp-name workaround) | `lock.lease`, `blob.append` (with repair), an `atomic_write_dir` that no longer needs a per-call scratch directory | low: both lanes already ship it | removes ~4 hand-written locks and the append repair |
 | 2 | Atomic-replace duplicates: OverMind/consent (`store.rs:1922`, `vault.rs:113`, `lane_state_writer.rs:420`), agentlife lane-restart copy, fuel (4 sites), mlmf (2), coderipper tool cache, synapse (3) | `blob.replace_atomic` | `blob.file_mode` and `blob.create_exclusive_atomic` for synapse (they publish by hard link, 0600) | low-medium: Windows rename behaviour untested (UNVERIFIED) and `consent`/OverMind hold identical copies, so do one and diff | most duplicated code in the portfolio; fixes the four fuel sites that never fsync |
-| 3 | auth-framework `AuthStorage` KV | `persistant-kv` backends (Postgres/SQLite/Redis/memory) beneath the existing trait; tokens/sessions as key schemes with `kv.ordered_scan`; user uniqueness via `kv.put_if_absent`; single-use via `kv.take` | `kv.*` and `kv.batch_atomic`, `persistant-relational` | **medium-high**: security-critical; mid-release (rc43 → stable 0.6.0 with an *encryption-at-rest storage-interface change still to design*, `PORTFOLIO-ROADMAP.md:505`) | the largest correctness gain in §1.3 |
-| 4 | Humboldt | `persistant-relational` Option C: config/TLS/pool/error classification/probe/harness; **keeps** every `query!` | `rel.*` probes, secret handles | low if C; it is a thin wrapper | closes the TLS and pool-timeout gaps; one shared migration ledger |
-| 5 | lightbulb Postgres (5 tables) | from tokio-postgres + deadpool + refinery to the sqlx-based crate | `persistant-relational` | **medium**: a driver swap for a small schema; no transactions to port | one stack; refinery goes |
-| 6 | synapse legacy Postgres | sqlx 0.8.6 → current via the shared crate; collapse its **two** migration mechanisms | `persistant-relational` | low (optional feature `database`) | one ledger, dependency currency |
-| 7 | auth-framework audit store | a first relational audit backend, where a typed repository (Option A) over C may be right | `persistant-relational` | low: nothing exists to regress | the only relational-shaped need with no backend |
+| 3 | auth-framework `AuthStorage` KV | `persistant-kv` backends (Postgres/SQLite/Redis/memory) beneath the existing trait; tokens/sessions as key schemes with `kv.ordered_scan`; user uniqueness via `kv.put_if_absent`; single-use via `kv.take` | `kv.*` and `kv.batch_atomic`, `persistant-kv` + `persistant-sqlx` | **medium-high**: security-critical; mid-release (rc43 → stable 0.6.0 with an *encryption-at-rest storage-interface change still to design*, `PORTFOLIO-ROADMAP.md:505`) | the largest correctness gain in §1.3 |
+| 4 | Humboldt | `persistant-sqlx` Option C: config/TLS/pool/error classification/probe/harness; **keeps** every `query!` | `rel.*` probes, secret handles | low if C; it is a thin wrapper | closes the TLS and pool-timeout gaps; one shared migration ledger |
+| 5 | lightbulb Postgres (5 tables) | from tokio-postgres + deadpool + refinery to the sqlx-based crate | `persistant-sqlx` | **medium**: a driver swap for a small schema; no transactions to port | one stack; refinery goes |
+| 6 | synapse legacy Postgres | sqlx 0.8.6 → current via the shared crate; collapse its **two** migration mechanisms | `persistant-sqlx` | low (optional feature `database`) | one ledger, dependency currency |
+| 7 | auth-framework audit store | a first relational audit backend, where a typed repository (Option A) over C may be right | `persistant-sqlx` | low: nothing exists to regress | the only relational-shaped need with no backend |
 
 **Not migrated, and why:**
 - **synapse mailbox (redb).** Its contract is one atomic multi-key transaction with ordered composite-key
@@ -461,9 +575,16 @@ biggest benefit for least risk, and each step names the capability it needs that
 - **SafeImage.** Sans-I/O by design; it becomes a consumer only when a host stores its records.
 - **KISS, Unpopped:** nothing persisted. **FAM:** TypeScript, being decommissioned.
 
-**Cost the PM should price.** Steps 3 and 4 depend on `persistant-relational`, which does not exist.
-Step 1 and 2 depend on locks and append, which `HANDOFF.md` of this lane deferred "until a consumer
-names it": the measured residue in §1.2 #6 is that naming.
+**Cost the PM should price.** Steps 3 and 4 depend on `persistant-relational` and `persistant-sqlx`,
+which do not exist. Step 1 and 2 depend on locks and append, which `HANDOFF.md` of this lane deferred
+"until a consumer names it": the measured residue in §1.2 #6 is that naming.
+
+**A publication dependency.** The KV adapter over any relational backend (§3) translates its statements
+with UniSQL. A `persistant-*` crate may depend on another repository only by a crates.io version
+(`C:\Projects\CLAUDE.md` §9, *Sources*), and UniSQL is a private, unpublished repository today, so
+that adapter cannot be *shipped* until CireSnave publishes UniSQL. It can be designed and tested against
+`unisql::analyse` from a path or commit in the meantime, in a branch that is not released. The blob
+adapter, the blob driver, and the native-SQL path do not wait on it.
 
 ## 8. Non-goals
 
@@ -471,13 +592,14 @@ Written down so a later request is recognised as a change of scope, not a bug.
 
 1. **Not an ORM and not a query language.** No `Model`, no relationship mapping, no portable SQL (§4).
 2. **Not provisioning.** Create, wipe, transfer and backup of databases belong to the
-   `provision-database-postgresql` stack (CireSnave: "lifecycle portions of tools should be part of provisioning"; the stack's name is the
-   PM's). PersistAnt may
-   *report* `ops.pitr` if provisioning tells it; it never performs lifecycle. The provisioning repo is not
-   on this disk (UNVERIFIED that it exists under that name).
+   `provision-database-postgresql` stack (CireSnave: "lifecycle portions of tools should be part of
+   provisioning"; the stack's name is the PM's). PersistAnt never performs lifecycle. It may *test*
+   a lifecycle-dependent capability such as `ops.pitr` against an environment it is handed (§2.2), and the
+   capability is on only if that test passed. The provisioning repo is not on this disk (UNVERIFIED that
+   it exists under that name).
 3. **No cross-engine transaction.** Atomicity spans only operations on one backend instance (§4.4 #4).
-4. **No hidden consistency.** A capability a backend lacks is refused or labelled emulated; there is no
-   silent downgrade (the founding rule, README *Scope* §1).
+4. **No hidden consistency.** A capability a backend does not give is off, and a program that needs it is refused;
+   there is no silent downgrade (the founding rule, README *Scope* §1).
 5. **No second implementation of a database's own invariants.** Triggers and constraints stay in the
    database; the layer *declares and verifies* that they exist, it does not re-implement them.
 6. **Not a cache, queue, search engine or message bus.** `kv.ttl` is expiry, not eviction policy.
@@ -498,11 +620,11 @@ Each will go to the PM as its own `[ASK]`, one at a time, with options and a rec
 | # | Decision | Options | Recommend |
 |---|---|---|---|
 | D1 | Relational API shape (§4) | A repositories; B builder; C thin sqlx pass-through; C + KV-native-on-relational | **C with KV native on relational** |
-| D2 | Crate layout and names (§3) | the five-crate split; one crate with features; blob-only crate plus a relational crate | the five-crate split, `persistant` as facade |
-| D3 | Open-time probing may create `TEMP` objects in the target database (§2.3) | yes; CI-recorded matrix only (no live probe); live probe only when the role permits | live probe when permitted, matrix otherwise, status `Declared` when neither |
+| D2 | Crate layout and names (§3) | the trait / adapter / driver split (core, blob, relational, kv; opendal, sqlx); one crate with features; blob-only crate plus a relational crate | the split, `persistant` as facade, no kind crate depends on a driver |
+| D3 | Open-time verification (§2.3): is a live run of a test against the target (rolled-back `TEMP` objects) allowed at open, or is the gate a lookup in the recorded matrix only | live test when the role permits; matrix lookup only; both | matrix lookup by `(backend, version, config)` always; a live test only when the role permits it, and its result is recorded as a test with a positive control; unknown version stays off |
 | D4 | One relational driver: sqlx only (moves lightbulb and auth-framework's migration CLI off tokio-postgres) | sqlx only; sqlx + tokio-postgres adapter | sqlx only |
 | D5 | Sequencing against auth-framework's 0.6.0 stable and its encryption-at-rest storage redesign | design the storage-interface change **with** `persistant-kv` now; after stable ships; never | design it with `persistant-kv`: the interface is changing anyway |
-| D6 | First build slice | locks + append in blob (unblocks step 1); the capability vocabulary + conformance harness in `persistant-core`; `persistant-relational` skeleton | vocabulary + harness first (everything else is tested by it), then locks/append |
+| D6 | First build slice | locks + append in blob (unblocks step 1); the capability vocabulary, row schema and conformance harness in `persistant-core`; `persistant-relational` + `persistant-sqlx` skeleton | vocabulary, row schema + harness first (everything else is tested by it), then locks/append |
 
 ## 10. UNVERIFIED
 
@@ -522,3 +644,18 @@ Each will go to the PM as its own `[ASK]`, one at a time, with options and a rec
   not guaranteed.
 - Whether a `with-secret` reference is the right secret-handle backend: not evaluated.
 - Whether Redis `KEYS`-free ordered scan is achievable on the Redis backend: assumed no (§2.2).
+- Whether a live open-time probe that creates `TEMP` objects is acceptable and permitted for every
+  deployment role (§2.3, D3): not established.
+- The SQL standard's feature-code list (the coverage basis for `rel.*`, §2.2): only the PostgreSQL
+  documentation's conformance appendix introduction was read ("at least 170 of 177 mandatory Core
+  features"); its per-code list, and the SQLite and MySQL surveys, were not. OpenDAL's roughly 100
+  capability fields were counted from its documentation, not re-listed here.
+- Whether `sqlx`'s generic-over-`Database` bounds permit a small `RelationalBackend` trait that the
+  `KvOnRelational` adapter can be written against without per-driver code: not spiked.
+- Whether UniSQL can express the KV adapter's statements (upsert-and-return, `DELETE ... RETURNING`,
+  `ON CONFLICT`) for every target: its analyser exists (`unisql::analyse`, main@37182e1 = 0.0.3); the
+  adapter statements were not run through it.
+- Whether a VM hard reset is practical in CI for the power-loss test (§2.2): not tried.
+- The `persistant-opendal` and `persistant-sqlx` names were 404 on the crates.io API on 2026-10-13
+  (`persistant` 200 as the control). UniSQL's crate name and publication are CireSnave's; it is a private,
+  unpublished repository today.
