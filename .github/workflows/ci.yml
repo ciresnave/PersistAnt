@@ -126,7 +126,17 @@ jobs:
         with:
           toolchain: stable
 
-      - name: cargo test persistant-sqlx (real PostgreSQL)
+      # A second server, with TLS on, from the same pinned image (private CA + a leaf for
+      # localhost, made inside the container). SUP-008 waiver reason as above: CI-only, no
+      # credential of ours reaches it.
+      - name: Start a PostgreSQL with TLS
+        run: bash .github/scripts/postgres-tls.sh pg-tls 5433 "${{ runner.temp }}/pg-tls-ca.pem"
+
+      - name: cargo test persistant-sqlx (real PostgreSQL, plain and TLS)
+        env:
+          PERSISTANT_TEST_TLS_DATABASE_URL: postgres://postgres:persistant-test@localhost:5433/persistant
+          PERSISTANT_TEST_TLS_CA: ${{ runner.temp }}/pg-tls-ca.pem
+          PERSISTANT_REQUIRE_TLS_DATABASE: "1"
         run: cargo test -p persistant-sqlx --no-fail-fast
 
       - name: Regenerate matrix/sqlx-postgres.tsv

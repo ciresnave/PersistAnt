@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.31
+
+### Added
+- `persistant-sqlx`: `TlsPolicy` (`Disable`, `Prefer`, `Require`, `VerifyCa`, `VerifyFull`, the last
+  two with an optional root certificate file) and `ConnectOptions { tls, max_connections,
+  acquire_timeout }`; `PgBackend::connect_with(&ConnectionSecret, &ConnectOptions)`. The policy
+  **overrides** the URL's `sslmode`, so a connection string cannot weaken it. The default is
+  `Require` and the default acquire timeout is bounded (10 s), so a saturated pool is an error, not
+  a hang. `PgBackend::connection_is_encrypted()` asks the *server* (`pg_stat_ssl`).
+- Tests against a real PostgreSQL with `ssl = on` (private CA, CA:FALSE leaf for `localhost`; a CA
+  certificate presented as the server certificate is rejected by rustls as `CaUsedAsEndEntity`,
+  which the first attempt hit): Require encrypts and the server agrees; Disable is plain (control
+  for the probe); Require against a server without TLS fails while Prefer connects unencrypted;
+  the policy overrides `sslmode=disable` in the URL; VerifyFull refuses an untrusted certificate and
+  accepts the trusted one; an exhausted pool errors after its bound.
+- `.github/scripts/postgres-tls.sh` and a CI step starting that server (pinned image, same waiver
+  reason as the plain service container).
+- Not covered, stated: client certificates (mTLS), certificate revocation, TLS to SQLite (n/a).
+
 ## 0.4.30
 
 ### Added
