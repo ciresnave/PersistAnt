@@ -17,9 +17,11 @@
 
 mod backend;
 pub mod conformance;
+mod lease;
 mod memory;
 mod on_blob;
 
 pub use backend::{KeyPage, KvBackend, KvError};
+pub use lease::Lease;
 pub use memory::{Defect, MemoryKv};
 pub use on_blob::KvOnBlob;

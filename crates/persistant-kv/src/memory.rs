@@ -25,6 +25,14 @@ pub enum Defect {
     ScanIsDescending,
     /// Paged calls ignore `limit` and `after`: the same keys come back every page.
     ListIgnoresPaging,
+    /// `compare_and_swap` swaps whatever is there, ignoring `expected`.
+    CasIgnoresExpected,
+    /// `compare_and_swap` checks, lets others run, then writes: two callers can both win.
+    CasNotAtomic,
+    /// `compare_and_delete` deletes whatever is there, ignoring `expected`.
+    CadIgnoresExpected,
+    /// `compare_and_delete` checks, lets others run, then deletes: two callers can both win.
+    CadNotAtomic,
 }
 
 type Entry = (Vec<u8>, Option<Instant>);
@@ -158,5 +166,61 @@ impl KvBackend for MemoryKv {
         limit: usize,
     ) -> Result<KeyPage, KvError> {
         Ok(self.listing(prefix, after, limit, true))
+    }
+
+    async fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: &[u8],
+        new: Vec<u8>,
+        ttl: Option<Duration>,
+    ) -> Result<bool, KvError> {
+        let entry = (new, ttl.map(|d| Instant::now() + d));
+        let matches = |map: &BTreeMap<String, Entry>| {
+            map.get(key).is_some_and(|e| live(e) && e.0 == expected)
+        };
+        if self.defect == Some(Defect::CasIgnoresExpected) {
+            self.map().insert(key.to_string(), entry);
+            return Ok(true);
+        }
+        if self.defect == Some(Defect::CasNotAtomic) {
+            let ok = matches(&self.map());
+            yield_now().await;
+            if ok {
+                self.map().insert(key.to_string(), entry);
+            }
+            return Ok(ok);
+        }
+        let mut map = self.map();
+        if matches(&map) {
+            map.insert(key.to_string(), entry);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn compare_and_delete(&self, key: &str, expected: &[u8]) -> Result<bool, KvError> {
+        let matches = |map: &BTreeMap<String, Entry>| {
+            map.get(key).is_some_and(|e| live(e) && e.0 == expected)
+        };
+        if self.defect == Some(Defect::CadIgnoresExpected) {
+            return Ok(self.map().remove(key).is_some());
+        }
+        if self.defect == Some(Defect::CadNotAtomic) {
+            let ok = matches(&self.map());
+            yield_now().await;
+            if ok {
+                self.map().remove(key);
+            }
+            return Ok(ok);
+        }
+        let mut map = self.map();
+        if matches(&map) {
+            map.remove(key);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
