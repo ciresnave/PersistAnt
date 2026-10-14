@@ -1,8 +1,11 @@
 [workspace]
-members = [".", "crates/persistant-core"]
+members = [".", "crates/persistant-core", "crates/persistant-blob"]
 
 [workspace.package]
-version = "0.4.13"
+version = "0.4.14"
+
+[workspace.dependencies]
+persistant-core = { version = "0.4.14", path = "crates/persistant-core" }
 
 [package]
 name = "persistant"

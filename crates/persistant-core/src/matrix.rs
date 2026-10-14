@@ -67,6 +67,11 @@ impl Matrix {
         Ok(Matrix { rows })
     }
 
+    /// A matrix of exactly these rows (what a conformance run produces).
+    pub fn from_rows(rows: Vec<Row>) -> Matrix {
+        Matrix { rows }
+    }
+
     /// Add the rows of another file. A reader merges files; nothing is deduplicated.
     pub fn merge(&mut self, other: Matrix) {
         self.rows.extend(other.rows);

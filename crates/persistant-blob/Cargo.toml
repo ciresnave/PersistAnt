@@ -1,0 +1,16 @@
+[package]
+name = "persistant-blob"
+version.workspace = true
+edition = "2024"
+rust-version = "1.91"
+description = "PersistAnt's blob kind: the BlobBackend trait, a memory reference backend, and the contract tests that turn blob capabilities on. No driver."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ciresnave/PersistAnt"
+keywords = ["storage", "persistence", "blob", "conformance"]
+categories = ["filesystem", "development-tools::testing"]
+
+[dependencies]
+persistant-core = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1.53.2", features = ["rt", "macros"] }
