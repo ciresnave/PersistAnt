@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.14
+
+### Added
+- Member crate `persistant-blob` (name held at 0.0.0 on crates.io; not published by this change):
+  the `BlobBackend` trait (read, write, delete, stat, list), `MemoryBlob` with injectable `Defect`s,
+  and `conformance::certify`, which runs the contract tests for `blob.read`, `blob.write`,
+  `blob.delete`, `blob.stat` and `blob.list` and returns matrix rows. A leaf is on only when the target
+  passed, the reference backend passed (positive control) and every defect failed (known-bad control).
+  Leaves needing concurrency, a crash or a power cut have no test yet and stay off.
+- `persistant_core::Matrix::from_rows`.
+- The `persistant` crate is unchanged; it does not yet implement `BlobBackend`.
+
 ## 0.4.13
 
 ### Added
