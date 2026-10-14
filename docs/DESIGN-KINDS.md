@@ -213,7 +213,9 @@ request grows by accident, and every request is a design review. Instead:
 | `kv.compare_and_swap` | atomic update if unchanged | `users:index` (`user_manager.rs:514-526`) | SQL, redb | blob: only with if-match (s3) |
 | `kv.take` | get and delete atomically | single-use PAR/codes (`par.rs:268-300`) | SQL (`DELETE … RETURNING`), Redis `GETDEL` | — |
 | `kv.batch_atomic` | several keys all-or-nothing | auth token + access-token + user index; synapse mailbox contract | SQL, redb, Redis `MULTI` | **not on blob**; refused |
-| `kv.ordered_scan` | ascending bytewise range/prefix, paged | synapse `(role, seq)` scan; auth prefix list | redb, SQL (`ORDER BY`), blob (sorted by this crate) | Redis: `KEYS` is neither ordered nor bounded; refused |
+| `kv.ordered_scan` | ascending bytewise range/prefix, paged | synapse `(role, seq)` scan; auth prefix list | redb, SQL (`ORDER BY`), blob (sorted by this crate) | Redis: `KEYS` is neither ordered nor bounded; refused (Redis can give the weaker `kv.prefix_list` below) |
+| `kv.prefix_list` | given a literal byte prefix and a page limit: at most `limit` keys per call that begin with the prefix, with a continuation; every key present for the whole listing is returned **at least once**; order unspecified; keys written or deleted during the listing may or may not appear; a TTL-expired entry is invisible to the listing as well as to `get` | auth-framework `list_kv_keys` (agreed with its lane 2026-10-14; ADR-011, auth-framework#162; its tests in #145) | Redis `SCAN` + `MATCH`; anything that gives `kv.ordered_scan` (chain: `kv.ordered_scan` implies it) | tests: glob metacharacters `* ? [ ] \` in the prefix match literally (known-bad: an unescaped `MATCH` pattern), empty prefix, `limit` 1 over 1000 keys returns all via the continuation, an expired key absent while a live sibling is present, a key that is a prefix of another is returned once |
+| `kv.prefix_list.exactly_once` | as `kv.prefix_list`, and no key is returned twice | none yet (auth-framework de-duplicates and does not need it) | anything that gives `kv.ordered_scan`; not Redis `SCAN` | a caller that cannot tolerate repeats names this leaf and is refused on Redis |
 | `kv.count` | count under a prefix | auth `count_active_sessions` | SQL | scan |
 | `lock.lease` | exclusive lease with owner token, expiry, safe reclaim | 4 hand-written locks (§1.2) | built on `kv.put_if_absent` + `kv.ttl`, or on `blob.create_exclusive` | built by this crate; on only if its lock test passes |
 | `lock.process` | held until the process dies, no staleness | user-request, synapse RoleLock, coderipper, baracuda (6 sites) | local fs only | not offered remotely |
@@ -480,7 +482,14 @@ refusing to pretend.
 
 ### 4.4 Recommendation, and where "integrated, not alongside" is real
 
-**Recommend Option C as the relational API, with KV implemented natively on the relational backend.**
+**Ruled 2026-10-14 (board 181, relayed by the PM; CireSnave, verbatim): "On decision 181: C+".** C+ is
+Option C below plus the KV kind implemented natively on a relational backend, so auth-framework gets
+Postgres and SQLite from one description. PersistAnt owns connection, TLS and secret handles, the pool,
+checksummed migrations, error classification and the capability test. "Natively" is `KvOnRelational<R>`
+in `persistant-kv` (§3 #2) with its capabilities tested per `(R, version, config)`, not assumed.
+
+**Recommended Option C as the relational API, with KV implemented natively on the relational backend** (this
+is what was ruled).
 Options A and B stay available to any consumer *on top of* C (auth-framework's future audit store is the
 natural place for a narrow typed repository), but PersistAnt does not ship them: they carry the leaks
 above without removing the one that matters here.
@@ -619,7 +628,7 @@ Each will go to the PM as its own `[ASK]`, one at a time, with options and a rec
 
 | # | Decision | Options | Recommend |
 |---|---|---|---|
-| D1 | Relational API shape (§4) | A repositories; B builder; C thin sqlx pass-through; C + KV-native-on-relational | **C with KV native on relational** |
+| D1 | Relational API shape (§4) | A repositories; B builder; C thin sqlx pass-through; C + KV-native-on-relational | **RULED 2026-10-14: C+ (C with KV native on relational)** |
 | D2 | Crate layout and names (§3) | the trait / adapter / driver split (core, blob, relational, kv; opendal, sqlx); one crate with features; blob-only crate plus a relational crate | the split, `persistant` as facade, no kind crate depends on a driver |
 | D3 | Open-time verification (§2.3): is a live run of a test against the target (rolled-back `TEMP` objects) allowed at open, or is the gate a lookup in the recorded matrix only | live test when the role permits; matrix lookup only; both | matrix lookup by `(backend, version, config)` always; a live test only when the role permits it, and its result is recorded as a test with a positive control; unknown version stays off |
 | D4 | One relational driver: sqlx only (moves lightbulb and auth-framework's migration CLI off tokio-postgres) | sqlx only; sqlx + tokio-postgres adapter | sqlx only |

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.12
+
+### Changed
+- `docs/DESIGN-KINDS.md`, docs only: D1 recorded as ruled (C+, board 181, CireSnave 2026-10-14); adds the
+  `kv.prefix_list` and `kv.prefix_list.exactly_once` leaves agreed with the auth-framework lane. No code
+  or behaviour change.
+
 ## 0.4.11
 
 ### Changed
