@@ -12,7 +12,7 @@ set -euo pipefail
 LICENCE="MIT OR Apache-2.0"
 # Source extensions checked. A tracked file of any of these without the header fails the gate.
 EXTENSIONS=('*.rs' '*.sh' '*.py' '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.go' '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' '*.ps1' '*.sql')
-MINIMUM_FILES=31   # src (4), tests (5), example, core/src (7), blob/src (5), opendal src+tests (2), kv/src (6), this script; raise as the tree grows
+MINIMUM_FILES=33   # src (4), tests (5), example, core/src (7), blob/src (5), opendal src+tests (4), kv/src (6), this script; raise as the tree grows
 
 check_tree() { # $1 = repo root; prints missing files, one per line; returns count via stdout
     local root=$1 file hits missing=0 total=0

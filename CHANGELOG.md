@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.20
+
+### Added
+- `persistant-opendal`: `ProcessLock` (`lock.process`), an operating-system advisory file lock
+  (`std::fs::File::try_lock`, std only), local only, released by the OS when its holder dies. The
+  deciding test runs a child process (this test binary), locks in it, kills it hard and checks the
+  lock is free; the known-bad control shows a marker file still excludes everyone after the same
+  kill. It does not produce a matrix row from the library, because the child must be the host's own
+  executable.
+
 ## 0.4.19
 
 ### Added

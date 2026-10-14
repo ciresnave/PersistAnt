@@ -9,6 +9,10 @@
 //! `list` is emulated: OpenDAL lists directories, so every key under the prefix's directory part
 //! is scanned and filtered, and the cost is a scan of that tree per page.
 
+mod process_lock;
+
+pub use process_lock::ProcessLock;
+
 use persistant_blob::{BlobBackend, BlobError, Entry, Page};
 use persistant_core::Config;
 use std::collections::BTreeSet;
