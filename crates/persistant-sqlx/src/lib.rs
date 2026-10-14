@@ -101,6 +101,8 @@ pub struct PgBackend {
 
 impl PgBackend {
     /// Connect with default pool settings and read the server version.
+    ///
+    /// Prefer [`PgBackend::connect_secret`]: a `&str` URL is one `Debug` print from a log file.
     pub async fn connect(url: &str) -> Result<Self, RelError> {
         let pool = PgPoolOptions::new()
             .max_connections(16)
@@ -108,6 +110,15 @@ impl PgBackend {
             .await
             .map_err(classify)?;
         Self::from_pool(pool).await
+    }
+
+    /// Connect with a connection string held as a [`persistant_relational::ConnectionSecret`]:
+    /// resolved here, never printed, never part of an error.
+    pub async fn connect_secret(
+        secret: &persistant_relational::ConnectionSecret,
+    ) -> Result<Self, RelError> {
+        let url = secret.resolve()?;
+        Self::connect(url.expose()).await
     }
 
     /// Wrap an existing pool (a program that already owns one keeps it).
