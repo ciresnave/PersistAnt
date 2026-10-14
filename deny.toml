@@ -17,6 +17,9 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "CC0-1.0",
+    # webpki-roots (Mozilla's CA bundle as data), pulled by sqlx's `tls-rustls-ring-webpki`; a
+    # permissive data licence. Allowed here at 0.4.28; the PM may prefer `native-roots` instead.
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]
