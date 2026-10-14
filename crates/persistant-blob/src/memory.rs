@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+use crate::concurrency::yield_now;
 use crate::{BlobBackend, BlobError, Entry, Page};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -66,21 +67,6 @@ impl MemoryBlob {
 fn pattern_prefix_match(key: &str, pattern: &str) -> bool {
     let cut = pattern.find(['%', '[']).unwrap_or(pattern.len());
     key.starts_with(&pattern[..cut])
-}
-
-/// Let other tasks polled by the same executor run once. Used by defects and by the harness.
-pub(crate) async fn yield_now() {
-    let mut yielded = false;
-    std::future::poll_fn(|cx| {
-        if yielded {
-            std::task::Poll::Ready(())
-        } else {
-            yielded = true;
-            cx.waker().wake_by_ref();
-            std::task::Poll::Pending
-        }
-    })
-    .await;
 }
 
 impl BlobBackend for MemoryBlob {

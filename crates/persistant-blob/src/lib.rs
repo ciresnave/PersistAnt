@@ -13,6 +13,7 @@
 //! produced and they stay off.
 
 mod backend;
+pub mod concurrency;
 pub mod conformance;
 mod memory;
 

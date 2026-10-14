@@ -1,0 +1,557 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! Contract tests for the key-value leaves this crate can decide.
+//!
+//! [`certify`] has the same shape as `persistant_blob::conformance::certify`: each leaf is run on
+//! the target, on a correct reference (positive control) and on defective references (known-bad
+//! control), and is recorded **on** only when all three behaved.
+//!
+//! Time to live is tested with real time: an entry written with a 300 ms time to live is read back
+//! inside the window and not after a 450 ms sleep. The sleep blocks the calling thread.
+//! `kv.ttl_remaining`, `kv.compare_and_swap`, `kv.take`, `kv.batch_atomic` and `kv.count` have no
+//! test here, so no row is produced and they stay off.
+
+use crate::{Defect, KvBackend, KvError, MemoryKv};
+use persistant_blob::concurrency::{Task, join_all};
+use persistant_core::{CapabilityId, Config, Controls, Reason, Row, Verdict};
+use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
+
+/// A leaf this module can decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Leaf {
+    /// `kv.get`
+    Get,
+    /// `kv.put`
+    Put,
+    /// `kv.delete`
+    Delete,
+    /// `kv.ttl`
+    Ttl,
+    /// `kv.put_if_absent`, by sampled concurrency
+    PutIfAbsent,
+    /// `kv.prefix_list`
+    PrefixList,
+    /// `kv.ordered_scan`
+    OrderedScan,
+}
+
+impl Leaf {
+    /// Every leaf with a test here.
+    pub const ALL: [Leaf; 7] = [
+        Leaf::Get,
+        Leaf::Put,
+        Leaf::Delete,
+        Leaf::Ttl,
+        Leaf::PutIfAbsent,
+        Leaf::PrefixList,
+        Leaf::OrderedScan,
+    ];
+
+    /// The capability id.
+    pub fn id(self) -> &'static str {
+        match self {
+            Leaf::Get => "kv.get",
+            Leaf::Put => "kv.put",
+            Leaf::Delete => "kv.delete",
+            Leaf::Ttl => "kv.ttl",
+            Leaf::PutIfAbsent => "kv.put_if_absent",
+            Leaf::PrefixList => "kv.prefix_list",
+            Leaf::OrderedScan => "kv.ordered_scan",
+        }
+    }
+
+    fn trials(self) -> &'static str {
+        match self {
+            Leaf::PutIfAbsent => "contenders=16;rounds=20;value_bytes=1024",
+            Leaf::Ttl => "ttl_ms=300;sleep_ms=450",
+            _ => "",
+        }
+    }
+
+    fn defects(self) -> &'static [Defect] {
+        match self {
+            Leaf::Get => &[Defect::PutIsLost],
+            Leaf::Put => &[Defect::PutIsLost],
+            Leaf::Delete => &[Defect::DeleteIsIgnored],
+            Leaf::Ttl => &[Defect::TtlIgnored, Defect::ListShowsExpired],
+            Leaf::PutIfAbsent => &[Defect::PutIfAbsentNotExclusive],
+            Leaf::PrefixList => &[
+                Defect::ListPrefixIsPattern,
+                Defect::ListIgnoresPaging,
+                Defect::ListShowsExpired,
+            ],
+            Leaf::OrderedScan => &[Defect::ScanIsDescending, Defect::ListIgnoresPaging],
+        }
+    }
+}
+
+/// Why a leaf's test did not pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Failure {
+    /// The backend returned something other than the contract says.
+    Wrong(String),
+    /// The backend could not perform an operation the test needs.
+    Backend(KvError),
+}
+
+impl From<KvError> for Failure {
+    fn from(e: KvError) -> Self {
+        Failure::Backend(e)
+    }
+}
+
+fn wrong<T>(msg: impl Into<String>) -> Result<T, Failure> {
+    Err(Failure::Wrong(msg.into()))
+}
+
+/// Run one leaf's test against `b`. Writes only under `persistant-conformance/<leaf>/`.
+pub async fn run_leaf<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
+    let base = format!("persistant-conformance/{}/", leaf.id());
+    let result = match leaf {
+        Leaf::Get => get(b, &base).await,
+        Leaf::Put => put(b, &base).await,
+        Leaf::Delete => delete(b, &base).await,
+        Leaf::Ttl => ttl(b, &base).await,
+        Leaf::PutIfAbsent => put_if_absent(b, &base).await,
+        Leaf::PrefixList => prefix_list(b, &base).await,
+        Leaf::OrderedScan => ordered_scan(b, &base).await,
+    };
+    // Best-effort cleanup so a shared target is left as found.
+    if let Ok(page) = b.prefix_list(&base, None, usize::MAX).await {
+        for k in page.keys {
+            let _ = b.delete(&k).await;
+        }
+    }
+    result
+}
+
+async fn get<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    let k = format!("{base}k");
+    if b.get(&k).await?.is_some() {
+        return wrong("an absent key read as present");
+    }
+    for value in [vec![], vec![0u8], vec![1, 2, 3, 0xFF, 0x00, 0x80]] {
+        b.put(&k, value.clone(), None).await?;
+        match b.get(&k).await? {
+            Some(got) if got == value => {}
+            other => return wrong(format!("put {value:?}, get {other:?}")),
+        }
+    }
+    Ok(())
+}
+
+async fn put<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    let k = format!("{base}nested/k");
+    b.put(&k, b"first".to_vec(), None).await?;
+    b.put(&k, b"second, longer".to_vec(), None).await?;
+    b.put(&k, b"x".to_vec(), None).await?;
+    match b.get(&k).await? {
+        Some(v) if v == b"x" => Ok(()),
+        other => wrong(format!("after three puts get returned {other:?}")),
+    }
+}
+
+async fn delete<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    let k = format!("{base}k");
+    b.put(&k, b"v".to_vec(), None).await?;
+    b.delete(&k).await?;
+    if b.get(&k).await?.is_some() {
+        return wrong("a deleted key still reads");
+    }
+    b.delete(&k).await?; // deleting an absent key is not an error
+    Ok(())
+}
+
+async fn ttl<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    let short = format!("{base}a/short");
+    let live = format!("{base}a/live");
+    b.put(&short, b"s".to_vec(), Some(Duration::from_millis(300)))
+        .await?;
+    b.put(&live, b"l".to_vec(), None).await?;
+    if b.get(&short).await?.as_deref() != Some(&b"s"[..]) {
+        return wrong("an entry with a time to live was not readable inside its window");
+    }
+    std::thread::sleep(Duration::from_millis(450));
+    if b.get(&short).await?.is_some() {
+        return wrong("an expired entry is still returned by get");
+    }
+    if b.get(&live).await?.as_deref() != Some(&b"l"[..]) {
+        return wrong("an entry written without a time to live disappeared");
+    }
+    // The contract says expired entries are invisible to listing as well; checked where the
+    // backend offers listing.
+    match b.prefix_list(&format!("{base}a/"), None, 100).await {
+        Ok(p) => {
+            let got: BTreeSet<String> = p.keys.into_iter().collect();
+            if got.contains(&short) {
+                return wrong("an expired entry is still listed");
+            }
+            if !got.contains(&live) {
+                return wrong("the live sibling is missing from the listing");
+            }
+        }
+        Err(KvError::Unsupported(_)) => {}
+        Err(e) => return Err(e.into()),
+    }
+    Ok(())
+}
+
+async fn put_if_absent<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 20;
+    let seq = format!("{base}seq");
+    if !b.put_if_absent(&seq, b"one".to_vec(), None).await? {
+        return wrong("put_if_absent on an absent key did not store");
+    }
+    if b.put_if_absent(&seq, b"two".to_vec(), None).await? {
+        return wrong("put_if_absent on a present key stored");
+    }
+    if b.get(&seq).await?.as_deref() != Some(&b"one"[..]) {
+        return wrong("a refused put_if_absent changed the value");
+    }
+    let payload = |i: usize| vec![i as u8; 1024];
+    for round in 0..ROUNDS {
+        let key = format!("{base}r{round}");
+        let key = key.as_str();
+        let tasks: Vec<Task<'_, Result<bool, KvError>>> = (0..CONTENDERS)
+            .map(|i| -> Task<'_, _> { Box::pin(b.put_if_absent(key, payload(i), None)) })
+            .collect();
+        let mut winners = Vec::new();
+        for (i, r) in join_all(tasks).await.into_iter().enumerate() {
+            if r? {
+                winners.push(i);
+            }
+        }
+        if winners.len() != 1 {
+            return wrong(format!(
+                "round {round}: {} of {CONTENDERS} concurrent callers stored, want exactly 1",
+                winners.len()
+            ));
+        }
+        if b.get(key).await?.as_deref() != Some(payload(winners[0]).as_slice()) {
+            return wrong(format!(
+                "round {round}: the stored value is not the winner's"
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn seed_keys<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    for k in [
+        "a/1", "a/10", "a/2", "a/b/c", "ab", "abz", "a0x", "a%z", "a[0]x", "b/1",
+    ] {
+        b.put(&format!("{base}{k}"), k.as_bytes().to_vec(), None)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Every key under `prefix`, paging with `limit`, via `scan`; `Err` text if paging misbehaves.
+async fn collect<F, Fut>(scan: F, limit: usize) -> Result<Vec<String>, Failure>
+where
+    F: Fn(Option<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<crate::KeyPage, KvError>>,
+{
+    let mut seen = Vec::new();
+    let mut after: Option<String> = None;
+    for _ in 0..100 {
+        let p = scan(after.clone()).await?;
+        if p.keys.len() > limit {
+            return wrong(format!(
+                "a page of limit {limit} held {} keys",
+                p.keys.len()
+            ));
+        }
+        seen.extend(p.keys);
+        match p.next {
+            Some(c) => after = Some(c),
+            None => return Ok(seen),
+        }
+    }
+    wrong("paging did not terminate in 100 pages")
+}
+
+async fn prefix_list<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    seed_keys(b, base).await?;
+    let full = |s: &str| format!("{base}{s}");
+    let want: BTreeSet<String> = ["a/1", "a/10", "a/2", "a/b/c"]
+        .iter()
+        .map(|s| full(s))
+        .collect();
+
+    let got = collect(
+        |after| {
+            let p = full("a/");
+            async move { b.prefix_list(&p, after.as_deref(), 2).await }
+        },
+        2,
+    )
+    .await?;
+    let got: BTreeSet<String> = got.into_iter().collect();
+    if got != want {
+        return wrong(format!("prefix a/ listed {got:?}, want {want:?}"));
+    }
+
+    // The prefix is literal: `%` (SQL LIKE) and `[` (glob class) match only themselves.
+    for (prefix, only) in [("a%", "a%z"), ("a[0]", "a[0]x")] {
+        let p = b.prefix_list(&full(prefix), None, 100).await?;
+        let got: BTreeSet<String> = p.keys.into_iter().collect();
+        if got != BTreeSet::from([full(only)]) {
+            return wrong(format!(
+                "prefix {prefix} listed {got:?}, want only {:?}",
+                full(only)
+            ));
+        }
+    }
+
+    // An expired key is not listed while its live sibling is.
+    let gone = full("a/gone");
+    b.put(&gone, b"x".to_vec(), Some(Duration::from_millis(100)))
+        .await?;
+    std::thread::sleep(Duration::from_millis(200));
+    let p = b.prefix_list(&full("a/"), None, 100).await?;
+    if p.keys.contains(&gone) {
+        return wrong("an expired entry is listed");
+    }
+    if !p.keys.contains(&full("a/1")) {
+        return wrong("a live key is missing next to an expired one");
+    }
+    Ok(())
+}
+
+async fn ordered_scan<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    seed_keys(b, base).await?;
+    let full = |s: &str| format!("{base}{s}");
+    // "1" < "10" < "2" bytewise: a numeric or natural sort would put "2" before "10".
+    let want: Vec<String> = ["a/1", "a/10", "a/2", "a/b/c"]
+        .iter()
+        .map(|s| full(s))
+        .collect();
+    let got = collect(
+        |after| {
+            let p = full("a/");
+            async move { b.ordered_scan(&p, after.as_deref(), 2).await }
+        },
+        2,
+    )
+    .await?;
+    if got != want {
+        return wrong(format!("ordered scan returned {got:?}, want {want:?}"));
+    }
+    Ok(())
+}
+
+/// The outcome of certifying one leaf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Certified {
+    /// The leaf.
+    pub leaf: Leaf,
+    /// The row to record.
+    pub row: Row,
+}
+
+/// Run every leaf here against `target` and return one row per leaf.
+///
+/// A leaf is **on** only if the target passed *and* the positive control passed *and* every
+/// known-bad control failed. `config` is the facts the gate can read for this target; `metadata`
+/// is copied into every row with `test=kv::<leaf>` and the trial parameters added.
+pub async fn certify<K: KvBackend>(
+    target: &K,
+    config: &Config,
+    metadata: &Config,
+) -> Vec<Certified> {
+    let mut out = Vec::new();
+    for leaf in Leaf::ALL {
+        let positive_passed = run_leaf(leaf, &MemoryKv::new()).await.is_ok();
+        let mut known_bad_failed = true;
+        for d in leaf.defects() {
+            if run_leaf(leaf, &MemoryKv::with_defect(*d)).await.is_ok() {
+                known_bad_failed = false;
+            }
+        }
+        let controls = Controls {
+            positive_passed,
+            known_bad_failed,
+        };
+        let result = run_leaf(leaf, target).await;
+        let mut md = metadata.clone().with("test", format!("kv::{}", leaf.id()));
+        if let Ok(t) = Config::parse(leaf.trials()) {
+            for key in ["contenders", "rounds", "value_bytes", "ttl_ms", "sleep_ms"] {
+                if let Some(v) = t.get(key) {
+                    md = md.with(key, v);
+                }
+            }
+        }
+        let id = CapabilityId::new(leaf.id()).expect("leaf id is valid");
+        let row = match (
+            &result,
+            controls.positive_passed && controls.known_bad_failed,
+        ) {
+            (Ok(()), true) => Verdict::Exact
+                .into_row(
+                    id,
+                    target.backend(),
+                    target.version(),
+                    config.clone(),
+                    md,
+                    controls,
+                )
+                .expect("both controls hold"),
+            (Ok(()), false) => off(
+                id,
+                target,
+                config,
+                md,
+                Reason::Untested,
+                format!("controls did not hold: {controls:?}"),
+            ),
+            (Err(Failure::Wrong(m)), _) => off(id, target, config, md, Reason::Wrong, m.clone()),
+            (Err(Failure::Backend(KvError::Unsupported(m))), _) => {
+                off(id, target, config, md, Reason::Missing, m.clone())
+            }
+            (Err(Failure::Backend(e)), _) => {
+                off(id, target, config, md, Reason::Missing, e.to_string())
+            }
+        };
+        out.push(Certified { leaf, row });
+    }
+    out
+}
+
+fn off<K: KvBackend>(
+    subject: CapabilityId,
+    target: &K,
+    config: &Config,
+    metadata: Config,
+    reason: Reason,
+    note: String,
+) -> Row {
+    Row {
+        subject_kind: "capability".to_string(),
+        subject,
+        backend: target.backend().to_string(),
+        version: target.version().to_string(),
+        config: config.clone(),
+        enabled: false,
+        reason: Some(reason),
+        metadata,
+        note: note.replace(['\t', '\n'], " "),
+        extra: BTreeMap::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::KvOnBlob;
+    use persistant_blob::{Defect as BlobDefect, MemoryBlob};
+
+    fn state(rows: &[Certified], id: &str) -> Option<Reason> {
+        let c = rows.iter().find(|c| c.leaf.id() == id).expect("row");
+        if c.row.enabled { None } else { c.row.reason }
+    }
+
+    #[tokio::test]
+    async fn a_correct_backend_is_on_for_every_leaf() {
+        let rows = certify(&MemoryKv::new(), &Config::new(), &Config::new()).await;
+        assert_eq!(rows.len(), Leaf::ALL.len());
+        for c in &rows {
+            assert!(c.row.enabled, "{}: {}", c.leaf.id(), c.row.note);
+            assert!(c.row.metadata.get("test").is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn every_defect_turns_its_leaf_off_as_wrong() {
+        for leaf in Leaf::ALL {
+            for d in leaf.defects() {
+                let rows =
+                    certify(&MemoryKv::with_defect(*d), &Config::new(), &Config::new()).await;
+                assert_eq!(
+                    state(&rows, leaf.id()),
+                    Some(Reason::Wrong),
+                    "{d:?} vs {}",
+                    leaf.id()
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_harness_can_tell_leaves_apart() {
+        let rows = certify(
+            &MemoryKv::with_defect(Defect::DeleteIsIgnored),
+            &Config::new(),
+            &Config::new(),
+        )
+        .await;
+        assert_eq!(state(&rows, "kv.delete"), Some(Reason::Wrong));
+        assert_eq!(
+            state(&rows, "kv.get"),
+            None,
+            "a delete defect must not turn get off"
+        );
+    }
+
+    #[tokio::test]
+    async fn kv_on_a_correct_blob_store_gives_what_the_blob_gives() {
+        let kv = KvOnBlob::new(MemoryBlob::new());
+        let rows = certify(&kv, &Config::new(), &Config::new()).await;
+        for c in &rows {
+            assert!(c.row.enabled, "{}: {}", c.leaf.id(), c.row.note);
+        }
+        assert_eq!(rows[0].row.backend, "kv-on-blob");
+    }
+
+    #[tokio::test]
+    async fn kv_on_blob_inherits_a_blob_defect_as_a_wrong_leaf() {
+        // Control: the blob store lists in descending order, so the KV scan is wrong too.
+        let kv = KvOnBlob::new(MemoryBlob::with_defect(BlobDefect::ListIsDescending));
+        let rows = certify(&kv, &Config::new(), &Config::new()).await;
+        assert_eq!(state(&rows, "kv.ordered_scan"), Some(Reason::Wrong));
+        assert_eq!(state(&rows, "kv.get"), None);
+    }
+
+    #[tokio::test]
+    async fn kv_on_blob_without_exclusive_create_is_missing_not_wrong() {
+        struct NoExclusive(MemoryBlob);
+        impl persistant_blob::BlobBackend for NoExclusive {
+            fn backend(&self) -> &str {
+                "no-exclusive"
+            }
+            fn version(&self) -> &str {
+                "0"
+            }
+            async fn read(&self, k: &str) -> Result<Option<Vec<u8>>, persistant_blob::BlobError> {
+                self.0.read(k).await
+            }
+            async fn write(&self, k: &str, v: Vec<u8>) -> Result<(), persistant_blob::BlobError> {
+                self.0.write(k, v).await
+            }
+            async fn delete(&self, k: &str) -> Result<(), persistant_blob::BlobError> {
+                self.0.delete(k).await
+            }
+            async fn stat(
+                &self,
+                k: &str,
+            ) -> Result<Option<persistant_blob::Entry>, persistant_blob::BlobError> {
+                self.0.stat(k).await
+            }
+            async fn list(
+                &self,
+                p: &str,
+                a: Option<&str>,
+                l: usize,
+            ) -> Result<persistant_blob::Page, persistant_blob::BlobError> {
+                self.0.list(p, a, l).await
+            }
+        }
+        let kv = KvOnBlob::new(NoExclusive(MemoryBlob::new()));
+        let rows = certify(&kv, &Config::new(), &Config::new()).await;
+        assert_eq!(state(&rows, "kv.put_if_absent"), Some(Reason::Missing));
+        assert_eq!(state(&rows, "kv.put"), None, "put falls back to write");
+        assert_eq!(state(&rows, "kv.ttl"), None);
+    }
+}
