@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.28
+
+### Added
+- D7 option A (PM ruling 2026-10-14): `persistant` re-exports the new crates behind opt-in features,
+  **off by default and additive**. `Store`, `Config`, `Need`, `Error` and the blocking facade are
+  untouched. Features and modules: `core` as `persistant::capability`, `blob` as `persistant::blob`,
+  `kv` as `persistant::kv`, `relational` as `persistant::relational`, `opendal-driver` as
+  `persistant::opendal_driver`, `sqlx-driver` as `persistant::sqlx_driver` (needs Rust 1.94; the rest
+  build on 1.91). `persistant-opendal` joins `[workspace.dependencies]`.
+- `tests/reexports.rs` exercises each re-export under its feature; CI runs it with `--all-features`.
+
 ## 0.4.27
 
 ### Added

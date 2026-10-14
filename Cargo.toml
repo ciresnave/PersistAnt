@@ -2,14 +2,15 @@
 members = [".", "crates/persistant-core", "crates/persistant-blob", "crates/persistant-opendal", "crates/persistant-kv", "crates/persistant-relational", "crates/persistant-sqlx"]
 
 [workspace.package]
-version = "0.4.27"
+version = "0.4.28"
 
 [workspace.dependencies]
-persistant-core = { version = "0.4.27", path = "crates/persistant-core" }
-persistant-blob = { version = "0.4.27", path = "crates/persistant-blob" }
-persistant-kv = { version = "0.4.27", path = "crates/persistant-kv" }
-persistant-relational = { version = "0.4.27", path = "crates/persistant-relational" }
-persistant-sqlx = { version = "0.4.27", path = "crates/persistant-sqlx" }
+persistant-core = { version = "0.4.28", path = "crates/persistant-core" }
+persistant-blob = { version = "0.4.28", path = "crates/persistant-blob" }
+persistant-kv = { version = "0.4.28", path = "crates/persistant-kv" }
+persistant-opendal = { version = "0.4.28", path = "crates/persistant-opendal" }
+persistant-relational = { version = "0.4.28", path = "crates/persistant-relational" }
+persistant-sqlx = { version = "0.4.28", path = "crates/persistant-sqlx" }
 
 [package]
 name = "persistant"
@@ -44,6 +45,24 @@ futures-util = { version = "0.3.34", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tokio = { version = "1.53.2", features = ["rt", "sync"] }
+
+# The other kinds, opt-in. Off by default: a program that only wants `Store` compiles none of them.
+persistant-core = { workspace = true, optional = true }
+persistant-blob = { workspace = true, optional = true }
+persistant-kv = { workspace = true, optional = true }
+persistant-relational = { workspace = true, optional = true }
+persistant-opendal = { workspace = true, optional = true }
+# `sqlx-driver` needs a Rust 1.94 compiler (sqlx 0.9); the rest of this crate builds on 1.91.
+persistant-sqlx = { workspace = true, optional = true }
+
+[features]
+# Each feature re-exports one crate under the module named in `src/lib.rs`. None changes `Store`.
+core = ["dep:persistant-core"]
+blob = ["dep:persistant-blob", "core"]
+relational = ["dep:persistant-relational"]
+kv = ["dep:persistant-kv", "blob", "relational", "core"]
+opendal-driver = ["dep:persistant-opendal", "blob"]
+sqlx-driver = ["dep:persistant-sqlx", "relational"]
 
 [dev-dependencies]
 tempfile = "3.27.0"
