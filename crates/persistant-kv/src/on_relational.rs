@@ -69,7 +69,12 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         .await
         .map_err(err)?;
         let name = format!("kv-on-relational:{}", db.backend());
-        let version = format!("{}+{}", env!("CARGO_PKG_VERSION"), db.version());
+        let version = format!(
+            "{}.{}+{}",
+            env!("CARGO_PKG_VERSION_MAJOR"),
+            env!("CARGO_PKG_VERSION_MINOR"),
+            db.version()
+        );
         Ok(KvOnRelational { db, name, version })
     }
 
