@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.25
+
+### Changed
+- `docs/DESIGN-KINDS.md`, docs only, no code: D4, D5 and D6 recorded as ruled/done; a status section
+  (section 11) says what was built, nine things building found (each asserted in a test) and what
+  is not built (SQLite/MySQL until UniSQL is published, migrations, TLS/secret handles, crash and
+  power-cut tests, consumer migration); the opening no longer claims "no code".
+
 ## 0.4.24
 
 ### Added
