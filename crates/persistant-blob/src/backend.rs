@@ -8,12 +8,16 @@ use std::future::Future;
 pub enum BlobError {
     /// The backend or its driver reported a failure; the text is the driver's.
     Backend(String),
+    /// The backend cannot perform this operation as its contract requires, and says so rather
+    /// than approximating (for example an exclusive create that is check-then-write).
+    Unsupported(String),
 }
 
 impl fmt::Display for BlobError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BlobError::Backend(m) => write!(f, "blob backend: {m}"),
+            BlobError::Unsupported(m) => write!(f, "blob backend does not support: {m}"),
         }
     }
 }
@@ -94,4 +98,29 @@ pub trait BlobBackend: Send + Sync {
         after: Option<&str>,
         limit: usize,
     ) -> impl Future<Output = Result<Page, BlobError>> + Send;
+
+    /// Write `bytes` at `key` only if nothing is there. `Ok(true)` created it, `Ok(false)` found
+    /// a value and changed nothing. Of any number of concurrent callers for one key, exactly one
+    /// gets `Ok(true)` (`blob.create_exclusive`). A backend that cannot promise that returns
+    /// [`BlobError::Unsupported`]; the default does.
+    fn create_exclusive(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+    ) -> impl Future<Output = Result<bool, BlobError>> + Send {
+        let _ = (key, bytes);
+        async { Err(BlobError::Unsupported("create_exclusive".to_string())) }
+    }
+
+    /// Replace the value at `key` so that a concurrent reader sees the whole old value or the
+    /// whole new one, never a mix (`blob.replace_atomic.concurrent_read`). A backend that cannot
+    /// promise that returns [`BlobError::Unsupported`]; the default does.
+    fn replace_atomic(
+        &self,
+        key: &str,
+        bytes: Vec<u8>,
+    ) -> impl Future<Output = Result<(), BlobError>> + Send {
+        let _ = (key, bytes);
+        async { Err(BlobError::Unsupported("replace_atomic".to_string())) }
+    }
 }

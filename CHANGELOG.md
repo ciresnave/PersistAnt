@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.16
+
+### Added
+- `persistant-blob`: `BlobBackend::create_exclusive` and `replace_atomic` (default: `BlobError::Unsupported`,
+  a new variant), the contract tests for `blob.create_exclusive` and the new leaf
+  `blob.replace_atomic.concurrent_read` (a reader sees only whole old or whole new values), run by
+  sampled concurrency with the trial parameters (`contenders=16;rounds=20`, `readers=4;replaces=40`)
+  recorded in the row, and the defects `CreateNotExclusive` and `ReplaceTearsReads` as known-bad controls.
+- `persistant-core` vocabulary: `blob.replace_atomic.concurrent_read`. `blob.replace_atomic` (which
+  also requires crash safety) has no test yet and stays off.
+- `persistant-opendal`: `create_exclusive` and `replace_atomic`. Findings, asserted in tests: `fs`
+  without `atomic_write_dir` creates exclusively and does not replace atomically; `fs` with it replaces
+  atomically and cannot create exclusively (the driver says `Unsupported`, README 0.4.7); `memory` gives both.
+
 ## 0.4.15
 
 ### Added

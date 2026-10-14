@@ -23,6 +23,11 @@ pub enum Defect {
     ListPrefixIsPattern,
     /// `list` ignores `limit` and `after`.
     ListIgnoresPaging,
+    /// `create_exclusive` checks, lets other callers run, then writes: two callers can both win.
+    CreateNotExclusive,
+    /// `replace_atomic` writes the first half, lets readers run, then the rest: a reader can see a
+    /// mix of old and new.
+    ReplaceTearsReads,
 }
 
 /// An in-memory reference backend. Correct unless built with [`MemoryBlob::with_defect`].
@@ -57,6 +62,21 @@ impl MemoryBlob {
 fn pattern_prefix_match(key: &str, pattern: &str) -> bool {
     let cut = pattern.find(['%', '[']).unwrap_or(pattern.len());
     key.starts_with(&pattern[..cut])
+}
+
+/// Let other tasks polled by the same executor run once. Used by defects and by the harness.
+pub(crate) async fn yield_now() {
+    let mut yielded = false;
+    std::future::poll_fn(|cx| {
+        if yielded {
+            std::task::Poll::Ready(())
+        } else {
+            yielded = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    })
+    .await;
 }
 
 impl BlobBackend for MemoryBlob {
@@ -136,5 +156,38 @@ impl BlobBackend for MemoryBlob {
             None
         };
         Ok(Page::new(entries, next))
+    }
+
+    async fn create_exclusive(&self, key: &str, bytes: Vec<u8>) -> Result<bool, BlobError> {
+        if self.defect == Some(Defect::CreateNotExclusive) {
+            let absent = !self.map().contains_key(key);
+            yield_now().await;
+            if absent {
+                self.map().insert(key.to_string(), bytes);
+            }
+            return Ok(absent);
+        }
+        let mut map = self.map();
+        if map.contains_key(key) {
+            return Ok(false);
+        }
+        map.insert(key.to_string(), bytes);
+        Ok(true)
+    }
+
+    async fn replace_atomic(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        if self.defect == Some(Defect::ReplaceTearsReads) {
+            let half = bytes.len() / 2;
+            let mut torn = bytes[..half].to_vec();
+            if let Some(old) = self.map().get(key) {
+                torn.extend_from_slice(old.get(half..).unwrap_or(&[]));
+            } else {
+                torn.extend_from_slice(&bytes[half..]);
+            }
+            self.map().insert(key.to_string(), torn);
+            yield_now().await;
+        }
+        self.map().insert(key.to_string(), bytes);
+        Ok(())
     }
 }

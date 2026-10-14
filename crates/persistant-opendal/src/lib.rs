@@ -26,6 +26,11 @@ pub struct OpendalBlob {
     op: Operator,
     name: &'static str,
     config: Config,
+    /// False for `fs` under `atomic_write_dir`: OpenDAL checks for the key and then renames, so
+    /// two creators can both pass (README 0.4.6, 0.4.7). The driver says so instead of claiming it.
+    exclusive_create: bool,
+    /// False for `fs` without `atomic_write_dir`: the target is written in place.
+    atomic_replace: bool,
 }
 
 impl OpendalBlob {
@@ -36,6 +41,8 @@ impl OpendalBlob {
             op,
             name: "opendal-memory",
             config: Config::new(),
+            exclusive_create: true,
+            atomic_replace: true,
         })
     }
 
@@ -60,6 +67,8 @@ impl OpendalBlob {
             op,
             name: "opendal-fs",
             config,
+            exclusive_create: atomic_write_dir.is_none(),
+            atomic_replace: atomic_write_dir.is_some(),
         })
     }
 
@@ -161,5 +170,30 @@ impl BlobBackend for OpendalBlob {
             None
         };
         Ok(Page::new(entries, next))
+    }
+
+    async fn create_exclusive(&self, key: &str, bytes: Vec<u8>) -> Result<bool, BlobError> {
+        if !self.exclusive_create {
+            return Err(BlobError::Unsupported(
+                "create_exclusive under atomic_write_dir is check-then-rename".to_string(),
+            ));
+        }
+        match self.op.write_with(key, bytes).if_not_exists(true).await {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == ErrorKind::ConditionNotMatch => Ok(false),
+            Err(e) if e.kind() == ErrorKind::Unsupported => {
+                Err(BlobError::Unsupported(e.to_string()))
+            }
+            Err(e) => Err(backend(e)),
+        }
+    }
+
+    async fn replace_atomic(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        if !self.atomic_replace {
+            return Err(BlobError::Unsupported(
+                "replace_atomic without atomic_write_dir writes in place".to_string(),
+            ));
+        }
+        self.op.write(key, bytes).await.map(|_| ()).map_err(backend)
     }
 }

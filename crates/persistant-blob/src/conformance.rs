@@ -6,9 +6,13 @@
 //! the test can fail). A leaf is recorded **on** only when the target passed and both controls
 //! behaved. Anything else is an off row with the reason.
 
+use crate::memory::yield_now;
 use crate::{BlobBackend, BlobError, Defect, MemoryBlob};
 use persistant_core::{CapabilityId, Config, Controls, Reason, Row, Verdict};
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::Poll;
 
 /// A leaf this module can decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,16 +28,22 @@ pub enum Leaf {
     Stat,
     /// `blob.list`
     List,
+    /// `blob.create_exclusive`, by sampled concurrency
+    CreateExclusive,
+    /// `blob.replace_atomic.concurrent_read`, by sampled concurrency
+    ReplaceConcurrentRead,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 5] = [
+    pub const ALL: [Leaf; 7] = [
         Leaf::Read,
         Leaf::Write,
         Leaf::Delete,
         Leaf::Stat,
         Leaf::List,
+        Leaf::CreateExclusive,
+        Leaf::ReplaceConcurrentRead,
     ];
 
     /// The capability id.
@@ -44,6 +54,18 @@ impl Leaf {
             Leaf::Delete => "blob.delete",
             Leaf::Stat => "blob.stat",
             Leaf::List => "blob.list",
+            Leaf::CreateExclusive => "blob.create_exclusive",
+            Leaf::ReplaceConcurrentRead => "blob.replace_atomic.concurrent_read",
+        }
+    }
+
+    /// The trial parameters of a sampled-concurrency leaf, recorded in its row (a race that did
+    /// not occur in N trials is "no failure seen", and N goes in the row).
+    fn trials(self) -> &'static str {
+        match self {
+            Leaf::CreateExclusive => "contenders=16;rounds=20;value_bytes=4096",
+            Leaf::ReplaceConcurrentRead => "readers=4;replaces=40;value_bytes=65536",
+            _ => "",
         }
     }
 
@@ -58,6 +80,8 @@ impl Leaf {
                 Defect::ListPrefixIsPattern,
                 Defect::ListIgnoresPaging,
             ],
+            Leaf::CreateExclusive => &[Defect::CreateNotExclusive],
+            Leaf::ReplaceConcurrentRead => &[Defect::ReplaceTearsReads],
         }
     }
 }
@@ -90,6 +114,8 @@ pub async fn run_leaf<B: BlobBackend>(leaf: Leaf, b: &B) -> Result<(), Failure> 
         Leaf::Delete => delete(b, &base).await,
         Leaf::Stat => stat(b, &base).await,
         Leaf::List => list(b, &base).await,
+        Leaf::CreateExclusive => create_exclusive(b, &base).await,
+        Leaf::ReplaceConcurrentRead => replace_concurrent_read(b, &base).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.list(&base, None, usize::MAX).await {
@@ -222,6 +248,141 @@ async fn list<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+type Task<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+
+/// Poll every future on this task until all are done. Runtime-agnostic: no spawn, so the
+/// interleaving is at await points; real parallelism comes from the backend's own threads.
+async fn join_all<T>(tasks: Vec<Task<'_, T>>) -> Vec<T> {
+    let mut slots: Vec<Option<T>> = tasks.iter().map(|_| None).collect();
+    let mut tasks: Vec<Option<Task<'_, T>>> = tasks.into_iter().map(Some).collect();
+    std::future::poll_fn(|cx| {
+        let mut pending = false;
+        for (i, t) in tasks.iter_mut().enumerate() {
+            let ready = match t.as_mut() {
+                Some(fut) => match fut.as_mut().poll(cx) {
+                    Poll::Ready(v) => Some(v),
+                    Poll::Pending => {
+                        pending = true;
+                        None
+                    }
+                },
+                None => None,
+            };
+            if let Some(v) = ready {
+                slots[i] = Some(v);
+                *t = None;
+            }
+        }
+        if pending {
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
+    })
+    .await;
+    slots.into_iter().flatten().collect()
+}
+
+async fn create_exclusive<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 20;
+    let payload = |i: usize| vec![i as u8; 4096];
+    for round in 0..ROUNDS {
+        let key = format!("{base}r{round}");
+        let key = key.as_str();
+        let tasks: Vec<Task<'_, Result<bool, BlobError>>> = (0..CONTENDERS)
+            .map(|i| -> Task<'_, _> { Box::pin(b.create_exclusive(key, payload(i))) })
+            .collect();
+        let results = join_all(tasks).await;
+        let mut winners = Vec::new();
+        for (i, r) in results.into_iter().enumerate() {
+            if r? {
+                winners.push(i);
+            }
+        }
+        if winners.len() != 1 {
+            return wrong(format!(
+                "round {round}: {} of {CONTENDERS} concurrent creators succeeded, want exactly 1",
+                winners.len()
+            ));
+        }
+        match b.read(key).await? {
+            Some(v) if v == payload(winners[0]) => {}
+            other => {
+                return wrong(format!(
+                    "round {round}: the stored value is not the winner's ({} bytes)",
+                    other.map_or(0, |v| v.len())
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn replace_concurrent_read<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
+    const LEN: usize = 65536;
+    const READERS: usize = 4;
+    const REPLACES: usize = 40;
+    let key = format!("{base}k");
+    let key = key.as_str();
+    let a = vec![b'A'; LEN];
+    let c = vec![b'B'; LEN];
+    b.replace_atomic(key, a.clone()).await?;
+    let done = std::cell::Cell::new(false);
+    let done = &done;
+    let mut tasks: Vec<Task<'_, Result<(), Failure>>> = Vec::new();
+    tasks.push(Box::pin(async move {
+        for i in 0..REPLACES {
+            let v = if i % 2 == 0 { c.clone() } else { a.clone() };
+            if let Err(e) = b.replace_atomic(key, v).await {
+                done.set(true);
+                return Err(Failure::from(e));
+            }
+            yield_now().await;
+        }
+        done.set(true);
+        Ok(())
+    }));
+    for _ in 0..READERS {
+        tasks.push(Box::pin(async move {
+            for _ in 0..(REPLACES * 20) {
+                match b.read(key).await {
+                    Ok(Some(v)) => {
+                        let uniform = v.len() == LEN
+                            && v.iter().all(|x| *x == v[0])
+                            && (v[0] == b'A' || v[0] == b'B');
+                        if !uniform {
+                            done.set(true);
+                            return wrong(format!(
+                                "a reader saw a mix of old and new ({} bytes, first {:?})",
+                                v.len(),
+                                v.first()
+                            ));
+                        }
+                    }
+                    Ok(None) => {
+                        done.set(true);
+                        return wrong("the key vanished during a replace");
+                    }
+                    Err(e) => {
+                        done.set(true);
+                        return Err(Failure::from(e));
+                    }
+                }
+                if done.get() {
+                    break;
+                }
+                yield_now().await;
+            }
+            Ok(())
+        }));
+    }
+    for r in join_all(tasks).await {
+        r?;
+    }
+    Ok(())
+}
+
 /// The outcome of certifying one leaf.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Certified {
@@ -255,9 +416,16 @@ pub async fn certify<B: BlobBackend>(
             known_bad_failed,
         };
         let result = run_leaf(leaf, target).await;
-        let md = metadata
+        let mut md = metadata
             .clone()
             .with("test", format!("blob::{}", leaf.id()));
+        if let Ok(t) = persistant_core::Config::parse(leaf.trials()) {
+            for key in ["contenders", "rounds", "value_bytes", "readers", "replaces"] {
+                if let Some(v) = t.get(key) {
+                    md = md.with(key, v);
+                }
+            }
+        }
         let id = CapabilityId::new(leaf.id()).expect("leaf id is valid");
         let row = match (
             &result,
