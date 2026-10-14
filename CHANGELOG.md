@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.23
+
+### Added
+- `matrix/opendal.tsv` and `matrix/sqlx-postgres.tsv`: the recorded results of the certification
+  (68 and 10 rows), written by `cargo run -p persistant-opendal --example matrix` and
+  `cargo run -p persistant-sqlx --example matrix` (the second needs a server). Each row names its
+  test and its environment (`os`, `arch`); there is no clock field, the commit date is the date.
+  CI regenerates both on Linux and fails if they differ, so a backend or crate bump that changes
+  what is certified shows up in review. The sqlx matrix is checked by the `relational` job against
+  its pinned PostgreSQL.
+- Tests that read the checked-in files through `persistant_core::Matrix` and ask the gate's
+  question (`create_exclusive` on fs with and without `atomic_write_dir`; an uncertified version and
+  an untested leaf are off).
+
+### Changed
+- `KvOnBlob` and `KvOnRelational` report their version as `<major>.<minor>+<backend version>`, so a
+  patch release does not re-key every recorded row (pre-1.0 the second number is the major).
+
 ## 0.4.22
 
 ### Added

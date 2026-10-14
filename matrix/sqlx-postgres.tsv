@@ -1,0 +1,11 @@
+subject_kind	subject	backend	version	config	enabled	reason	metadata	note
+capability	kv.get	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=kv::kv.get	
+capability	kv.put	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=kv::kv.put	
+capability	kv.delete	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=kv::kv.delete	
+capability	kv.ttl	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;sleep_ms=450;test=kv::kv.ttl;ttl_ms=300	
+capability	kv.put_if_absent	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.put_if_absent;value_bytes=1024	
+capability	kv.prefix_list	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=kv::kv.prefix_list	
+capability	kv.ordered_scan	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan	
+capability	kv.compare_and_swap	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	
+capability	kv.compare_and_delete	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	
+capability	lock.lease	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	
