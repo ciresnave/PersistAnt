@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.28
+
+### Added
+- D7 option A (PM ruling 2026-10-14): `persistant` re-exports the new crates behind opt-in features,
+  **off by default and additive**. `Store`, `Config`, `Need`, `Error` and the blocking facade are
+  untouched. Features and modules: `core` as `persistant::capability`, `blob` as `persistant::blob`,
+  `kv` as `persistant::kv`, `relational` as `persistant::relational`, `opendal-driver` as
+  `persistant::opendal_driver`, `sqlx-driver` as `persistant::sqlx_driver` (needs Rust 1.94; the rest
+  build on 1.91). `persistant-opendal` joins `[workspace.dependencies]`.
+- `tests/reexports.rs` exercises each re-export under its feature; CI runs it with `--all-features`.
+- `deny.toml`: allow `CDLA-Permissive-2.0`, the licence of `webpki-roots` (Mozilla's CA bundle as
+  data) that sqlx pulls through `tls-rustls-ring-webpki`. A policy call for the PM at the gate: the
+  alternative is sqlx's `tls-rustls-ring-native-roots` (system roots, no webpki-roots).
+
 ## 0.4.27
 
 ### Added

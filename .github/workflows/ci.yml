@@ -41,6 +41,10 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --no-fail-fast
 
+      # The opt-in re-exports of the facade (needs the 1.94 compiler this job installs).
+      - name: cargo test persistant --all-features
+        run: cargo test -p persistant --all-features --no-fail-fast
+
   msrv:
     name: MSRV (rust-version in Cargo.toml)
     runs-on: ubuntu-latest

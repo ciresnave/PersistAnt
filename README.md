@@ -141,6 +141,23 @@ Nothing in it is implemented yet; the list under "What it does not do" describes
   OpenDAL syncs the file, not the parent directory, before the rename.
 - **`memory` counts as atomic** because a value becomes visible in one map insert on close.
 
+## The other kinds (opt-in features)
+
+`persistant` is one name for several crates (design: `docs/DESIGN-KINDS.md`). Everything above is
+unchanged; these features, all off by default, re-export the rest under one module each:
+
+- `core` as `persistant::capability`: capability ids, the checked-in matrix file and the gate lookup.
+- `blob` as `persistant::blob`: the `BlobBackend` trait, a memory reference backend, contract tests.
+- `kv` as `persistant::kv`: the `KvBackend` trait, key-value over blob or over a relational
+  database, leases, contract tests.
+- `relational` as `persistant::relational`: a deliberately small database trait and typed errors.
+- `opendal-driver` as `persistant::opendal_driver`: the blob driver and `ProcessLock`.
+- `sqlx-driver` as `persistant::sqlx_driver`: PostgreSQL over sqlx. **Needs Rust 1.94**; the other
+  features build on 1.91.
+
+Nothing here is on by derivation: a capability is on for a backend and version only where a
+recorded test says so (`matrix/*.tsv`).
+
 ## Published versions
 
 crates.io lists 0.4.1, 0.4.4, 0.4.8 and 0.4.9 (API read 2026-10-13, none yanked); 0.4.5 to 0.4.7 are
