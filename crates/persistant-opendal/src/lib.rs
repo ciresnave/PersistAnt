@@ -196,4 +196,14 @@ impl BlobBackend for OpendalBlob {
         }
         self.op.write(key, bytes).await.map(|_| ()).map_err(backend)
     }
+
+    async fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        match self.op.write_with(key, bytes).append(true).await {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::Unsupported => {
+                Err(BlobError::Unsupported(e.to_string()))
+            }
+            Err(e) => Err(backend(e)),
+        }
+    }
 }

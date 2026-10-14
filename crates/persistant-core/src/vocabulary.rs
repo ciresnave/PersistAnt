@@ -59,6 +59,10 @@ pub const SEED: &[(&str, &str)] = &[
         "appended bytes are added after the existing bytes in call order",
     ),
     (
+        "blob.append.concurrent_whole",
+        "of concurrent appends to one key, every call's bytes appear whole and exactly once, none interleaved with another's",
+    ),
+    (
         "blob.max_value_size",
         "one value of the stated size is stored and returned intact",
     ),

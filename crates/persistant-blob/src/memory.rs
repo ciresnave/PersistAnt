@@ -25,6 +25,10 @@ pub enum Defect {
     ListIgnoresPaging,
     /// `create_exclusive` checks, lets other callers run, then writes: two callers can both win.
     CreateNotExclusive,
+    /// `append` replaces the value instead of adding to it.
+    AppendOverwrites,
+    /// `append` adds its first half, lets others run, then the rest: concurrent records interleave.
+    AppendTearsRecords,
     /// `replace_atomic` writes the first half, lets readers run, then the rest: a reader can see a
     /// mix of old and new.
     ReplaceTearsReads,
@@ -188,6 +192,33 @@ impl BlobBackend for MemoryBlob {
             yield_now().await;
         }
         self.map().insert(key.to_string(), bytes);
+        Ok(())
+    }
+
+    async fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        match self.defect {
+            Some(Defect::AppendOverwrites) => {
+                self.map().insert(key.to_string(), bytes);
+            }
+            Some(Defect::AppendTearsRecords) => {
+                let half = bytes.len() / 2;
+                self.map()
+                    .entry(key.to_string())
+                    .or_default()
+                    .extend_from_slice(&bytes[..half]);
+                yield_now().await;
+                self.map()
+                    .entry(key.to_string())
+                    .or_default()
+                    .extend_from_slice(&bytes[half..]);
+            }
+            _ => {
+                self.map()
+                    .entry(key.to_string())
+                    .or_default()
+                    .extend_from_slice(&bytes);
+            }
+        }
         Ok(())
     }
 }

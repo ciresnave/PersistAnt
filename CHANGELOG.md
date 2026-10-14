@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.17
+
+### Added
+- `persistant-blob`: `BlobBackend::append` (default `Unsupported`) and the contract tests for
+  `blob.append` (call order) and the new leaf `blob.append.concurrent_whole` (16 appenders x 10
+  records of 64 bytes: every record whole, exactly once, none interleaved; parameters recorded in the
+  row). Known-bad controls: `AppendOverwrites`, `AppendTearsRecords`.
+- `persistant-core` vocabulary: `blob.append.concurrent_whole`.
+- `persistant-opendal`: `append` through OpenDAL's append write. Findings asserted in tests: `fs` gives
+  both leaves; the `memory` service does not support append (off, `missing`).
+
 ## 0.4.16
 
 ### Added
