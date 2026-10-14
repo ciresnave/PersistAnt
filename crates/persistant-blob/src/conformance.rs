@@ -55,7 +55,7 @@ impl Leaf {
             Leaf::Stat => &[Defect::StatLiesAboutLength],
             Leaf::List => &[
                 Defect::ListIsDescending,
-                Defect::ListPrefixIsGlob,
+                Defect::ListPrefixIsPattern,
                 Defect::ListIgnoresPaging,
             ],
         }
@@ -160,7 +160,10 @@ async fn stat<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
 async fn list<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
     // "1" < "10" < "2" bytewise: a numeric or natural sort would put "2" before "10".
     let under = ["a/1", "a/10", "a/2", "a/b/c"];
-    for k in under.iter().chain(["ab", "a*z", "b/1"].iter()) {
+    for k in under
+        .iter()
+        .chain(["ab", "abz", "a0x", "a%z", "a[0]x", "b/1"].iter())
+    {
         b.write(&format!("{base}{k}"), k.as_bytes().to_vec())
             .await?;
     }
@@ -183,14 +186,17 @@ async fn list<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
         return wrong("a listed entry reports length 0 for a non-empty value");
     }
 
-    // The prefix is literal: `*` matches only itself.
-    let star = b.list(&full("a*"), None, 100).await?;
-    let got: Vec<String> = star.entries.iter().map(|e| e.key.clone()).collect();
-    if got != vec![full("a*z")] {
-        return wrong(format!(
-            "prefix a* listed {got:?}, want only {:?}",
-            full("a*z")
-        ));
+    // The prefix is literal: `%` (SQL LIKE) and `[` (glob class) match only themselves. These
+    // are valid in a Windows file name; `*` and `?` are not, so they cannot be used here.
+    for (prefix, only) in [("a%", "a%z"), ("a[0]", "a[0]x")] {
+        let p = b.list(&full(prefix), None, 100).await?;
+        let got: Vec<String> = p.entries.iter().map(|e| e.key.clone()).collect();
+        if got != vec![full(only)] {
+            return wrong(format!(
+                "prefix {prefix} listed {got:?}, want only {:?}",
+                full(only)
+            ));
+        }
     }
 
     // Paging: limit 2 over 4 keys, each key once, continuation ends with None.

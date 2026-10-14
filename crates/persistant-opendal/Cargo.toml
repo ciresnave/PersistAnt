@@ -1,0 +1,20 @@
+[package]
+name = "persistant-opendal"
+version.workspace = true
+edition = "2024"
+rust-version = "1.91"
+description = "PersistAnt's blob driver over Apache OpenDAL: implements BlobBackend for the fs and memory services."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ciresnave/PersistAnt"
+keywords = ["storage", "persistence", "opendal", "blob"]
+categories = ["filesystem"]
+
+[dependencies]
+persistant-core = { workspace = true }
+persistant-blob = { workspace = true }
+opendal = { version = "0.59.4", default-features = false, features = ["services-fs"] }
+futures-util = { version = "0.3.34", default-features = false }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+tokio = { version = "1.53.2", features = ["rt", "macros"] }

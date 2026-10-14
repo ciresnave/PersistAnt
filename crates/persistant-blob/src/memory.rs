@@ -19,8 +19,8 @@ pub enum Defect {
     StatLiesAboutLength,
     /// `list` returns keys in descending order.
     ListIsDescending,
-    /// `list` treats the prefix as a glob where `*` matches anything.
-    ListPrefixIsGlob,
+    /// `list` treats `%` and `[` in the prefix as pattern characters, not literals.
+    ListPrefixIsPattern,
     /// `list` ignores `limit` and `after`.
     ListIgnoresPaging,
 }
@@ -52,11 +52,11 @@ impl MemoryBlob {
     }
 }
 
-fn glob_prefix_match(key: &str, pattern: &str) -> bool {
-    match pattern.split_once('*') {
-        None => key.starts_with(pattern),
-        Some((head, _)) => key.starts_with(head),
-    }
+/// A prefix match that wrongly reads `%` and `[` as pattern characters (what a LIKE or glob
+/// based backend does): the prefix is cut at the first one.
+fn pattern_prefix_match(key: &str, pattern: &str) -> bool {
+    let cut = pattern.find(['%', '[']).unwrap_or(pattern.len());
+    key.starts_with(&pattern[..cut])
 }
 
 impl BlobBackend for MemoryBlob {
@@ -107,13 +107,13 @@ impl BlobBackend for MemoryBlob {
         limit: usize,
     ) -> Result<Page, BlobError> {
         let map = self.map();
-        let glob = self.defect == Some(Defect::ListPrefixIsGlob);
+        let glob = self.defect == Some(Defect::ListPrefixIsPattern);
         let ignore_paging = self.defect == Some(Defect::ListIgnoresPaging);
         let mut keys: Vec<&String> = map
             .keys()
             .filter(|k| {
                 if glob {
-                    glob_prefix_match(k, prefix)
+                    pattern_prefix_match(k, prefix)
                 } else {
                     k.starts_with(prefix)
                 }

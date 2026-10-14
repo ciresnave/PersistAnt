@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.15
+
+### Added
+- Member crate `persistant-opendal` (name held at 0.0.0 on crates.io; not published by this change):
+  `OpendalBlob` implements `persistant_blob::BlobBackend` for OpenDAL's `fs` and `memory` services,
+  with no OpenDAL type in its public API. Rows are recorded under the fact `atomic_write_dir=set|unset`.
+  `list` is emulated by a directory scan, as in `persistant::Store`.
+- Tests run `conformance::certify` against real `fs` (with and without `atomic_write_dir`) and `memory`
+  and a root that cannot hold keys (control: every leaf off, reason `missing`).
+
+### Changed
+- `persistant-blob` conformance: the literal-prefix test uses `%` and `[` (valid in a Windows file name)
+  instead of `*`; the `ListPrefixIsGlob` defect is now `ListPrefixIsPattern`.
+- The `persistant` crate is unchanged and does not yet use these crates.
+
 ## 0.4.14
 
 ### Added
