@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.29
+
+### Added
+- `persistant-relational`: `ConnectionSecret` (an environment variable, a file, or a literal) and
+  `Redacted`. A connection string is a reference or a value that prints as `<redacted>`; `Debug`
+  never shows it and resolution errors name the variable or file, never a value (DESIGN-KINDS §5,
+  "secret-handle connection config"). The text comes out only through `Redacted::expose`.
+- `persistant-sqlx`: `PgBackend::connect_secret`. `connect(&str)` stays and its doc points at it.
+  A test connects through a literal secret and asserts that neither the secret nor the backend
+  prints the password.
+
 ## 0.4.28
 
 ### Added

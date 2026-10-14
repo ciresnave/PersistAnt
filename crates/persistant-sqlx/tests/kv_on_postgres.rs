@@ -80,6 +80,42 @@ async fn statements_parameters_and_values_round_trip() {
 }
 
 #[tokio::test]
+async fn a_connection_secret_connects_and_the_backend_never_prints_the_password() {
+    use persistant_relational::ConnectionSecret;
+    let Ok(url) = std::env::var("PERSISTANT_TEST_DATABASE_URL") else {
+        assert!(
+            std::env::var("PERSISTANT_REQUIRE_DATABASE").as_deref() != Ok("1"),
+            "PERSISTANT_REQUIRE_DATABASE=1 but PERSISTANT_TEST_DATABASE_URL is not set"
+        );
+        eprintln!("skipped: PERSISTANT_TEST_DATABASE_URL is not set");
+        return;
+    };
+    // The password of the URL under test, if it has one.
+    let password = url
+        .split_once("://")
+        .and_then(|(_, rest)| rest.split_once('@'))
+        .and_then(|(userinfo, _)| userinfo.split_once(':'))
+        .map(|(_, p)| p.to_string());
+    let secret = ConnectionSecret::literal(url);
+    let db = PgBackend::connect_secret(&secret).await.expect("connect");
+    assert_eq!(
+        db.query("SELECT 1::bigint", &[]).await.unwrap()[0].int(0),
+        Some(1)
+    );
+    if let Some(p) = password.filter(|p| p.len() >= 4) {
+        let shown = format!("{secret:?} {db:?}");
+        assert!(!shown.contains(&p), "a Debug print contained the password");
+    }
+    // Control: an unset variable fails by name and prints no value.
+    let missing = ConnectionSecret::Env("PERSISTANT_TEST_NO_SUCH_VARIABLE".into());
+    let err = PgBackend::connect_secret(&missing)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("PERSISTANT_TEST_NO_SUCH_VARIABLE"), "{err}");
+}
+
+#[tokio::test]
 async fn errors_are_classified_by_sqlstate() {
     let Some(db) = backend().await else { return };
     db.execute("DROP TABLE IF EXISTS persistant_errs", &[])
