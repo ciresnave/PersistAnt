@@ -35,6 +35,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a concurrent reader sees the old value or the new value, never a mix, and a crash leaves one of them",
     ),
     (
+        "blob.replace_atomic.concurrent_read",
+        "a concurrent reader sees the whole old value or the whole new value, never a mix of the two",
+    ),
+    (
         "blob.create_exclusive",
         "a write that names itself exclusive succeeds for exactly one of any number of concurrent writers",
     ),
