@@ -8,8 +8,10 @@
 //! Failures are classified from the server's SQLSTATE into [`persistant_relational::RelError`].
 
 mod migrate;
+mod options;
 
 pub use migrate::{MigrateError, MigrateReport, Migration};
+pub use options::{ConnectOptions, TlsPolicy};
 
 use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
 use sqlx::postgres::{PgArguments, PgPoolOptions, PgRow};
