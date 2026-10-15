@@ -123,7 +123,7 @@ impl<R: RelationalBackend> KvOnRelational<R> {
     }
 }
 
-impl<R: RelationalBackend> KvBackend for KvOnRelational<R> {
+impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
     fn backend(&self) -> &str {
         &self.name
     }
