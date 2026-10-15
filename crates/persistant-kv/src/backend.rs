@@ -54,6 +54,75 @@ impl KeyPage {
     }
 }
 
+/// One operation of a [`KvBackend::batch`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BatchOp {
+    /// Store `value` at `key`, with an optional time to live.
+    Put {
+        /// The key.
+        key: String,
+        /// The value.
+        value: Vec<u8>,
+        /// Expiry, as for [`KvBackend::put`].
+        ttl: Option<Duration>,
+    },
+    /// Remove `key`.
+    Delete {
+        /// The key.
+        key: String,
+    },
+    /// A precondition: the **live** value at `key` must equal `expected` (`None`: the key must be
+    /// absent or expired) when the batch applies, or the whole batch is refused.
+    Require {
+        /// The key.
+        key: String,
+        /// The value it must hold, or `None` for absent.
+        expected: Option<Vec<u8>>,
+    },
+}
+
+impl BatchOp {
+    /// A put without a time to live.
+    pub fn put(key: impl Into<String>, value: impl Into<Vec<u8>>) -> Self {
+        BatchOp::Put {
+            key: key.into(),
+            value: value.into(),
+            ttl: None,
+        }
+    }
+
+    /// A delete.
+    pub fn delete(key: impl Into<String>) -> Self {
+        BatchOp::Delete { key: key.into() }
+    }
+
+    /// A precondition that `key` currently holds `expected` (`None`: absent).
+    pub fn require(key: impl Into<String>, expected: Option<Vec<u8>>) -> Self {
+        BatchOp::Require {
+            key: key.into(),
+            expected,
+        }
+    }
+}
+
+/// One page of keys with their values, in key order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ValuePage {
+    /// At most `limit` `(key, value)` pairs, ascending by key bytes.
+    pub entries: Vec<(String, Vec<u8>)>,
+    /// `Some(cursor)`: pass it as `after` for the next page. `None`: the listing is complete.
+    pub next: Option<String>,
+}
+
+impl ValuePage {
+    /// A page of `entries` with an optional continuation.
+    pub fn new(entries: Vec<(String, Vec<u8>)>, next: Option<String>) -> Self {
+        ValuePage { entries, next }
+    }
+}
+
 /// A key-value store.
 ///
 /// Small on purpose; every method is a primitive a capability's contract is written against.
@@ -161,5 +230,28 @@ pub trait KvBackend: Send + Sync {
     /// housekeeping. A live entry is never removed (`kv.purge_expired`).
     fn purge_expired(&self) -> impl Future<Output = Result<u64, KvError>> + Send {
         async { Err(KvError::Unsupported("purge_expired".to_string())) }
+    }
+
+    /// Apply `ops` as one unit. `Ok(true)`: every `Put` and `Delete` took effect together;
+    /// `Ok(false)`: a `Require` was not met and **nothing changed**; `Err`: an operation failed
+    /// and nothing changed. Of concurrent batches requiring the same value, exactly one applies
+    /// (`kv.batch_atomic.rollback`). A backend with no multi-key transaction returns
+    /// [`KvError::Unsupported`]; the default does.
+    fn batch(&self, ops: &[BatchOp]) -> impl Future<Output = Result<bool, KvError>> + Send {
+        let _ = ops;
+        async { Err(KvError::Unsupported("batch".to_string())) }
+    }
+
+    /// As [`KvBackend::ordered_scan`], with each key's value, from **one consistent snapshot**:
+    /// a concurrent [`KvBackend::batch`] is seen whole or not at all
+    /// (`kv.ordered_scan_values`, `kv.batch_atomic.concurrent_read`).
+    fn ordered_scan_values(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> impl Future<Output = Result<ValuePage, KvError>> + Send {
+        let _ = (prefix, after, limit);
+        async { Err(KvError::Unsupported("ordered_scan_values".to_string())) }
     }
 }

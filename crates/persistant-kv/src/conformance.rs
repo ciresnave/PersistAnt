@@ -10,8 +10,8 @@
 //! `kv.ttl_remaining`, `kv.compare_and_swap`, `kv.take`, `kv.batch_atomic` and `kv.count` have no
 //! test here, so no row is produced and they stay off.
 
-use crate::{Defect, KvBackend, KvError, MemoryKv};
-use persistant_blob::concurrency::{Task, join_all};
+use crate::{BatchOp, Defect, KvBackend, KvError, MemoryKv};
+use persistant_blob::concurrency::{Task, join_all, yield_now};
 use persistant_core::{CapabilityId, Config, Controls, Reason, Row, Verdict};
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -44,11 +44,17 @@ pub enum Leaf {
     TtlRemaining,
     /// `kv.purge_expired`, in real time
     PurgeExpired,
+    /// `kv.batch_atomic.rollback`, by sampled concurrency
+    BatchRollback,
+    /// `kv.batch_atomic.concurrent_read`, by sampled concurrency
+    BatchConcurrentRead,
+    /// `kv.ordered_scan_values`
+    ScanValues,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 12] = [
+    pub const ALL: [Leaf; 15] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -61,6 +67,9 @@ impl Leaf {
         Leaf::Lease,
         Leaf::TtlRemaining,
         Leaf::PurgeExpired,
+        Leaf::BatchRollback,
+        Leaf::BatchConcurrentRead,
+        Leaf::ScanValues,
     ];
 
     /// The capability id.
@@ -78,6 +87,9 @@ impl Leaf {
             Leaf::Lease => "lock.lease",
             Leaf::TtlRemaining => "kv.ttl_remaining",
             Leaf::PurgeExpired => "kv.purge_expired",
+            Leaf::BatchRollback => "kv.batch_atomic.rollback",
+            Leaf::BatchConcurrentRead => "kv.batch_atomic.concurrent_read",
+            Leaf::ScanValues => "kv.ordered_scan_values",
         }
     }
 
@@ -89,6 +101,8 @@ impl Leaf {
             Leaf::Lease => "contenders=16;rounds=5;ttl_ms=200;sleep_ms=300",
             Leaf::TtlRemaining => "ttl_ms=10000;sleep_ms=150",
             Leaf::PurgeExpired => "ttl_ms=100;sleep_ms=250",
+            Leaf::BatchRollback => "contenders=16;rounds=20",
+            Leaf::BatchConcurrentRead => "readers=4;batches=60",
             _ => "",
         }
     }
@@ -114,6 +128,9 @@ impl Leaf {
             Leaf::CompareAndDelete => &[Defect::CadIgnoresExpected, Defect::CadNotAtomic],
             Leaf::TtlRemaining => &[Defect::TtlRemainingIsConstant, Defect::TtlIgnored],
             Leaf::PurgeExpired => &[Defect::PurgeRemovesLive],
+            Leaf::BatchRollback => &[Defect::BatchNotAtomic, Defect::BatchIgnoresRequire],
+            Leaf::BatchConcurrentRead => &[Defect::BatchNotAtomic],
+            Leaf::ScanValues => &[Defect::ScanIsDescending, Defect::ListIgnoresPaging],
             Leaf::Lease => &[
                 Defect::PutIfAbsentNotExclusive,
                 Defect::CasIgnoresExpected,
@@ -176,6 +193,9 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::Lease => lease(b, &base).await,
         Leaf::TtlRemaining => ttl_remaining(b, &base).await,
         Leaf::PurgeExpired => purge_expired(b, &base).await,
+        Leaf::BatchRollback => batch_rollback(b, &base).await,
+        Leaf::BatchConcurrentRead => batch_concurrent_read(b, &base).await,
+        Leaf::ScanValues => scan_values(b, &base).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.prefix_list(&base, None, usize::MAX).await {
@@ -572,6 +592,239 @@ async fn purge_expired<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+async fn batch_rollback<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 20;
+    let (a, bk, c) = (format!("{base}a"), format!("{base}b"), format!("{base}c"));
+    // A met precondition: everything applies together.
+    b.put(&c, b"x".to_vec(), None).await?;
+    let ok = b
+        .batch(&[
+            BatchOp::require(&c, Some(b"x".to_vec())),
+            BatchOp::put(&a, b"1".to_vec()),
+            BatchOp::put(&bk, b"2".to_vec()),
+            BatchOp::delete(&c),
+        ])
+        .await?;
+    if !ok
+        || b.get(&a).await?.as_deref() != Some(&b"1"[..])
+        || b.get(&bk).await?.as_deref() != Some(&b"2"[..])
+        || b.get(&c).await?.is_some()
+    {
+        return wrong("a batch whose precondition held did not apply entirely");
+    }
+    // A failed precondition after earlier writes in the same batch: nothing changes.
+    let refused = b
+        .batch(&[
+            BatchOp::put(&a, b"CHANGED".to_vec()),
+            BatchOp::delete(&bk),
+            BatchOp::put(format!("{base}new"), b"n".to_vec()),
+            BatchOp::require(&c, Some(b"x".to_vec())),
+        ])
+        .await?;
+    if refused {
+        return wrong("a batch with an unmet precondition reported success");
+    }
+    if b.get(&a).await?.as_deref() != Some(&b"1"[..])
+        || b.get(&bk).await?.as_deref() != Some(&b"2"[..])
+        || b.get(&format!("{base}new")).await?.is_some()
+    {
+        return wrong("a refused batch changed something (earlier operations were not undone)");
+    }
+    // `None` means absent: it fails against an existing key and holds for a missing one.
+    if b.batch(&[
+        BatchOp::require(&a, None),
+        BatchOp::put(format!("{base}z"), b"z".to_vec()),
+    ])
+    .await?
+        || b.get(&format!("{base}z")).await?.is_some()
+    {
+        return wrong("a Require-absent on an existing key did not refuse the batch");
+    }
+    // Concurrent batches requiring the same value: exactly one applies.
+    for round in 0..ROUNDS {
+        let seq = format!("{base}seq{round}");
+        let seq = seq.as_str();
+        b.put(seq, b"0".to_vec(), None).await?;
+        let queue: Vec<String> = (0..CONTENDERS)
+            .map(|i| format!("{base}q{round}-{i}"))
+            .collect();
+        let tasks: Vec<Task<'_, Result<bool, KvError>>> = (0..CONTENDERS)
+            .map(|i| -> Task<'_, _> {
+                let q = queue[i].clone();
+                Box::pin(async move {
+                    b.batch(&[
+                        BatchOp::require(seq, Some(b"0".to_vec())),
+                        BatchOp::put(seq, vec![b'a' + i as u8]),
+                        BatchOp::put(q, b"entry".to_vec()),
+                    ])
+                    .await
+                })
+            })
+            .collect();
+        let mut winners = Vec::new();
+        for (i, r) in join_all(tasks).await.into_iter().enumerate() {
+            if r? {
+                winners.push(i);
+            }
+        }
+        if winners.len() != 1 {
+            return wrong(format!(
+                "round {round}: {} of {CONTENDERS} batches requiring the same value applied",
+                winners.len()
+            ));
+        }
+        let entries = {
+            let mut n = 0;
+            for q in &queue {
+                if b.get(q).await?.is_some() {
+                    n += 1;
+                }
+            }
+            n
+        };
+        if entries != 1 {
+            return wrong(format!(
+                "round {round}: {entries} queue entries written, want exactly 1"
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn batch_concurrent_read<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    const READERS: usize = 4;
+    const BATCHES: usize = 60;
+    let (k1, k2) = (format!("{base}k1"), format!("{base}k2"));
+    let (k1, k2) = (k1.as_str(), k2.as_str());
+    if !b
+        .batch(&[
+            BatchOp::put(k1, b"0".to_vec()),
+            BatchOp::put(k2, b"0".to_vec()),
+        ])
+        .await?
+    {
+        return wrong("a batch of two puts was refused");
+    }
+    let done = std::cell::Cell::new(false);
+    let done = &done;
+    let mut tasks: Vec<Task<'_, Result<(), Failure>>> = Vec::new();
+    tasks.push(Box::pin(async move {
+        for i in 1..=BATCHES {
+            let v = i.to_string().into_bytes();
+            let r = b
+                .batch(&[BatchOp::put(k1, v.clone()), BatchOp::put(k2, v)])
+                .await;
+            match r {
+                Ok(true) => {}
+                Ok(false) => {
+                    done.set(true);
+                    return wrong("a batch of two puts was refused");
+                }
+                Err(e) => {
+                    done.set(true);
+                    return Err(e.into());
+                }
+            }
+            yield_now().await;
+        }
+        done.set(true);
+        Ok(())
+    }));
+    let prefix = base.to_string();
+    for _ in 0..READERS {
+        let prefix = prefix.clone();
+        tasks.push(Box::pin(async move {
+            for _ in 0..(BATCHES * 20) {
+                let page = match b.ordered_scan_values(&prefix, None, 10).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        done.set(true);
+                        return Err(e.into());
+                    }
+                };
+                let get = |k: &str| {
+                    page.entries
+                        .iter()
+                        .find(|(key, _)| key == k)
+                        .map(|(_, v)| v.clone())
+                };
+                if get(k1) != get(k2) {
+                    done.set(true);
+                    return wrong(format!(
+                        "one scan saw a batch partly: k1={:?} k2={:?}",
+                        get(k1).map(|v| String::from_utf8_lossy(&v).into_owned()),
+                        get(k2).map(|v| String::from_utf8_lossy(&v).into_owned())
+                    ));
+                }
+                if done.get() {
+                    break;
+                }
+                yield_now().await;
+            }
+            Ok(())
+        }));
+    }
+    for r in join_all(tasks).await {
+        r?;
+    }
+    Ok(())
+}
+
+async fn scan_values<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    let full = |s: &str| format!("{base}{s}");
+    for k in ["s/2", "s/10", "s/1", "s/B", "s/a", "t/1"] {
+        b.put(&full(k), format!("v:{k}").into_bytes(), None).await?;
+    }
+    let live = full("s/live");
+    b.put(&live, b"keep".to_vec(), None).await?;
+    let gone = full("s/gone");
+    b.put(&gone, b"x".to_vec(), Some(Duration::from_millis(100)))
+        .await?;
+    std::thread::sleep(Duration::from_millis(250));
+    let mut got: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut after: Option<String> = None;
+    for _ in 0..50 {
+        let p = b
+            .ordered_scan_values(&full("s/"), after.as_deref(), 2)
+            .await?;
+        if p.entries.len() > 2 {
+            return wrong(format!(
+                "a page of limit 2 held {} entries",
+                p.entries.len()
+            ));
+        }
+        got.extend(p.entries);
+        match p.next {
+            Some(c) => after = Some(c),
+            None => break,
+        }
+    }
+    let keys: Vec<&str> = got.iter().map(|(k, _)| k.as_str()).collect();
+    // Bytewise: "1" < "10" < "2" < "B" < "a" < "live".
+    let want: Vec<String> = ["s/1", "s/10", "s/2", "s/B", "s/a", "s/live"]
+        .iter()
+        .map(|s| full(s))
+        .collect();
+    if keys != want.iter().map(String::as_str).collect::<Vec<_>>() {
+        return wrong(format!(
+            "scan with values returned keys {keys:?}, want {want:?}"
+        ));
+    }
+    for (k, v) in &got {
+        let suffix = k.strip_prefix(base).unwrap_or(k);
+        let expect: Vec<u8> = if suffix == "s/live" {
+            b"keep".to_vec()
+        } else {
+            format!("v:{suffix}").into_bytes()
+        };
+        if *v != expect {
+            return wrong(format!("key {suffix} came back with value {v:?}"));
+        }
+    }
+    Ok(())
+}
+
 async fn lease<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     use crate::Lease;
     const CONTENDERS: usize = 16;
@@ -806,7 +1059,13 @@ mod tests {
             // A blob store has no compare-and-delete, so these are missing, not wrong.
             let needs_cad = matches!(
                 c.leaf,
-                Leaf::CompareAndSwap | Leaf::CompareAndDelete | Leaf::Lease | Leaf::PurgeExpired
+                Leaf::CompareAndSwap
+                    | Leaf::CompareAndDelete
+                    | Leaf::Lease
+                    | Leaf::PurgeExpired
+                    | Leaf::BatchRollback
+                    | Leaf::BatchConcurrentRead
+                    | Leaf::ScanValues
             );
             assert_eq!(c.row.enabled, !needs_cad, "{}: {}", c.leaf.id(), c.row.note);
             if needs_cad {

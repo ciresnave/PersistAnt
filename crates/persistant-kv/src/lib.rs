@@ -24,7 +24,7 @@ mod memory;
 mod on_blob;
 mod on_relational;
 
-pub use backend::{KeyPage, KvBackend, KvError};
+pub use backend::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};
 pub use lease::Lease;
 pub use memory::{Defect, MemoryKv};
 pub use on_blob::KvOnBlob;

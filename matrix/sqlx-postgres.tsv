@@ -11,3 +11,6 @@ capability	kv.compare_and_delete	kv-on-relational:postgres	0.4+16.15	dialect=pos
 capability	lock.lease	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	
 capability	kv.ttl_remaining	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	
 capability	kv.purge_expired	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	
+capability	kv.batch_atomic.rollback	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	
+capability	kv.batch_atomic.concurrent_read	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	
+capability	kv.ordered_scan_values	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	
