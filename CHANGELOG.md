@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.32
+
+### Added
+- `persistant-kv`: `BatchOp::{Put { key, value, ttl }, Delete { key }, Require { key, expected }}`
+  and `KvBackend::batch(&[BatchOp]) -> Result<bool>`: all-or-nothing. `Ok(false)` means a `Require`
+  precondition was unmet and nothing changed. Also `ordered_scan_values`. Implemented by `MemoryKv`
+  and `KvOnRelational` (PostgreSQL). `KvOnBlob` does not offer `batch`.
+- Three conformance leaves: `kv.batch_atomic.rollback`, `kv.batch_atomic.concurrent_read`,
+  `kv.ordered_scan_values`. Certified matrix rows 12 -> 15.
+- Not covered, stated: the full `kv.batch_atomic` crash leaf stays off.
+
 ## 0.4.31
 
 ### Added
