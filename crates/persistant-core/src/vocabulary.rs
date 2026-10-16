@@ -139,6 +139,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a row violating a CHECK constraint is rejected as a check violation",
     ),
     (
+        "rel.isolation.no_dirty_read",
+        "a write inside an open transaction is invisible to every other connection until it commits, and visible after",
+    ),
+    (
         "kv.durability.process",
         "a write acknowledged as stored is still there after the writing process is killed hard and the store is opened again; says nothing about power loss or an operating-system crash (that is the Machine class, declared not verified)",
     ),
