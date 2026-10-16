@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (version allocated at gate)
+## 0.4.34
 
 ### Added
 - `persistant-kv`: `contract::{check, evaluate, Eligibility, Exclusion}` and `conformance::certify_leaves`:
