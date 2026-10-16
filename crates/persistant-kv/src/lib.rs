@@ -11,6 +11,8 @@
 //! - [`KvOnRelational`]: the same for any [`persistant_relational::RelationalBackend`] (D1, C+),
 //!   PostgreSQL SQL translated by UniSQL (PostgreSQL, SQLite), keys as bytes, tested per server and version.
 //! - [`MemoryKv`]: a reference backend with injectable [`Defect`]s for known-bad controls.
+//! - [`choose`]: stage 4, "best backend for X": a ranked list with its evidence, from the contract,
+//!   a stated durability minimum and measurements in one environment; never a silent choice.
 //! - [`conformance`]: the contract tests, producing matrix rows.
 //! - [`contract`]: pass/fail eligibility for a set of required leaves; a failing backend is excluded,
 //!   never ranked slower.
@@ -23,6 +25,7 @@
 //! compare-and-delete; see its docs.
 
 mod backend;
+pub mod choose;
 pub mod conformance;
 pub mod contract;
 mod lease;
