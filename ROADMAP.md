@@ -24,11 +24,14 @@ the best backend for a capability. Four stages, each its own PR, in order:
 (#43), `speed` with data files in `bench/` (#46), `choose::choose` (#47). Stage 2 also exists for
 blob (#45). Not done, in this order (queued by the PM 2026-10-16):
 
-1. **Durability verification.** `choose` ranks against a durability class that is only *declared*
-   (`declared_durability`, each entry with its basis). Verify what can be verified in CI: the
-   `Process` class by killing a writer process after acknowledged writes and reading them back after
-   restart (the `blob.replace_atomic` crash test is the model). The `Machine` class (power loss, an
-   OS crash) needs a VM hard reset and stays **declared** until a harness for that exists.
+1. **Durability verification.** *Done for `Process`* (0.5.8, `kv.durability.process`: a writer killed
+   after acknowledged writes, the store reopened; SQLite file, OpenDAL fs, PostgreSQL, MySQL; memory
+   stores fail it as they must). **`Machine` (power loss, an OS crash) is UNVERIFIED and stays
+   declared**: a process kill leaves the OS and its caches intact. The harness for it needs a VM or a
+   runner that can be hard-reset mid-write (write on a guest, power-cycle the guest, read back after
+   boot, with the same known-bad control: a store that acknowledges before it flushes). Scope: kv on a
+   file (SQLite, OpenDAL fs) and on a server database inside the guest. Not built, not scheduled; it
+   needs infrastructure the PM provides.
 2. **`choose` for the blob kind**, then **the relational kind**. The relational kind has no leaves of
    its own yet (migrations are tested, not certified): *nothing to measure yet*, owner the PersistAnt
    lane, so its leaves come first.
