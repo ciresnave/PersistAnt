@@ -50,11 +50,14 @@ pub enum Leaf {
     BatchConcurrentRead,
     /// `kv.ordered_scan_values`
     ScanValues,
+    /// `kv.batch_atomic.optimistic_sequence`: the Synapse mailbox pattern (read, then a batch of
+    /// `Require` and `Put`, retried on refusal), by sampled concurrency
+    OptimisticSequence,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 15] = [
+    pub const ALL: [Leaf; 16] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -70,6 +73,7 @@ impl Leaf {
         Leaf::BatchRollback,
         Leaf::BatchConcurrentRead,
         Leaf::ScanValues,
+        Leaf::OptimisticSequence,
     ];
 
     /// The capability id.
@@ -90,6 +94,7 @@ impl Leaf {
             Leaf::BatchRollback => "kv.batch_atomic.rollback",
             Leaf::BatchConcurrentRead => "kv.batch_atomic.concurrent_read",
             Leaf::ScanValues => "kv.ordered_scan_values",
+            Leaf::OptimisticSequence => "kv.batch_atomic.optimistic_sequence",
         }
     }
 
@@ -103,6 +108,7 @@ impl Leaf {
             Leaf::PurgeExpired => "ttl_ms=100;sleep_ms=250",
             Leaf::BatchRollback => "contenders=16;rounds=20",
             Leaf::BatchConcurrentRead => "readers=4;batches=60",
+            Leaf::OptimisticSequence => "contenders=8;rounds=10",
             _ => "",
         }
     }
@@ -131,6 +137,7 @@ impl Leaf {
             Leaf::BatchRollback => &[Defect::BatchNotAtomic, Defect::BatchIgnoresRequire],
             Leaf::BatchConcurrentRead => &[Defect::BatchNotAtomic],
             Leaf::ScanValues => &[Defect::ScanIsDescending, Defect::ListIgnoresPaging],
+            Leaf::OptimisticSequence => &[Defect::BatchIgnoresRequire, Defect::BatchNotAtomic],
             Leaf::Lease => &[
                 Defect::PutIfAbsentNotExclusive,
                 Defect::CasIgnoresExpected,
@@ -196,6 +203,7 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::BatchRollback => batch_rollback(b, &base).await,
         Leaf::BatchConcurrentRead => batch_concurrent_read(b, &base).await,
         Leaf::ScanValues => scan_values(b, &base).await,
+        Leaf::OptimisticSequence => optimistic_sequence(b, &base).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.prefix_list(&base, None, usize::MAX).await {
@@ -771,6 +779,72 @@ async fn batch_concurrent_read<K: KvBackend>(b: &K, base: &str) -> Result<(), Fa
     Ok(())
 }
 
+/// The mailbox pattern: each caller reads the sequence, lets others run, then commits one batch
+/// that requires the value it read. A refused batch is retried. Every caller must end with a
+/// distinct number and the final counter must equal the number of increments.
+///
+/// The `yield_now` between the read and the commit widens the race window; without it a fast
+/// backend can hide a missing `Require` (the control for this leaf is exactly that defect).
+async fn optimistic_sequence<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    const CONTENDERS: usize = 8;
+    const ROUNDS: usize = 10;
+    const RETRIES: usize = 10_000;
+    let seq = format!("{base}seq");
+    let seq = seq.as_str();
+    b.put(seq, b"0".to_vec(), None).await?;
+    let tasks: Vec<Task<'_, Result<Vec<u64>, Failure>>> = (0..CONTENDERS)
+        .map(|_| -> Task<'_, _> {
+            Box::pin(async move {
+                let mut got = Vec::new();
+                for _ in 0..ROUNDS {
+                    let mut attempts = 0;
+                    loop {
+                        attempts += 1;
+                        if attempts > RETRIES {
+                            return wrong("an optimistic increment was refused 10000 times");
+                        }
+                        let cur = b
+                            .get(seq)
+                            .await?
+                            .ok_or_else(|| Failure::Wrong("the sequence key vanished".into()))?;
+                        let n: u64 = std::str::from_utf8(&cur)
+                            .ok()
+                            .and_then(|t| t.parse().ok())
+                            .ok_or_else(|| Failure::Wrong("the sequence is not a number".into()))?;
+                        yield_now().await;
+                        let next = (n + 1).to_string().into_bytes();
+                        if b.batch(&[BatchOp::require(seq, Some(cur)), BatchOp::put(seq, next)])
+                            .await?
+                        {
+                            got.push(n + 1);
+                            break;
+                        }
+                    }
+                }
+                Ok(got)
+            })
+        })
+        .collect();
+    let mut all = Vec::new();
+    for r in join_all(tasks).await {
+        all.extend(r?);
+    }
+    let total = (CONTENDERS * ROUNDS) as u64;
+    let distinct: BTreeSet<u64> = all.iter().copied().collect();
+    if distinct.len() != all.len() {
+        return wrong(format!(
+            "{} of {} sequence numbers were handed out twice (lost updates)",
+            all.len() - distinct.len(),
+            all.len()
+        ));
+    }
+    let last = b.get(seq).await?.and_then(|v| String::from_utf8(v).ok());
+    if last.as_deref() != Some(total.to_string().as_str()) {
+        return wrong(format!("the sequence ended at {last:?}, want {total}"));
+    }
+    Ok(())
+}
+
 async fn scan_values<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     let full = |s: &str| format!("{base}{s}");
     for k in ["s/2", "s/10", "s/1", "s/B", "s/a", "t/1"] {
@@ -1076,6 +1150,7 @@ mod tests {
                     | Leaf::BatchRollback
                     | Leaf::BatchConcurrentRead
                     | Leaf::ScanValues
+                    | Leaf::OptimisticSequence
             );
             assert_eq!(c.row.enabled, !needs_cad, "{}: {}", c.leaf.id(), c.row.note);
             if needs_cad {

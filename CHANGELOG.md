@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.35
+
+### Added
+- `persistant-kv`: leaf `kv.batch_atomic.optimistic_sequence` (the Synapse mailbox pattern: read, yield,
+  `batch([Require(read value), Put])`, retry on refusal). Callers must each get a distinct number and the
+  counter must end at the number of increments. Known-bad controls: `BatchIgnoresRequire` and
+  `BatchNotAtomic` (Synapse measured 74 duplicates of 100 without the `Require`s). `KvOnBlob` is
+  `Missing`. Certified matrix rows 15 -> 16.
+
+
 ## 0.4.34
 
 ### Added

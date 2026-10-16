@@ -115,6 +115,10 @@ pub const SEED: &[(&str, &str)] = &[
         "one ordered scan with values sees all of a concurrent batch's writes or none of them",
     ),
     (
+        "kv.batch_atomic.optimistic_sequence",
+        "concurrent read-then-batch(Require, Put) callers, retrying on a refused batch, are each given a distinct sequence number: no lost update",
+    ),
+    (
         "kv.ordered_scan_values",
         "an ordered scan returns each key's value with it, in ascending bytewise key order, in pages, from one consistent snapshot",
     ),
