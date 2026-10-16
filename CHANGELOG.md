@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.0
+
+### Breaking (pre-1.0: the second number)
+- The kind-agnostic half of benchmarking moved to `persistant-core`: `bench` (`Environment`, `Stats`,
+  `Outcome`, `SpeedRow`, `SpeedTable`, `Comparison`, `compare`, the data file) and `choose`
+  (`Durability`, `Declared`, `Need`, `Candidate`, `Choice`, `choose`, `LeafFailure`, `Eligibility`).
+  `persistant_kv::speed` re-exports the types it had, so those paths still work. What changed shape:
+  `persistant_kv::choose::Need` names leaves and the ranking workload by **id string** (build one with
+  `persistant_kv::choose::need(&[Leaf], min, Workload, env)`), a `Candidate`'s eligibility is the core
+  `Eligibility`/`LeafFailure` (string leaf ids), and `Why::Contract` carries `LeafFailure`s.
+  `persistant_kv::speed::ParseError` is now the core `SpeedParseError` under the old name.
+
+### Added
+- `persistant-blob`: `contract::{check, evaluate}`, `speed::{run, Workload}` (write, read, stat, list,
+  create_exclusive, replace_atomic, append; 4 KiB values) and `choose::{choose, candidate, need,
+  declared_durability}`: stages 1, 3 and 4 for the blob kind, on the shared core types. Only a backend
+  that passes the leaf a workload needs is timed; the rest are listed as excluded. **Blob durability is
+  declared and not verified at all** (`verified: None`): the kv process-kill test exercises the same
+  services through `KvOnBlob`, but there is no blob-level one, and there is no power-loss test.
+- `persistant-blob`: `conformance::certify_leaves` (certify a chosen set of leaves, controls included),
+  as kv already had.
+- `persistant-opendal --example speed` also times the blob kind on the memory and fs services; a test
+  runs the blob contract, speed and `choose` together over real OpenDAL services (and allows for a
+  case-insensitive filesystem excluding the fs service, as the contract intends).
+- Not covered, stated: the relational kind (no leaves of its own yet: nothing to measure, owner the
+  PersistAnt lane), blob concurrency in speed, and value sizes other than 4 KiB.
+
 ## 0.5.8
 
 ### Added
