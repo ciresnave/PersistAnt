@@ -9,8 +9,8 @@ fn the_recorded_postgres_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        21,
-        "sixteen kv/lock leaves and five relational leaves are certified"
+        22,
+        "sixteen kv/lock leaves and six relational leaves are certified"
     );
     for r in m.rows() {
         assert!(r.enabled, "{}: {}", r.subject, r.note);
