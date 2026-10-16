@@ -14,3 +14,4 @@ capability	kv.purge_expired	kv-on-relational:postgres	0.4+16.15	dialect=postgres
 capability	kv.batch_atomic.rollback	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	
 capability	kv.batch_atomic.concurrent_read	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	
 capability	kv.ordered_scan_values	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	
+capability	kv.batch_atomic.optimistic_sequence	kv-on-relational:postgres	0.4+16.15	dialect=postgres	yes		arch=x86_64;contenders=8;os=linux;rounds=10;test=kv::kv.batch_atomic.optimistic_sequence	
