@@ -50,15 +50,39 @@ pub(crate) fn classify(e: sqlx::Error) -> RelError {
     }
 }
 
+/// A `NULL` whose type the server infers from the statement. Binding `Option::<String>::None` sends
+/// the type `text`, which the server rejects for a `bigint` column (`expression is of type text`) the
+/// first time a pooled connection prepares that statement, and not on one that already has: a failure
+/// that depends on which connection the pool hands out. Type OID 0 means "unspecified".
+struct UntypedNull;
+
+impl sqlx::Type<Postgres> for UntypedNull {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        sqlx::postgres::PgTypeInfo::with_oid(sqlx::postgres::types::Oid(0))
+    }
+
+    fn compatible(_: &sqlx::postgres::PgTypeInfo) -> bool {
+        true
+    }
+}
+
+impl<'q> sqlx::Encode<'q, Postgres> for UntypedNull {
+    fn encode_by_ref(
+        &self,
+        _: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        Ok(sqlx::encode::IsNull::Yes)
+    }
+}
+
 fn bind<'q>(
     mut q: Query<'q, Postgres, PgArguments>,
     params: &'q [Value],
 ) -> Result<Query<'q, Postgres, PgArguments>, RelError> {
     for p in params {
         q = match p {
-            // A typed NULL: PostgreSQL needs a type to infer parameter types; text works for the
-            // statements this layer issues. A caller needing another NULL type casts in SQL.
-            Value::Null => q.bind(Option::<String>::None),
+            // A NULL of unspecified type: the server infers it from the statement.
+            Value::Null => q.bind(UntypedNull),
             Value::Bool(b) => q.bind(*b),
             Value::Int(n) => q.bind(*n),
             Value::Float(f) => q.bind(*f),

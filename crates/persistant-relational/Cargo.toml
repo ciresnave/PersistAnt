@@ -8,3 +8,6 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/ciresnave/PersistAnt"
 keywords = ["sql", "database", "persistence", "capabilities"]
 categories = ["database-implementations"]
+
+[dependencies]
+persistant-core = { workspace = true }

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.1
+
+### Added
+- `persistant-relational`: `conformance::{certify, run_leaf, Leaf, Defect, Defective}`, the relational
+  kind's own leaves, so it has something to measure: `rel.values` (integers, text, bytes, floats and
+  NULL round-trip), `rel.transaction` (commit visible, rollback and drop-without-commit not),
+  `rel.error.unique`, `rel.foreign_key`, `rel.check_constraint` (violations come back as the typed
+  `RelError`, not as opaque backend text). **Known-bad controls are real:** a `Defective` wrapper makes
+  the same target have no transactions, lose bytes or hide error kinds, and the two constraint leaves
+  are also run on a schema created *without* the constraint, which must be caught accepting the bad
+  row. **The positive control is weaker than in kv and blob** (there is no reference relational engine
+  to pass against): it is only that the leaf's schema could be created on the target. Statements are
+  written per dialect (a probe of the dialect, not of translation); booleans are left out because how
+  a driver returns one is a documented difference.
+- All five are on for PostgreSQL 16, SQLite and MySQL 8.4; the three `matrix/sqlx-*.tsv` files gain five
+  rows each (21 per backend) and the matrix examples emit them.
+
+### Fixed
+- `persistant-sqlx` (PostgreSQL): a `NULL` parameter was sent with type `text`, which the server rejects
+  for a `bigint`/`bytea` column (`expression is of type text`) on any pooled connection that had not
+  already prepared the statement: a failure that depended on which connection the pool handed out. A
+  `NULL` is now sent with an unspecified type and the server infers it. Found by `rel.values` (it first
+  passed alone and failed in the matrix run); pinned by `a_null_parameter_works_on_every_pooled_connection`,
+  which fails without the fix.
+
+### Changed
+- The PostgreSQL and MySQL integration tests take a lock: they share one server and the kv table's
+  fixed key prefixes, so two tests certifying at once deleted each other's keys.
+- Known flake, not fixed: `kv_on_mysql_certifies_every_leaf_on` failed twice on a heavily loaded
+  developer machine (while other builds ran) and passed in 11 of 11 quiet runs. The failing leaf was
+  not captured. Time-window leaves are the suspects (`docs`: wall-clock windows on a loaded machine).
+
 ## 0.6.0
 
 ### Breaking (pre-1.0: the second number)
