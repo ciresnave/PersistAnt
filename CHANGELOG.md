@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.6
+
+### Added
+- `persistant-kv`: `choose::{choose, candidate, Need, Candidate, Choice, Entry, Durability,
+  declared_durability}`, benchmarking stage 4: "best backend for X". The consumer states the contract
+  leaves it needs, the minimum durability class (`Volatile` < `Process` < `Machine`), the one workload
+  to rank by and the environment the ranking is for. The answer is the eligible backends fastest
+  first, each with the measurement it was ranked on (date, image digest, re-run command) and its
+  declared durability; the eligible ones with no measurement in that environment (listed, not
+  hidden); and every excluded backend with its reason. Nothing eligible is `Err(NoneEligible)` with
+  the exclusions: no silent fallback. `Choice::log_lines` is the decision as lines to log.
+- **Durability is declared, not verified.** `declared_durability` is a table of what the backends
+  document (PostgreSQL and MySQL defaults: `Machine`; SQLite file and OpenDAL fs: `Process`; memory:
+  `Volatile`), each with its basis. There is no power-loss test yet (`blob.durable` is not built); a
+  backend with no entry is excluded as unknown once the need asks for more than `Volatile`.
+- Not covered, stated: ranking by more than one workload, concurrency-aware ranking, durability
+  verification, and the blob and relational kinds (no `choose` for them yet).
+
 ## 0.5.5
 
 ### Added
