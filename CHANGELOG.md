@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.36
+## 0.5.0
 
 ### Added
 - `persistant-sqlx` (feature `sqlite`, bundled library): `SqliteBackend` (`open(path)` / `from_pool`),
