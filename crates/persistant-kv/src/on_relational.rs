@@ -122,6 +122,61 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         tx.query(&sql, &params).await
     }
 
+    /// Store `value` under `key` only if the key is absent or expired; `true` if this call did.
+    ///
+    /// MySQL cannot say. sqlx connects with `CLIENT_FOUND_ROWS`, under which an upsert that
+    /// changed nothing reports 1, the same as an insert, so the single conditional upsert the other
+    /// dialects use cannot tell "stored" from "a live value was there". Here it is two statements
+    /// whose counts are unambiguous under that flag: reclaim an expired row (an `UPDATE`, which
+    /// counts rows *matched*), else a plain `INSERT` whose duplicate-key error means the key is
+    /// live. Concurrent callers serialise on the row: the second finds it no longer expired.
+    async fn claim_two_step<T: RelationalTx>(
+        &self,
+        tx: &mut T,
+        key: &str,
+        value: &[u8],
+        ttl: Option<Duration>,
+    ) -> Result<bool, KvError> {
+        let reclaimed = self
+            .tx_exec(
+                tx,
+                &format!(
+                    "UPDATE persistant_kv SET v = $2, \
+                     expires_ms = CASE WHEN $3 < 0 THEN NULL ELSE {NOW} + $3 END \
+                     WHERE k = $1 AND expires_ms IS NOT NULL AND expires_ms <= {NOW}"
+                ),
+                &[
+                    Value::Bytes(key.as_bytes().to_vec()),
+                    Value::Bytes(value.to_vec()),
+                    ttl_ms(ttl),
+                ],
+            )
+            .await
+            .map_err(err)?;
+        if reclaimed == 1 {
+            return Ok(true);
+        }
+        match self
+            .tx_exec(
+                tx,
+                &format!(
+                    "INSERT INTO persistant_kv (k, v, expires_ms) \
+                     VALUES ($1, $2, CASE WHEN $3 < 0 THEN NULL ELSE {NOW} + $3 END)"
+                ),
+                &[
+                    Value::Bytes(key.as_bytes().to_vec()),
+                    Value::Bytes(value.to_vec()),
+                    ttl_ms(ttl),
+                ],
+            )
+            .await
+        {
+            Ok(n) => Ok(n == 1),
+            Err(RelError::UniqueViolation { .. }) => Ok(false),
+            Err(e) => Err(err(e)),
+        }
+    }
+
     /// SQLite has no row locks; its write transaction is already exclusive (`BEGIN IMMEDIATE`).
     fn lock_clause(&self) -> &'static str {
         if *self.tr.dialect() == Dialect::Sqlite {
@@ -232,6 +287,12 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         value: Vec<u8>,
         ttl: Option<Duration>,
     ) -> Result<bool, KvError> {
+        if *self.tr.dialect() == Dialect::MySql {
+            let mut tx = self.db.begin().await.map_err(err)?;
+            let won = self.claim_two_step(&mut tx, key, &value, ttl).await?;
+            tx.commit().await.map_err(err)?;
+            return Ok(won);
+        }
         // Inserts, or reclaims an expired row; a live row makes the DO UPDATE's WHERE false, so
         // no row is affected. Concurrent callers serialise on the row.
         let n = self
@@ -356,6 +417,15 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
                     }
                 }
                 BatchOp::Put { key, value, ttl } => {
+                    if *self.tr.dialect() == Dialect::MySql
+                        && required_absent.contains(key.as_str())
+                    {
+                        if !self.claim_two_step(&mut tx, key, value, *ttl).await? {
+                            tx.rollback().await.map_err(err)?;
+                            return Ok(false);
+                        }
+                        continue;
+                    }
                     let insert = format!(
                         "INSERT INTO persistant_kv (k, v, expires_ms) \
                          VALUES ($1, $2, CASE WHEN $3 < 0 THEN NULL ELSE {NOW} + $3 END) \

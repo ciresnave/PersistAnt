@@ -8,11 +8,15 @@
 //! Failures are classified from the server's SQLSTATE into [`persistant_relational::RelError`].
 
 mod migrate;
+#[cfg(feature = "mysql")]
+mod mysql;
 mod options;
 #[cfg(feature = "sqlite")]
 mod sqlite;
 
 pub use migrate::{MigrateError, MigrateReport, Migration};
+#[cfg(feature = "mysql")]
+pub use mysql::{MysqlBackend, MysqlTx};
 pub use options::{ConnectOptions, TlsPolicy};
 #[cfg(feature = "sqlite")]
 pub use sqlite::{SqliteBackend, SqliteTx};

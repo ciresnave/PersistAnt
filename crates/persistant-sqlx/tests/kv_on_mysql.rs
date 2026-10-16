@@ -1,0 +1,108 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! The relational driver and `KvOnRelational` against a real MySQL (statements written in
+//! PostgreSQL SQL and translated by UniSQL).
+//!
+//! Needs `PERSISTANT_TEST_MYSQL_URL`. Without it these tests print a note and pass, **unless**
+//! `PERSISTANT_REQUIRE_MYSQL=1` (set by the CI job that provides a server).
+#![cfg(feature = "mysql")]
+
+use persistant_core::Config;
+use persistant_kv::conformance::certify;
+use persistant_kv::{KvBackend, KvOnRelational};
+use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Value};
+use persistant_sqlx::MysqlBackend;
+
+async fn backend() -> Option<MysqlBackend> {
+    match std::env::var("PERSISTANT_TEST_MYSQL_URL") {
+        Ok(url) => Some(MysqlBackend::connect(&url).await.expect("connect")),
+        Err(_) => {
+            assert!(
+                std::env::var("PERSISTANT_REQUIRE_MYSQL").as_deref() != Ok("1"),
+                "PERSISTANT_REQUIRE_MYSQL=1 but PERSISTANT_TEST_MYSQL_URL is not set"
+            );
+            eprintln!("skipped: PERSISTANT_TEST_MYSQL_URL is not set");
+            None
+        }
+    }
+}
+
+#[tokio::test]
+async fn statements_parameters_and_values_round_trip() {
+    let Some(db) = backend().await else { return };
+    assert_eq!(db.dialect(), Dialect::MySql);
+    assert!(db.version().starts_with("8."), "version {:?}", db.version());
+    let rows = db
+        .query(
+            "SELECT CAST(? AS SIGNED), CAST(? AS CHAR CHARACTER SET utf8mb4), CAST(? AS BINARY), CAST(? AS DOUBLE)",
+            &[
+                Value::Int(-7),
+                Value::Text("ünï".into()),
+                Value::Bytes(vec![0, 255, 1]),
+                Value::Float(1.5),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows[0].values[0], Value::Int(-7));
+    assert_eq!(rows[0].values[1], Value::Text("ünï".into()));
+    assert_eq!(rows[0].values[2], Value::Bytes(vec![0, 255, 1]));
+    assert_eq!(rows[0].values[3], Value::Float(1.5));
+}
+
+#[tokio::test]
+async fn errors_are_classified_and_a_dropped_transaction_rolls_back() {
+    let Some(db) = backend().await else { return };
+    db.execute("DROP TABLE IF EXISTS persistant_t_errors", &[])
+        .await
+        .unwrap();
+    db.execute(
+        "CREATE TABLE persistant_t_errors (id BIGINT PRIMARY KEY, n BIGINT NOT NULL) ENGINE=InnoDB",
+        &[],
+    )
+    .await
+    .unwrap();
+    db.execute("INSERT INTO persistant_t_errors VALUES (1, 1)", &[])
+        .await
+        .unwrap();
+    let dup = db
+        .execute("INSERT INTO persistant_t_errors VALUES (1, 2)", &[])
+        .await;
+    assert!(
+        matches!(dup, Err(RelError::UniqueViolation { .. })),
+        "{dup:?}"
+    );
+    {
+        let mut tx = db.begin().await.unwrap();
+        tx.execute("INSERT INTO persistant_t_errors VALUES (3, 3)", &[])
+            .await
+            .unwrap();
+    }
+    let n = db
+        .query("SELECT COUNT(*) FROM persistant_t_errors", &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        n[0].values,
+        vec![Value::Int(1)],
+        "a dropped transaction must roll back"
+    );
+    db.execute("DROP TABLE persistant_t_errors", &[])
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn kv_on_mysql_certifies_every_leaf_on() {
+    let Some(db) = backend().await else { return };
+    let kv = KvOnRelational::open(db).await.expect("open");
+    kv.put("a", b"1".to_vec(), None).await.unwrap();
+    assert_eq!(kv.get("a").await.unwrap().as_deref(), Some(&b"1"[..]));
+    let config = Config::new().with("dialect", "mysql");
+    let rows = certify(&kv, &config, &Config::new()).await;
+    let off: Vec<_> = rows
+        .iter()
+        .filter(|c| !c.row.enabled)
+        .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
+        .collect();
+    assert!(off.is_empty(), "leaves off on MySQL: {off:#?}");
+}
