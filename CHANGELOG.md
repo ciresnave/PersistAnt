@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3
+
+### Changed
+- `kv.ttl` runs with a 1000 ms time to live and a 1200 ms sleep (was 300/450). On a shared CI runner
+  the 300 ms window was missed once by a correct backend (SQLite, 2026-10-16, passed on rerun). The
+  window is wall-clock time on a loaded machine: a limit of the method, not a verdict on the
+  backend, and now said so in `conformance`'s docs. The `kv.ttl` row is re-keyed in all four
+  `matrix/*.tsv` files (metadata only; every row stays on).
+
 ## 0.5.2
 
 ### Added
@@ -10,7 +19,6 @@
 - Tests: on SQLite, PostgreSQL and MySQL the six sampled-concurrency leaves must be exact on five
   consecutive runs (real-time leaves are left out: a stalled CI machine would fail them for the wrong
   reason).
-
 
 ## 0.5.1
 

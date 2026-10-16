@@ -5,8 +5,11 @@
 //! the target, on a correct reference (positive control) and on defective references (known-bad
 //! control), and is recorded **on** only when all three behaved.
 //!
-//! Time to live is tested with real time: an entry written with a 300 ms time to live is read back
-//! inside the window and not after a 450 ms sleep. The sleep blocks the calling thread.
+//! Time to live is tested with real time: an entry written with a 1000 ms time to live is read back
+//! inside the window and not after a 1200 ms sleep. The sleep blocks the calling thread. The window
+//! is wall-clock time on whatever machine runs the test, so on a loaded runner a correct backend can
+//! miss it (a 300 ms window did once, on a shared CI runner, 2026-10-16): that is a limit of the
+//! method, not a verdict on the backend, which is why the leaf gets three attempts.
 //! `kv.ttl_remaining`, `kv.compare_and_swap`, `kv.take`, `kv.batch_atomic` and `kv.count` have no
 //! test here, so no row is produced and they stay off.
 
@@ -101,7 +104,7 @@ impl Leaf {
     fn trials(self) -> &'static str {
         match self {
             Leaf::PutIfAbsent => "contenders=16;rounds=20;value_bytes=1024",
-            Leaf::Ttl => "ttl_ms=300;sleep_ms=450",
+            Leaf::Ttl => "ttl_ms=1000;sleep_ms=1200",
             Leaf::CompareAndSwap | Leaf::CompareAndDelete => "contenders=16;rounds=20",
             Leaf::Lease => "contenders=16;rounds=5;ttl_ms=200;sleep_ms=300",
             Leaf::TtlRemaining => "ttl_ms=10000;sleep_ms=150",
@@ -273,13 +276,13 @@ async fn delete<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
 async fn ttl<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     let short = format!("{base}a/short");
     let live = format!("{base}a/live");
-    b.put(&short, b"s".to_vec(), Some(Duration::from_millis(300)))
+    b.put(&short, b"s".to_vec(), Some(Duration::from_millis(1000)))
         .await?;
     b.put(&live, b"l".to_vec(), None).await?;
     if b.get(&short).await?.as_deref() != Some(&b"s"[..]) {
         return wrong("an entry with a time to live was not readable inside its window");
     }
-    std::thread::sleep(Duration::from_millis(450));
+    std::thread::sleep(Duration::from_millis(1200));
     if b.get(&short).await?.is_some() {
         return wrong("an expired entry is still returned by get");
     }
