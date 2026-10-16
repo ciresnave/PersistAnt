@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.2
+
+### Added
+- `persistant-kv`: `stats::{measure, LeafStats, Instrumented, OpCount}` and `conformance::run_leaf_once`:
+  benchmarking stage 2 (ROADMAP.md). `measure` runs each leaf `runs` times, one attempt each (no retry), and
+  reports passed / wrong / errored with the first failure; `Instrumented` counts per-operation calls and
+  errors by kind. A leaf is exact only if every run passed; a fraction is never rounded up. No timing.
+- Tests: on SQLite, PostgreSQL and MySQL the six sampled-concurrency leaves must be exact on five
+  consecutive runs (real-time leaves are left out: a stalled CI machine would fail them for the wrong
+  reason).
+
+
 ## 0.5.1
 
 ### Added
