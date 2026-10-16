@@ -15,10 +15,12 @@
 //! it is an error ([`NoneEligible`]) that carries the exclusions: there is no silent fallback, no
 //! "closest match". Every decision is written as lines ([`Choice::log_lines`]) the caller logs.
 //!
-//! **Durability is declared, not verified.** [`declared_durability`] is a table of what the backends
-//! document, each entry with its basis. PersistAnt has no power-loss test yet (`blob.durable` is not
-//! built), so nothing here claims a class was measured; a backend with no declaration is excluded as
-//! `Untested` the moment the need asks for more than `Volatile`.
+//! **Durability is declared; only `Process` is verified.** [`declared_durability`] is a table of what
+//! the backends document, each entry with its basis and the highest class a test has checked
+//! ([`Declared::verified`]). `Process` is verified by [`durability`](crate::durability); PersistAnt has
+//! no power-loss test (`blob.durable` is not built), so `Machine` is never verified and the log says
+//! so. A backend with no declaration is excluded as unknown once the need asks for more than
+//! `Volatile`.
 
 use crate::conformance::Leaf;
 use crate::contract::{Eligibility, Exclusion};
@@ -50,36 +52,54 @@ impl Durability {
     }
 }
 
-/// A durability class and where it comes from.
+/// A durability class, where it comes from, and how much of it a test has checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Declared {
-    /// The class.
+    /// The class the backend documents. Eligibility uses this.
     pub class: Durability,
-    /// Why it is believed. Always a declaration: nothing is measured yet.
+    /// Why it is believed.
     pub basis: &'static str,
+    /// The highest class a test has actually verified, if any. `Process` is verified by
+    /// [`durability`](crate::durability) (`kv.durability.process`: a writer killed after
+    /// acknowledged writes, the store opened again). `Machine` has no test yet, so nothing is
+    /// verified up to it.
+    pub verified: Option<Durability>,
 }
 
 /// What the backends document about their own durability, by the name they carry in the matrix.
 /// `None` for a backend this table does not know: that is unknown, not volatile.
 pub fn declared_durability(backend: &str) -> Option<Declared> {
-    let d = |class, basis| Some(Declared { class, basis });
+    let d = |class, basis, verified| {
+        Some(Declared {
+            class,
+            basis,
+            verified,
+        })
+    };
+    let p = Some(Durability::Process);
     match backend {
-        "memory" | "kv-on-blob:opendal-memory" => d(Durability::Volatile, "in-process memory"),
+        "memory" | "kv-on-blob:opendal-memory" => {
+            d(Durability::Volatile, "in-process memory", None)
+        }
         "kv-on-blob:opendal-fs" => d(
             Durability::Process,
             "files written through the OS cache; no fsync is asserted",
+            p,
         ),
         "kv-on-relational:sqlite" => d(
             Durability::Process,
             "SQLite WAL file; sqlx's default synchronous=FULL is documented but not asserted or tested here",
+            p,
         ),
         "kv-on-relational:postgres" => d(
             Durability::Machine,
-            "PostgreSQL defaults (fsync=on, synchronous_commit=on); documented, not verified by a power-loss test",
+            "PostgreSQL defaults (fsync=on, synchronous_commit=on); documented, no power-loss test",
+            p,
         ),
         "kv-on-relational:mysql" => d(
             Durability::Machine,
-            "InnoDB defaults (innodb_flush_log_at_trx_commit=1); documented, not verified by a power-loss test",
+            "InnoDB defaults (innodb_flush_log_at_trx_commit=1); documented, no power-loss test",
+            p,
         ),
         _ => None,
     }
@@ -341,7 +361,15 @@ impl Choice {
                     .unwrap_or_default(),
                 e.durability.map_or_else(
                     || "undeclared".to_string(),
-                    |d| format!("{} (declared: {})", d.class.as_str(), d.basis)
+                    |d| format!(
+                        "{} (declared: {}; verified: {})",
+                        d.class.as_str(),
+                        d.basis,
+                        d.verified.map_or_else(
+                            || "no".to_string(),
+                            |v| format!("up to {} by kv.durability.process", v.as_str())
+                        )
+                    )
                 ),
                 e.rerun
             ));
@@ -457,6 +485,41 @@ mod tests {
             rank_by: Workload::Get,
             environment: env("laptop").comparable_key(),
         }
+    }
+
+    #[test]
+    fn nothing_is_verified_above_process_and_the_log_says_what_is() {
+        for b in [
+            "memory",
+            "kv-on-blob:opendal-memory",
+            "kv-on-blob:opendal-fs",
+            "kv-on-relational:sqlite",
+            "kv-on-relational:postgres",
+            "kv-on-relational:mysql",
+        ] {
+            let d = declared_durability(b).expect(b);
+            assert!(
+                d.verified.is_none_or(|v| v <= Durability::Process),
+                "{b}: Machine has no test, it cannot be verified"
+            );
+        }
+        let speed = SpeedTable::from_rows(vec![
+            row("kv-on-relational:sqlite", "laptop", 300),
+            row("memory", "laptop", 1),
+        ]);
+        let cands = [cand("kv-on-relational:sqlite", true), cand("memory", true)];
+        let log = choose(&cands, &need(Durability::Volatile), &speed)
+            .unwrap()
+            .log_lines()
+            .join(
+                "
+",
+            );
+        assert!(
+            log.contains("verified: up to process by kv.durability.process"),
+            "{log}"
+        );
+        assert!(log.contains("verified: no"), "{log}");
     }
 
     #[test]

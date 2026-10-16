@@ -28,6 +28,7 @@ mod backend;
 pub mod choose;
 pub mod conformance;
 pub mod contract;
+pub mod durability;
 mod lease;
 mod memory;
 mod on_blob;

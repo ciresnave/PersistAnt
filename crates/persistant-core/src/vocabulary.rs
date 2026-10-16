@@ -119,6 +119,10 @@ pub const SEED: &[(&str, &str)] = &[
         "concurrent read-then-batch(Require, Put) callers, retrying on a refused batch, are each given a distinct sequence number: no lost update",
     ),
     (
+        "kv.durability.process",
+        "a write acknowledged as stored is still there after the writing process is killed hard and the store is opened again; says nothing about power loss or an operating-system crash (that is the Machine class, declared not verified)",
+    ),
+    (
         "kv.ordered_scan_values",
         "an ordered scan returns each key's value with it, in ascending bytewise key order, in pages, from one consistent snapshot",
     ),

@@ -38,3 +38,17 @@ required-features = ["mysql"]
 [[example]]
 name = "speed"
 required-features = ["sqlite"]
+
+[[test]]
+name = "durability_sqlite"
+harness = false
+required-features = ["sqlite"]
+
+[[test]]
+name = "durability_postgres"
+harness = false
+
+[[test]]
+name = "durability_mysql"
+harness = false
+required-features = ["mysql"]

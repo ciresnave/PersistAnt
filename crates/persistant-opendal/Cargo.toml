@@ -20,3 +20,7 @@ tokio = { version = "1.53.2", features = ["rt"] }
 persistant-kv = { workspace = true }
 tempfile = "3.27.0"
 tokio = { version = "1.53.2", features = ["rt", "macros"] }
+
+[[test]]
+name = "durability_fs"
+harness = false

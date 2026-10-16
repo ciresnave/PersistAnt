@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.8
+
+### Added
+- `persistant-kv`: `durability::{certify_process, verify, child_loop, maybe_run_child, cleanup}` and the
+  leaf `kv.durability.process`: a writer process is killed hard after it has acknowledged writes, the
+  store is opened again, and every acknowledged key must be there. **Known-bad control:** the same child
+  in `AckFirst` mode acknowledges before writing and must be caught losing keys; the leaf is recorded on
+  only if the honest run lost nothing *and* the lying run was caught. Verified now: SQLite (file),
+  OpenDAL fs, PostgreSQL and MySQL (a killed *client*; the server outliving it). **A memory store
+  fails it, as it must** (SQLite `:memory:` and the OpenDAL memory service are in the tests as the
+  harness's own negative control).
+- `choose::Declared::verified`: the highest class a test has checked. The log line for a ranked
+  backend now says `verified: up to process by kv.durability.process` or `verified: no`. **`Machine`
+  (power loss, an OS crash) is still only declared** for PostgreSQL and MySQL: a process kill leaves
+  the OS and its caches intact, and a test of the rest needs a VM hard reset. A test asserts nothing
+  is marked verified above `Process`.
+- Harness tests (`harness = false`, the binary re-runs itself as the writer): `durability_sqlite`,
+  `durability_fs` (OpenDAL), `durability_postgres`, `durability_mysql`; the last two run in the CI jobs
+  that provide the server.
+- Not covered, stated: the `Machine` class, durability of the blob kind, and a crash inside a `batch`.
+
 ## 0.5.7
 
 ### Changed

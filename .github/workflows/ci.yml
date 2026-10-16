@@ -229,7 +229,7 @@ jobs:
           toolchain: stable
 
       - name: cargo test persistant-sqlx --features mysql
-        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test checked_in_matrix_mysql --no-fail-fast
+        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test checked_in_matrix_mysql --test durability_mysql --no-fail-fast
 
       - name: Regenerate matrix/sqlx-mysql.tsv
         run: |
