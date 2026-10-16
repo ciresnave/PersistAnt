@@ -14,6 +14,7 @@
 //! - [`conformance`]: the contract tests, producing matrix rows.
 //! - [`contract`]: pass/fail eligibility for a set of required leaves; a failing backend is excluded,
 //!   never ranked slower.
+//! - [`stats`]: stage 2, how often each leaf passes and what each operation did (no timing).
 //!
 //! Not offered yet, so off everywhere: `kv.compare_and_swap`, `kv.take`, `kv.batch_atomic`,
 //! `kv.ttl_remaining`, `kv.count`. `KvOnBlob` cannot give the first three on a blob store without
@@ -26,6 +27,7 @@ mod lease;
 mod memory;
 mod on_blob;
 mod on_relational;
+pub mod stats;
 mod translate;
 
 pub use backend::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};

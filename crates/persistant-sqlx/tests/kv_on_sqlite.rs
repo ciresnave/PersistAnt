@@ -114,3 +114,35 @@ async fn kv_on_sqlite_certifies_every_leaf_on() {
     assert!(rows.iter().all(|c| c.row.reason != Some(Reason::Wrong)));
     cleanup(&path);
 }
+
+/// Stage 2: the sampled-concurrency leaves, one attempt per run, five runs. One wrong run in five
+/// is a flaky contract, not a pass. (Real-time leaves are left out: a stalled CI machine would fail
+/// them for the wrong reason; `certify` retries those.)
+#[tokio::test]
+async fn the_concurrency_leaves_are_exact_on_every_run() {
+    use persistant_kv::conformance::Leaf;
+    use persistant_kv::stats::measure;
+    let kv = KvOnRelational::open(open("stats").await.0)
+        .await
+        .expect("open");
+    let leaves = [
+        Leaf::PutIfAbsent,
+        Leaf::CompareAndSwap,
+        Leaf::CompareAndDelete,
+        Leaf::BatchRollback,
+        Leaf::BatchConcurrentRead,
+        Leaf::OptimisticSequence,
+    ];
+    for s in measure(&kv, &leaves, 5).await {
+        assert!(
+            s.is_exact(),
+            "{}: {}/{} runs passed, {} wrong, {} errored; first failure: {:?}",
+            s.leaf.id(),
+            s.passed,
+            s.runs,
+            s.wrong,
+            s.errored,
+            s.first_failure
+        );
+    }
+}

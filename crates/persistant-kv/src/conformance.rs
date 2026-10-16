@@ -185,6 +185,12 @@ pub async fn run_leaf<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
     result
 }
 
+/// Run one leaf's test exactly once, with no retry (see [`run_leaf`], which retries the leaves
+/// that depend on wall-clock windows). For statistics: a retry would hide a stall.
+pub async fn run_leaf_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
+    run_once(leaf, b).await
+}
+
 async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
     let base = format!("persistant-conformance/{}/", leaf.id());
     let result = match leaf {
