@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.2
+
+### Fixed
+- **The `kv_on_mysql_certifies_every_leaf_on` flake: found and fixed.** Reproduced on the 8th of 8
+  full-suite runs (and not in 14 isolated runs, nor 6 under a 40-process CPU burn): the failing leaf was
+  `kv.ordered_scan_values`, "scan with values returned keys [... s/gone ...]": the 100 ms entry was
+  still listed 250 ms later. Cause: that leaf waits on the clock but was the one wall-clock leaf missing
+  from the three-attempt retry list. The trigger is real and measured: the clock inside the Docker
+  Desktop VM running MySQL stepped by up to about 1.2 s against the host (offset -1209..+862 ms over six
+  minutes, round trips under 20 ms), so the server sometimes judges an entry unexpired after the client
+  slept past its time to live. `Leaf::wall_clock` now decides the retry set and is an exhaustive match,
+  so a new leaf must choose; a test shows a one-attempt clock step is retried and a real defect (which
+  fails every attempt) is not hidden, and fails if the leaf is dropped from the set (mutation-checked).
+  This is a property of that test environment, not of MySQL or of PersistAnt; a Linux CI runner shares
+  its kernel's clock with its service containers and has not shown it.
+
 ## 0.6.1
 
 ### Added
@@ -28,9 +44,6 @@
 ### Changed
 - The PostgreSQL and MySQL integration tests take a lock: they share one server and the kv table's
   fixed key prefixes, so two tests certifying at once deleted each other's keys.
-- Known flake, not fixed: `kv_on_mysql_certifies_every_leaf_on` failed twice on a heavily loaded
-  developer machine (while other builds ran) and passed in 11 of 11 quiet runs. The failing leaf was
-  not captured. Time-window leaves are the suspects (`docs`: wall-clock windows on a loaded machine).
 
 ## 0.6.0
 

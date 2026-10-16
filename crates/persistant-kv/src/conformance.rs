@@ -10,6 +10,16 @@
 //! is wall-clock time on whatever machine runs the test, so on a loaded runner a correct backend can
 //! miss it (a 300 ms window did once, on a shared CI runner, 2026-10-16): that is a limit of the
 //! method, not a verdict on the backend, which is why the leaf gets three attempts.
+//!
+//! **A server's clock is not the client's.** Expiry is judged by the server and the sleep by the
+//! client, so a time-to-live leaf is only as steady as the server's clock. Measured 2026-10-16 on a
+//! Windows developer machine: the clock inside the Docker Desktop VM that ran MySQL stepped by up to
+//! about 1.2 s against the host within minutes (offset range -1209..+862 ms over six minutes, round
+//! trips under 20 ms). That made `kv.ordered_scan_values` ("a 100 ms entry is gone after 250 ms") come
+//! back wrong once in about thirty full certifications, with the expired key still in the page. A Linux
+//! CI runner shares its kernel's clock with its service containers and has not shown it. Every leaf
+//! that waits on the clock is retried (`Leaf::wall_clock`, exhaustive so a new leaf must choose), and a
+//! defect fails every attempt.
 //! `kv.ttl_remaining`, `kv.compare_and_swap`, `kv.take`, `kv.batch_atomic` and `kv.count` have no
 //! test here, so no row is produced and they stay off.
 
@@ -116,6 +126,31 @@ impl Leaf {
         }
     }
 
+    /// Whether the leaf's test waits on the clock (a time to live set, then a sleep, then a check).
+    /// **Exhaustive on purpose**: a new leaf must say which it is. `kv.ordered_scan_values` was
+    /// missing from the retry list and failed once on a MySQL whose clock had stepped back (see the
+    /// module docs); a `_` arm here is how that happens again.
+    fn wall_clock(self) -> bool {
+        match self {
+            Leaf::Ttl
+            | Leaf::TtlRemaining
+            | Leaf::PurgeExpired
+            | Leaf::Lease
+            | Leaf::PrefixList
+            | Leaf::ScanValues => true,
+            Leaf::Get
+            | Leaf::Put
+            | Leaf::Delete
+            | Leaf::PutIfAbsent
+            | Leaf::OrderedScan
+            | Leaf::CompareAndSwap
+            | Leaf::CompareAndDelete
+            | Leaf::BatchRollback
+            | Leaf::BatchConcurrentRead
+            | Leaf::OptimisticSequence => false,
+        }
+    }
+
     fn defects(self) -> &'static [Defect] {
         match self {
             Leaf::Get => &[Defect::PutIsLost, Defect::KeysFoldCase],
@@ -171,13 +206,10 @@ fn wrong<T>(msg: impl Into<String>) -> Result<T, Failure> {
 
 /// Run one leaf's test against `b`. Writes only under `persistant-conformance/<leaf>/`.
 pub async fn run_leaf<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
-    // Leaves that depend on wall-clock windows get three attempts, so a stalled machine cannot
-    // turn a correct backend off. A defective backend fails every attempt: its failure is
-    // deterministic, not a timing accident.
-    let attempts = match leaf {
-        Leaf::Ttl | Leaf::TtlRemaining | Leaf::PurgeExpired | Leaf::Lease | Leaf::PrefixList => 3,
-        _ => 1,
-    };
+    // Leaves that depend on wall-clock windows get three attempts, so a stalled machine (or a
+    // server whose clock steps) cannot turn a correct backend off. A defective backend fails every
+    // attempt: its failure is deterministic, not a timing accident.
+    let attempts = if leaf.wall_clock() { 3 } else { 1 };
     let mut result = Ok(());
     for _ in 0..attempts {
         result = run_once(leaf, b).await;
@@ -1094,6 +1126,84 @@ fn off<K: KvBackend>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A backend whose first `ordered_scan_values` is wrong in the way a stepped server clock makes it
+    /// (an expired entry still listed) and correct afterwards.
+    struct StepsOnce {
+        inner: MemoryKv,
+        scans: std::sync::atomic::AtomicU32,
+    }
+
+    impl KvBackend for StepsOnce {
+        fn backend(&self) -> &str {
+            self.inner.backend()
+        }
+        fn version(&self) -> &str {
+            self.inner.version()
+        }
+        async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+            self.inner.get(key).await
+        }
+        async fn put(
+            &self,
+            key: &str,
+            value: Vec<u8>,
+            ttl: Option<Duration>,
+        ) -> Result<(), KvError> {
+            self.inner.put(key, value, ttl).await
+        }
+        async fn delete(&self, key: &str) -> Result<(), KvError> {
+            self.inner.delete(key).await
+        }
+        async fn prefix_list(
+            &self,
+            prefix: &str,
+            after: Option<&str>,
+            limit: usize,
+        ) -> Result<crate::KeyPage, KvError> {
+            self.inner.prefix_list(prefix, after, limit).await
+        }
+        async fn ordered_scan_values(
+            &self,
+            prefix: &str,
+            after: Option<&str>,
+            limit: usize,
+        ) -> Result<crate::ValuePage, KvError> {
+            let first = self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+            if first {
+                // The entry that expired is still there: bypass the expiry check.
+                let mut page = self.inner.ordered_scan_values(prefix, after, limit).await?;
+                page.entries.push((format!("{prefix}gone"), b"x".to_vec()));
+                return Ok(page);
+            }
+            self.inner.ordered_scan_values(prefix, after, limit).await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_clock_step_on_one_attempt_is_retried_and_a_defect_is_not() {
+        let flaky = StepsOnce {
+            inner: MemoryKv::new(),
+            scans: std::sync::atomic::AtomicU32::new(0),
+        };
+        // One attempt sees the wrong page ...
+        assert!(matches!(
+            run_leaf_once(Leaf::ScanValues, &flaky).await,
+            Err(Failure::Wrong(_))
+        ));
+        // ... and `run_leaf` retries it and passes on the second.
+        let flaky = StepsOnce {
+            inner: MemoryKv::new(),
+            scans: std::sync::atomic::AtomicU32::new(0),
+        };
+        assert_eq!(run_leaf(Leaf::ScanValues, &flaky).await, Ok(()));
+        // A real defect fails every attempt, so the retry cannot hide it.
+        let bad = MemoryKv::with_defect(Defect::ScanIsDescending);
+        assert!(matches!(
+            run_leaf(Leaf::ScanValues, &bad).await,
+            Err(Failure::Wrong(_))
+        ));
+    }
     use crate::KvOnBlob;
     use persistant_blob::{Defect as BlobDefect, MemoryBlob};
 
