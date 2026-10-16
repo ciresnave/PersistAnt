@@ -12,6 +12,8 @@
 //!   PostgreSQL SQL for now, keys as `BYTEA`, tested per server and version.
 //! - [`MemoryKv`]: a reference backend with injectable [`Defect`]s for known-bad controls.
 //! - [`conformance`]: the contract tests, producing matrix rows.
+//! - [`contract`]: pass/fail eligibility for a set of required leaves; a failing backend is excluded,
+//!   never ranked slower.
 //!
 //! Not offered yet, so off everywhere: `kv.compare_and_swap`, `kv.take`, `kv.batch_atomic`,
 //! `kv.ttl_remaining`, `kv.count`. `KvOnBlob` cannot give the first three on a blob store without
@@ -19,6 +21,7 @@
 
 mod backend;
 pub mod conformance;
+pub mod contract;
 mod lease;
 mod memory;
 mod on_blob;

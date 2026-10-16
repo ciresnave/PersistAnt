@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.34
+
+### Added
+- `persistant-kv`: `contract::{check, evaluate, Eligibility, Exclusion}` and `conformance::certify_leaves`:
+  backend benchmarking stage 1 (ROADMAP.md). A consumer names the leaves it needs; a backend that does
+  not pass every one is `Excluded` with the reason per leaf (`Missing`, `Wrong`, `Untested`), never ranked
+  slower. A required leaf with no test is excluded as `Untested`. Tests: correct backend eligible;
+  `KvOnBlob` excluded as `Missing` for batch; a defective `MemoryKv` excluded as `Wrong`.
+
 ## 0.4.33
 
 ### Added

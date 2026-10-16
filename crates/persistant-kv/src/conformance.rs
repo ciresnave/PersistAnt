@@ -918,8 +918,18 @@ pub async fn certify<K: KvBackend>(
     config: &Config,
     metadata: &Config,
 ) -> Vec<Certified> {
+    certify_leaves(target, config, metadata, &Leaf::ALL).await
+}
+
+/// As [`certify`], for the listed leaves only (each with its controls).
+pub async fn certify_leaves<K: KvBackend>(
+    target: &K,
+    config: &Config,
+    metadata: &Config,
+    leaves: &[Leaf],
+) -> Vec<Certified> {
     let mut out = Vec::new();
-    for leaf in Leaf::ALL {
+    for leaf in leaves.iter().copied() {
         let positive_passed = run_leaf(leaf, &MemoryKv::new()).await.is_ok();
         let mut known_bad_failed = true;
         for d in leaf.defects() {
