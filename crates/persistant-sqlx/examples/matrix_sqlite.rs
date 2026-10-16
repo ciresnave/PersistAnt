@@ -14,16 +14,24 @@ use persistant_sqlx::SqliteBackend;
 async fn main() {
     let path = std::env::temp_dir().join(format!("persistant-matrix-{}.db", std::process::id()));
     let db = SqliteBackend::open(&path).await.expect("open");
+    let rel_db = db.clone();
     let kv = KvOnRelational::open(db).await.expect("open kv");
     let env = Config::new()
         .with("os", std::env::consts::OS)
         .with("arch", std::env::consts::ARCH);
     let config = Config::new().with("dialect", "sqlite");
-    let rows: Vec<_> = persistant_kv::conformance::certify(&kv, &config, &env)
+    let mut rows: Vec<_> = persistant_kv::conformance::certify(&kv, &config, &env)
         .await
         .into_iter()
         .map(|c| c.row)
         .collect();
+    // The relational kind's own leaves, on the same server.
+    rows.extend(
+        persistant_relational::conformance::certify(&rel_db, &config, &env)
+            .await
+            .into_iter()
+            .map(|c| c.row),
+    );
     print!("{}", Matrix::from_rows(rows).to_tsv());
     for ext in ["", "-wal", "-shm"] {
         let mut p = path.as_os_str().to_owned();

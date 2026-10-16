@@ -176,3 +176,24 @@ async fn every_workload_is_timed_and_the_data_file_round_trips() {
     let t = SpeedTable::from_rows(rows);
     assert_eq!(SpeedTable::parse(&t.to_tsv()).unwrap(), t);
 }
+
+/// The relational contract (`persistant_relational::conformance`) on SQLite: every leaf on, with its
+/// known-bad controls (a backend with no transactions, lossy bytes, unclassified errors, and the
+/// schema without the constraint) caught.
+#[tokio::test]
+async fn the_relational_leaves_certify_on() {
+    let (db, path) = open("rel").await;
+    let config = Config::new().with("dialect", "sqlite");
+    let rows = persistant_relational::conformance::certify(&db, &config, &Config::new()).await;
+    let off: Vec<_> = rows
+        .iter()
+        .filter(|c| !c.row.enabled)
+        .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
+        .collect();
+    assert!(off.is_empty(), "relational leaves off on SQLite: {off:#?}");
+    assert_eq!(
+        rows.len(),
+        persistant_relational::conformance::Leaf::ALL.len()
+    );
+    cleanup(&path);
+}

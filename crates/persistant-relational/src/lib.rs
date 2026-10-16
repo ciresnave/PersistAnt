@@ -12,6 +12,7 @@
 //! resist it.
 
 mod backend;
+pub mod conformance;
 mod error;
 mod secret;
 mod value;

@@ -7,10 +7,20 @@ use persistant_core::{Config, Lookup, Matrix};
 fn the_recorded_postgres_rows_are_all_on_and_read_by_the_gate() {
     let m = Matrix::parse(include_str!("../../../matrix/sqlx-postgres.tsv"))
         .expect("the checked-in matrix parses");
-    assert_eq!(m.rows().len(), 16, "sixteen kv/lock leaves are certified");
+    assert_eq!(
+        m.rows().len(),
+        21,
+        "sixteen kv/lock leaves and five relational leaves are certified"
+    );
     for r in m.rows() {
         assert!(r.enabled, "{}: {}", r.subject, r.note);
-        assert_eq!(r.backend, "kv-on-relational:postgres");
+        // kv rows are keyed by the adapter, relational rows by the server itself.
+        let want = if r.subject.as_str().starts_with("rel.") {
+            "postgres"
+        } else {
+            "kv-on-relational:postgres"
+        };
+        assert_eq!(r.backend, want);
         assert_eq!(r.config.get("dialect"), Some("postgres"));
         assert!(r.metadata.get("test").is_some());
     }

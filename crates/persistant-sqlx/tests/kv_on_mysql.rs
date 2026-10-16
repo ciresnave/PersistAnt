@@ -12,6 +12,10 @@ use persistant_kv::{KvBackend, KvOnRelational};
 use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Value};
 use persistant_sqlx::MysqlBackend;
 
+/// The tests share one server, and the key-value adapter keeps one table with fixed key prefixes:
+/// two tests certifying at once would delete each other's keys. One at a time.
+static SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn backend() -> Option<MysqlBackend> {
     match std::env::var("PERSISTANT_TEST_MYSQL_URL") {
         Ok(url) => Some(MysqlBackend::connect(&url).await.expect("connect")),
@@ -29,6 +33,7 @@ async fn backend() -> Option<MysqlBackend> {
 #[tokio::test]
 async fn statements_parameters_and_values_round_trip() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     assert_eq!(db.dialect(), Dialect::MySql);
     assert!(db.version().starts_with("8."), "version {:?}", db.version());
     let rows = db
@@ -52,6 +57,7 @@ async fn statements_parameters_and_values_round_trip() {
 #[tokio::test]
 async fn errors_are_classified_and_a_dropped_transaction_rolls_back() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     db.execute("DROP TABLE IF EXISTS persistant_t_errors", &[])
         .await
         .unwrap();
@@ -94,6 +100,7 @@ async fn errors_are_classified_and_a_dropped_transaction_rolls_back() {
 #[tokio::test]
 async fn kv_on_mysql_certifies_every_leaf_on() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     let kv = KvOnRelational::open(db).await.expect("open");
     kv.put("a", b"1".to_vec(), None).await.unwrap();
     assert_eq!(kv.get("a").await.unwrap().as_deref(), Some(&b"1"[..]));
@@ -112,6 +119,7 @@ async fn kv_on_mysql_certifies_every_leaf_on() {
 #[tokio::test]
 async fn an_upsert_cannot_say_whether_it_stored() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     db.execute("DROP TABLE IF EXISTS persistant_t_upsert", &[])
         .await
         .unwrap();
@@ -150,6 +158,7 @@ async fn an_upsert_cannot_say_whether_it_stored() {
 #[tokio::test]
 async fn the_concurrency_leaves_are_exact_on_every_run() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     use persistant_kv::conformance::Leaf;
     use persistant_kv::stats::measure;
     let kv = KvOnRelational::open(db).await.expect("open");
@@ -173,4 +182,20 @@ async fn the_concurrency_leaves_are_exact_on_every_run() {
             s.first_failure
         );
     }
+}
+
+/// The relational contract (`persistant_relational::conformance`) on mysql: every leaf on, with its
+/// known-bad controls caught.
+#[tokio::test]
+async fn the_relational_leaves_certify_on() {
+    let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
+    let config = Config::new().with("dialect", "mysql");
+    let rows = persistant_relational::conformance::certify(&db, &config, &Config::new()).await;
+    let off: Vec<_> = rows
+        .iter()
+        .filter(|c| !c.row.enabled)
+        .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
+        .collect();
+    assert!(off.is_empty(), "relational leaves off on mysql: {off:#?}");
 }

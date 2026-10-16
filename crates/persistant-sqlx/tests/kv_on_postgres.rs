@@ -11,6 +11,10 @@ use persistant_kv::{KvBackend, KvOnRelational};
 use persistant_relational::{RelError, RelationalBackend, RelationalTx, Value};
 use persistant_sqlx::PgBackend;
 
+/// The tests share one server, and the key-value adapter keeps one table with fixed key prefixes:
+/// two tests certifying at once would delete each other's keys. One at a time.
+static SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn backend() -> Option<PgBackend> {
     match std::env::var("PERSISTANT_TEST_DATABASE_URL") {
         Ok(url) => Some(PgBackend::connect(&url).await.expect("connect")),
@@ -42,6 +46,7 @@ fn summary(rows: &[Certified]) -> String {
 #[tokio::test]
 async fn statements_parameters_and_values_round_trip() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     assert_eq!(db.backend(), "postgres");
     assert!(
         db.version()
@@ -118,6 +123,7 @@ async fn a_connection_secret_connects_and_the_backend_never_prints_the_password(
 #[tokio::test]
 async fn errors_are_classified_by_sqlstate() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     db.execute("DROP TABLE IF EXISTS persistant_errs", &[])
         .await
         .unwrap();
@@ -152,6 +158,7 @@ async fn errors_are_classified_by_sqlstate() {
 #[tokio::test]
 async fn a_dropped_transaction_rolls_back_and_a_committed_one_persists() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     db.execute("DROP TABLE IF EXISTS persistant_tx", &[])
         .await
         .unwrap();
@@ -186,6 +193,7 @@ async fn a_dropped_transaction_rolls_back_and_a_committed_one_persists() {
 #[tokio::test]
 async fn kv_on_postgres_gives_every_certified_leaf() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     let kv = KvOnRelational::open(db).await.unwrap();
     let rows = certify(
         &kv,
@@ -213,6 +221,7 @@ async fn a_text_key_column_orders_by_collation_and_the_adapter_does_not() {
     // The trap, shown on this server: with a collation-aware text column "a/a" sorts before
     // "a/B"; bytewise (what `kv.ordered_scan` promises and BYTEA gives) puts "a/B" first.
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     let text = db
         .query(
             "SELECT s FROM (VALUES ('a/a'), ('a/B')) AS t(s) ORDER BY s COLLATE \"en_US\"",
@@ -244,6 +253,7 @@ async fn a_text_key_column_orders_by_collation_and_the_adapter_does_not() {
 #[tokio::test]
 async fn the_concurrency_leaves_are_exact_on_every_run() {
     let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
     use persistant_kv::conformance::Leaf;
     use persistant_kv::stats::measure;
     let kv = KvOnRelational::open(db).await.expect("open");
@@ -267,4 +277,94 @@ async fn the_concurrency_leaves_are_exact_on_every_run() {
             s.first_failure
         );
     }
+}
+
+/// The relational contract (`persistant_relational::conformance`) on postgres: every leaf on, with its
+/// known-bad controls caught.
+#[tokio::test]
+async fn the_relational_leaves_certify_on() {
+    let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
+    let config = Config::new().with("dialect", "postgres");
+    let rows = persistant_relational::conformance::certify(&db, &config, &Config::new()).await;
+    let off: Vec<_> = rows
+        .iter()
+        .filter(|c| !c.row.enabled)
+        .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
+        .collect();
+    assert!(
+        off.is_empty(),
+        "relational leaves off on postgres: {off:#?}"
+    );
+}
+
+/// A `NULL` parameter into a non-text column must work on every pooled connection, not only on one
+/// that already prepared the statement. Eight concurrent inserts use eight connections, each preparing
+/// the statement for the first time; a NULL bound as `text` fails on all but the first.
+#[tokio::test]
+async fn a_null_parameter_works_on_every_pooled_connection() {
+    let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
+    db.execute("DROP TABLE IF EXISTS persistant_t_null", &[])
+        .await
+        .unwrap();
+    db.execute(
+        "CREATE TABLE persistant_t_null (id BIGINT PRIMARY KEY, n BIGINT, b BYTEA)",
+        &[],
+    )
+    .await
+    .unwrap();
+    let inserts = (0..8_i64).map(|i| {
+        let db = &db;
+        async move {
+            db.execute(
+                "INSERT INTO persistant_t_null (id, n, b) VALUES ($1, $2, $3)",
+                &[Value::Int(i), Value::Null, Value::Null],
+            )
+            .await
+        }
+    });
+    for r in futures_join_all(inserts).await {
+        r.unwrap();
+    }
+    let n = db
+        .query(
+            "SELECT COUNT(*) FROM persistant_t_null WHERE n IS NULL AND b IS NULL",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(n[0].values, vec![Value::Int(8)]);
+    db.execute("DROP TABLE persistant_t_null", &[])
+        .await
+        .unwrap();
+}
+
+async fn futures_join_all<F: std::future::Future>(
+    fs: impl IntoIterator<Item = F>,
+) -> Vec<F::Output> {
+    let handles: Vec<_> = fs.into_iter().map(Box::pin).collect();
+    let mut out = Vec::new();
+    // Poll them together on one task: each awaits the pool, so they overlap.
+    let mut pending: Vec<std::pin::Pin<Box<F>>> = handles;
+    let mut results: Vec<Option<F::Output>> = (0..pending.len()).map(|_| None).collect();
+    std::future::poll_fn(|cx| {
+        let mut all = true;
+        for (i, f) in pending.iter_mut().enumerate() {
+            if results[i].is_none() {
+                match f.as_mut().poll(cx) {
+                    std::task::Poll::Ready(v) => results[i] = Some(v),
+                    std::task::Poll::Pending => all = false,
+                }
+            }
+        }
+        if all {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
+    })
+    .await;
+    out.extend(results.into_iter().flatten());
+    out
 }
