@@ -152,8 +152,8 @@ unchanged; these features, all off by default, re-export the rest under one modu
   database, leases, contract tests.
 - `relational` as `persistant::relational`: a deliberately small database trait and typed errors.
 - `opendal-driver` as `persistant::opendal_driver`: the blob driver and `ProcessLock`.
-- `sqlx-driver` as `persistant::sqlx_driver`: PostgreSQL over sqlx. **Needs Rust 1.94**; the other
-  features build on 1.91.
+- `sqlx-driver` as `persistant::sqlx_driver`: PostgreSQL over sqlx. **Needs Rust 1.94**, as does every
+  crate here since 0.4.36 (UniSQL 0.24 is 1.94).
 
 Nothing here is on by derivation: a capability is on for a backend and version only where a
 recorded test says so (`matrix/*.tsv`).

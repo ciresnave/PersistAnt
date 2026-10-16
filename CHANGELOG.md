@@ -15,6 +15,8 @@
   (`unixepoch('now','subsec')`).
 - `matrix/sqlx-sqlite.tsv` and a CI job that regenerates and compares it: all 16 kv/lock leaves
   certified on SQLite, controls included.
+- **Breaking (pre-1.0 minor): the minimum Rust version is 1.94 for every crate** (was 1.91; UniSQL
+  0.24 needs 1.94). CireSnave permitted raising it, 2026-10-08.
 - Not covered, stated: MySQL/MariaDB (next), a shared in-memory SQLite database across connections
   (use a file, or a one-connection pool), crash safety of SQLite itself.
 
