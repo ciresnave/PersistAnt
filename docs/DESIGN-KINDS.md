@@ -363,7 +363,7 @@ persistant                (facade: re-exports; features pick kinds and drivers; 
 7. **The facade keeps `persistant::Store` working** for lightbulb and agentlife: the blob API is
    re-exported unchanged until a breaking minor says otherwise (pre-1.0 the *second* number is the
    major, CLAUDE.md §9).
-8. **MSRV.** `persistant` was 1.91 (OpenDAL's) until 0.4.36, when it became 1.94: UniSQL 0.24 and sqlx 0.9.0 are
+8. **MSRV.** `persistant` was 1.91 (OpenDAL's) until 0.5.0, when it became 1.94: UniSQL 0.24 and sqlx 0.9.0 are
    both 1.94 (FIT §D.d, from the crates.io API) and `persistant-kv` translates through UniSQL. CireSnave permitted raising
    a project's MSRV on 2026-10-08 (`CLAUDE.md` §9); each crate declares its own.
 9. **UniSQL is a dependency of the adapter, not of the traits**, and it is not on crates.io (§7).
