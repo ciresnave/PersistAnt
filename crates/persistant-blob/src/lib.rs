@@ -16,6 +16,7 @@ mod backend;
 pub mod concurrency;
 pub mod conformance;
 mod memory;
+pub mod stats;
 
 pub use backend::{BlobBackend, BlobError, Entry, Page};
 pub use memory::{Defect, MemoryBlob};

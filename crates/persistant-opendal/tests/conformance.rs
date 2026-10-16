@@ -152,3 +152,31 @@ async fn a_service_that_cannot_work_is_missing_not_wrong() {
         summary(&rows)
     );
 }
+
+/// Stage 2 (see `persistant_blob::stats`): on the memory service the concurrency leaves it offers
+/// are exact on every one of five runs, and the append leaves it does not offer fail every run as
+/// errors of kind `Unsupported`, not as a contract break (`wrong`) and not as a flaky pass.
+#[tokio::test]
+async fn memory_service_concurrency_leaves_are_exact_and_append_is_unsupported_every_run() {
+    use persistant_blob::conformance::Leaf;
+    use persistant_blob::stats::measure;
+    let b = OpendalBlob::memory().unwrap();
+    let on = [Leaf::CreateExclusive, Leaf::ReplaceConcurrentRead];
+    for s in measure(&b, &on, 5).await {
+        assert!(
+            s.is_exact(),
+            "{}: {}/{} runs passed, {} wrong, {} errored; first failure: {:?}",
+            s.leaf.id(),
+            s.passed,
+            s.runs,
+            s.wrong,
+            s.errored,
+            s.first_failure
+        );
+    }
+    let off = [Leaf::Append, Leaf::AppendConcurrentWhole];
+    for s in measure(&b, &off, 5).await {
+        assert_eq!((s.passed, s.wrong, s.errored), (0, 0, 5), "{}", s.leaf.id());
+        assert!(s.ops["append"].unsupported >= 5, "{:?}", s.ops);
+    }
+}

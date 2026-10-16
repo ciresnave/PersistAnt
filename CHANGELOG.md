@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.4
+
+### Added
+- `persistant-blob`: `stats::{measure, LeafStats, Instrumented, OpCount}`, benchmarking stage 2 for the blob
+  kind (same shape as `persistant_kv::stats`): each leaf run `runs` times with one attempt each, counted
+  as passed / wrong / errored, with per-operation calls and errors by kind. Exact only if every run
+  passed. Test over the OpenDAL memory service: the concurrency leaves it offers are exact on five
+  runs; the append leaves it does not offer fail every run as `Unsupported`, not as a contract break.
+
+
 ## 0.5.3
 
 ### Changed
