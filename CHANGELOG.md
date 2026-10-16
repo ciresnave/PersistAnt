@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.33
+
+### Added
+- `ROADMAP.md`: the backend benchmarking and ranking row (contract suite, statistics, speed, ranked
+  `best backend for X` with evidence) and the SQLite/MySQL row. No code change.
+
+
 ## 0.4.32
 
 ### Added
