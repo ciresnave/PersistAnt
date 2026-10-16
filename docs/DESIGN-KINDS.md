@@ -358,6 +358,14 @@ persistant                (facade: re-exports; features pick kinds and drivers; 
    with a known-bad run, §2.1): PostgreSQL text `ORDER BY` follows the database's collation, and MySQL's
    default collation (`utf8mb4_0900_ai_ci`) is case-insensitive, so keys must be `BYTEA`/`BLOB` or a
    binary collation or `kv.ordered_scan` is wrong in a way that passes a lower-case test.
+   **Found by running the suite on MySQL 8.4 (2026-10-16), now pinned by tests:** (a) sqlx-mysql always
+   connects with `CLIENT_FOUND_ROWS`, so an upsert that changed nothing reports 1, the same as an
+   insert, and `ROW_COUNT()` agrees; "stored or not" cannot come from an upsert's count, so MySQL's
+   insert-if-absent is `UPDATE` (rows *matched*) then a plain `INSERT` whose duplicate-key error means
+   "live" (`claim_two_step`; test `an_upsert_cannot_say_whether_it_stored`). (b) InnoDB's default
+   REPEATABLE READ gap-locks a locking read or an `UPDATE` that matches nothing, and two such
+   transactions inserting into the same gap deadlock (`kv.put_if_absent` went off with "deadlock
+   detected"); MySQL transactions run at READ COMMITTED.
 6. **Core has no I/O.** So a program that only wants to *read a manifest of needs* or the recorded matrix
    (a CI check, a future TypeScript client, §6) depends on `persistant-core` alone.
 7. **The facade keeps `persistant::Store` working** for lightbulb and agentlife: the blob API is

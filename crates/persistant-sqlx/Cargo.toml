@@ -14,6 +14,8 @@ categories = ["database"]
 [features]
 # SQLite is compiled in (bundled C library): opt in.
 sqlite = ["sqlx/sqlite"]
+# MySQL and MariaDB (pure Rust driver).
+mysql = ["sqlx/mysql"]
 
 [dependencies]
 persistant-core = { workspace = true }
@@ -28,3 +30,7 @@ tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros"] }
 [[example]]
 name = "matrix_sqlite"
 required-features = ["sqlite"]
+
+[[example]]
+name = "matrix_mysql"
+required-features = ["mysql"]

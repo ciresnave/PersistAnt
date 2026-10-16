@@ -18,6 +18,12 @@ pub(crate) fn ddl(d: &Dialect) -> Option<&'static str> {
             "CREATE TABLE IF NOT EXISTS persistant_kv (\
              k BLOB PRIMARY KEY, v BLOB NOT NULL, expires_ms INTEGER)",
         ),
+        // A key is at most 1024 bytes on MySQL (an indexed `VARBINARY`; InnoDB allows 3072). The
+        // comparison is bytewise, the trap a text column or a `utf8mb4_0900_ai_ci` key would fall
+        // into. A longer key is rejected by the server (strict mode), not truncated.
+        Dialect::MySql => Some(
+            "CREATE TABLE IF NOT EXISTS persistant_kv (             k VARBINARY(1024) NOT NULL PRIMARY KEY, v LONGBLOB NOT NULL, expires_ms BIGINT)              ENGINE=InnoDB",
+        ),
         _ => None,
     }
 }
@@ -30,8 +36,10 @@ const SCHEMA_DDL: &str =
 pub(crate) struct Translator {
     dialect: Dialect,
     target: Option<&'static str>,
+    /// Placeholders are a bare `?`: values bind in `Translation::param_order`.
+    positional: bool,
     opts: Options,
-    cache: Mutex<HashMap<String, String>>,
+    cache: Mutex<HashMap<String, (String, Vec<u32>)>>,
 }
 
 impl Translator {
@@ -39,6 +47,7 @@ impl Translator {
         let target = match &dialect {
             Dialect::Postgres => None,
             Dialect::Sqlite => Some("sqlite"),
+            Dialect::MySql => Some("mysql"),
             other => {
                 return Err(RelError::Unsupported(format!(
                     "KvOnRelational has no translation to {other} yet"
@@ -53,12 +62,15 @@ impl Translator {
         // - ClockIsStatementStart: SQLite reads the clock once per statement; expiry only needs
         //   millisecond agreement across clients, not within one statement.
         // - UpsertAnyUniqueKey: `k` is the only unique key of the table.
+        // MySQL has no `ON CONFLICT .. WHERE`, and its "rows affected" cannot tell an insert from a
+        // no-op under sqlx's `CLIENT_FOUND_ROWS`: `KvOnRelational::claim_two_step` avoids both.
         let opts = Options::default()
             .with(Allowance::LenientCast)
             .with(Allowance::ClockIsStatementStart)
             .with(Allowance::UpsertAnyUniqueKey)
             .with_schema(schema);
         Ok(Translator {
+            positional: dialect == Dialect::MySql,
             dialect,
             target,
             opts,
@@ -71,8 +83,8 @@ impl Translator {
     }
 
     /// The statement and parameters to send. PostgreSQL is passed through unchanged. SQLite's
-    /// placeholders are numbered (`?1`), so the values go as written; a dialect with positional
-    /// `?` would have to bind in `Translation::param_order`, and none is supported yet.
+    /// placeholders are numbered (`?1`), so the values go as written; MySQL's are positional `?`,
+    /// so the values are reordered by `Translation::param_order`.
     pub(crate) fn prepare(
         &self,
         sql: &str,
@@ -82,17 +94,33 @@ impl Translator {
             return Ok((sql.to_string(), params.to_vec()));
         };
         let cached = self.cache.lock().ok().and_then(|c| c.get(sql).cloned());
-        let out = match cached {
+        let (out, order) = match cached {
             Some(hit) => hit,
             None => {
                 let t = unisql::translate(sql, "postgres", target, &self.opts)
                     .map_err(|e| RelError::Unsupported(format!("unisql: {e}")))?;
+                let hit = (t.sql, t.param_order);
                 if let Ok(mut c) = self.cache.lock() {
-                    c.insert(sql.to_string(), t.sql.clone());
+                    c.insert(sql.to_string(), hit.clone());
                 }
-                t.sql
+                hit
             }
         };
-        Ok((out, params.to_vec()))
+        if !self.positional {
+            return Ok((out, params.to_vec()));
+        }
+        // A source parameter used twice appears twice, in placeholder order.
+        let mut bound = Vec::with_capacity(order.len());
+        for n in order {
+            let v = usize::try_from(n)
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|i| params.get(i))
+                .ok_or_else(|| {
+                    RelError::Backend(format!("statement uses parameter {n}, none given"))
+                })?;
+            bound.push(v.clone());
+        }
+        Ok((out, bound))
     }
 }

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.5.1
+
+### Added
+- `persistant-sqlx` (feature `mysql`): `MysqlBackend` (`connect`, `connect_secret`, `from_pool`);
+  the dialect is read from the server (`MySql` or `MariaDb`). Transactions run at `READ COMMITTED`
+  (under InnoDB's default REPEATABLE READ, concurrent insert-if-absent deadlocks on gap locks: the
+  suite found it). Errors classified from MySQL error numbers. TLS policy is the URL's `ssl-mode`
+  for now, not typed.
+- `persistant-kv`: `KvOnRelational` over MySQL 8.4 through UniSQL 0.24.7. Keys are
+  `VARBINARY(1024)` (bytewise; a longer key is rejected by the server), values `LONGBLOB`. A
+  conditional insert-if-absent is two statements there (`claim_two_step`): sqlx connects with
+  `CLIENT_FOUND_ROWS`, under which an upsert that changed nothing reports the same count as an
+  insert (measured; `ROW_COUNT()` follows the same flag), so no single upsert can say whether it
+  stored. Allowances: `LenientCast` and `UpsertAnyUniqueKey`; UniSQL's `UpsertWhereAsIf` is not used.
+- `matrix/sqlx-mysql.tsv` and a CI job (MySQL 8.4 service container pinned by digest, read from the
+  registry 2026-10-16) that regenerates and compares it: all 16 leaves certified, controls included.
+- Not covered, stated: MariaDB (the dialect is detected, KvOnRelational refuses it), a typed TLS
+  policy, keys over 1024 bytes.
+
 ## 0.5.0
 
 ### Added
