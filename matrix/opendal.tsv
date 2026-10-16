@@ -28,67 +28,67 @@ capability	blob.append	opendal-fs	0.59.4	atomic_write_dir=set	yes		arch=x86_64;o
 capability	blob.append.concurrent_whole	opendal-fs	0.59.4	atomic_write_dir=set	yes		arch=x86_64;contenders=16;os=linux;records=10;test=blob::blob.append.concurrent_whole;value_bytes=64	
 capability	blob.replace_atomic	opendal-fs	0.59.4	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;test=crash::replace_atomic	replace_atomic without atomic_write_dir writes in place
 capability	blob.replace_atomic	opendal-fs	0.59.4	atomic_write_dir=set	yes		arch=x86_64;kill=hard;os=linux;rounds=12;test=crash::replace_atomic;value_bytes=16777216	
-capability	kv.get	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.get	
-capability	kv.put	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.put	
-capability	kv.delete	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.delete	
-capability	kv.ttl	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;sleep_ms=1200;test=kv::kv.ttl;ttl_ms=1000	
-capability	kv.put_if_absent	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.put_if_absent;value_bytes=1024	
-capability	kv.prefix_list	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.prefix_list	
-capability	kv.ordered_scan	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan	
-capability	kv.compare_and_swap	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	compare_and_swap
-capability	kv.compare_and_delete	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	compare_and_delete
-capability	lock.lease	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	put_if_absent with a time to live needs compare-and-delete to reclaim
-capability	kv.ttl_remaining	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	
-capability	kv.purge_expired	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	purge_expired
-capability	kv.batch_atomic.rollback	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	batch
-capability	kv.batch_atomic.concurrent_read	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	batch
-capability	kv.ordered_scan_values	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	ordered_scan_values
-capability	kv.batch_atomic.optimistic_sequence	kv-on-blob:opendal-memory	0.5+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=8;os=linux;rounds=10;test=kv::kv.batch_atomic.optimistic_sequence	batch
-capability	kv.get	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.get	replace_atomic without atomic_write_dir writes in place
-capability	kv.put	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.put	replace_atomic without atomic_write_dir writes in place
-capability	kv.delete	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.delete	replace_atomic without atomic_write_dir writes in place
-capability	kv.ttl	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=1200;test=kv::kv.ttl;ttl_ms=1000	replace_atomic without atomic_write_dir writes in place
-capability	kv.put_if_absent	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.put_if_absent;value_bytes=1024	
-capability	kv.prefix_list	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.prefix_list	replace_atomic without atomic_write_dir writes in place
-capability	kv.ordered_scan	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan	replace_atomic without atomic_write_dir writes in place
-capability	kv.compare_and_swap	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	replace_atomic without atomic_write_dir writes in place
-capability	kv.compare_and_delete	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	replace_atomic without atomic_write_dir writes in place
-capability	lock.lease	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	put_if_absent with a time to live needs compare-and-delete to reclaim
-capability	kv.ttl_remaining	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	replace_atomic without atomic_write_dir writes in place
-capability	kv.purge_expired	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	replace_atomic without atomic_write_dir writes in place
-capability	kv.batch_atomic.rollback	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	replace_atomic without atomic_write_dir writes in place
-capability	kv.batch_atomic.concurrent_read	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	batch
-capability	kv.ordered_scan_values	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	replace_atomic without atomic_write_dir writes in place
-capability	kv.batch_atomic.optimistic_sequence	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=8;os=linux;rounds=10;test=kv::kv.batch_atomic.optimistic_sequence	replace_atomic without atomic_write_dir writes in place
-capability	kv.get	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.get	
-capability	kv.put	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.put	
-capability	kv.delete	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.delete	
-capability	kv.ttl	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;sleep_ms=1200;test=kv::kv.ttl;ttl_ms=1000	
-capability	kv.put_if_absent	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.put_if_absent;value_bytes=1024	
-capability	kv.prefix_list	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.prefix_list	
-capability	kv.ordered_scan	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan	
-capability	kv.compare_and_swap	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	compare_and_swap
-capability	kv.compare_and_delete	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	compare_and_delete
-capability	lock.lease	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	put_if_absent with a time to live needs compare-and-delete to reclaim
-capability	kv.ttl_remaining	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	
-capability	kv.purge_expired	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	purge_expired
-capability	kv.batch_atomic.rollback	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	batch
-capability	kv.batch_atomic.concurrent_read	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	batch
-capability	kv.ordered_scan_values	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	ordered_scan_values
-capability	kv.batch_atomic.optimistic_sequence	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=8;os=linux;rounds=10;test=kv::kv.batch_atomic.optimistic_sequence	batch
-capability	kv.get	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.get	
-capability	kv.put	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.put	
-capability	kv.delete	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.delete	
-capability	kv.ttl	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;sleep_ms=1200;test=kv::kv.ttl;ttl_ms=1000	
-capability	kv.put_if_absent	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.put_if_absent;value_bytes=1024	create_exclusive under atomic_write_dir is check-then-rename
-capability	kv.prefix_list	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.prefix_list	
-capability	kv.ordered_scan	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan	
-capability	kv.compare_and_swap	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	compare_and_swap
-capability	kv.compare_and_delete	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	compare_and_delete
-capability	lock.lease	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	put_if_absent with a time to live needs compare-and-delete to reclaim
-capability	kv.ttl_remaining	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	
-capability	kv.purge_expired	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	purge_expired
-capability	kv.batch_atomic.rollback	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	batch
-capability	kv.batch_atomic.concurrent_read	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	batch
-capability	kv.ordered_scan_values	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	ordered_scan_values
-capability	kv.batch_atomic.optimistic_sequence	kv-on-blob:opendal-fs	0.5+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=8;os=linux;rounds=10;test=kv::kv.batch_atomic.optimistic_sequence	batch
+capability	kv.get	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.get	
+capability	kv.put	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.put	
+capability	kv.delete	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.delete	
+capability	kv.ttl	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;sleep_ms=1200;test=kv::kv.ttl;ttl_ms=1000	
+capability	kv.put_if_absent	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.put_if_absent;value_bytes=1024	
+capability	kv.prefix_list	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.prefix_list	
+capability	kv.ordered_scan	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan	
+capability	kv.compare_and_swap	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	compare_and_swap
+capability	kv.compare_and_delete	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	compare_and_delete
+capability	lock.lease	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	put_if_absent with a time to live needs compare-and-delete to reclaim
+capability	kv.ttl_remaining	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	yes		arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	
+capability	kv.purge_expired	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	purge_expired
+capability	kv.batch_atomic.rollback	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	batch
+capability	kv.batch_atomic.concurrent_read	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	batch
+capability	kv.ordered_scan_values	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	ordered_scan_values
+capability	kv.batch_atomic.optimistic_sequence	kv-on-blob:opendal-memory	0.6+0.59.4	put_mode=atomic	no	missing	arch=x86_64;contenders=8;os=linux;rounds=10;test=kv::kv.batch_atomic.optimistic_sequence	batch
+capability	kv.get	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.get	replace_atomic without atomic_write_dir writes in place
+capability	kv.put	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.put	replace_atomic without atomic_write_dir writes in place
+capability	kv.delete	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.delete	replace_atomic without atomic_write_dir writes in place
+capability	kv.ttl	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=1200;test=kv::kv.ttl;ttl_ms=1000	replace_atomic without atomic_write_dir writes in place
+capability	kv.put_if_absent	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.put_if_absent;value_bytes=1024	
+capability	kv.prefix_list	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.prefix_list	replace_atomic without atomic_write_dir writes in place
+capability	kv.ordered_scan	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan	replace_atomic without atomic_write_dir writes in place
+capability	kv.compare_and_swap	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	replace_atomic without atomic_write_dir writes in place
+capability	kv.compare_and_delete	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	replace_atomic without atomic_write_dir writes in place
+capability	lock.lease	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	put_if_absent with a time to live needs compare-and-delete to reclaim
+capability	kv.ttl_remaining	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	replace_atomic without atomic_write_dir writes in place
+capability	kv.purge_expired	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	replace_atomic without atomic_write_dir writes in place
+capability	kv.batch_atomic.rollback	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	replace_atomic without atomic_write_dir writes in place
+capability	kv.batch_atomic.concurrent_read	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	batch
+capability	kv.ordered_scan_values	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	replace_atomic without atomic_write_dir writes in place
+capability	kv.batch_atomic.optimistic_sequence	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;contenders=8;os=linux;rounds=10;test=kv::kv.batch_atomic.optimistic_sequence	replace_atomic without atomic_write_dir writes in place
+capability	kv.get	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.get	
+capability	kv.put	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.put	
+capability	kv.delete	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.delete	
+capability	kv.ttl	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;sleep_ms=1200;test=kv::kv.ttl;ttl_ms=1000	
+capability	kv.put_if_absent	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.put_if_absent;value_bytes=1024	
+capability	kv.prefix_list	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.prefix_list	
+capability	kv.ordered_scan	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan	
+capability	kv.compare_and_swap	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	compare_and_swap
+capability	kv.compare_and_delete	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	compare_and_delete
+capability	lock.lease	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	put_if_absent with a time to live needs compare-and-delete to reclaim
+capability	kv.ttl_remaining	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	
+capability	kv.purge_expired	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	purge_expired
+capability	kv.batch_atomic.rollback	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	batch
+capability	kv.batch_atomic.concurrent_read	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	batch
+capability	kv.ordered_scan_values	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	ordered_scan_values
+capability	kv.batch_atomic.optimistic_sequence	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=unset;put_mode=in_place	no	missing	arch=x86_64;contenders=8;os=linux;rounds=10;test=kv::kv.batch_atomic.optimistic_sequence	batch
+capability	kv.get	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.get	
+capability	kv.put	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.put	
+capability	kv.delete	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.delete	
+capability	kv.ttl	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;sleep_ms=1200;test=kv::kv.ttl;ttl_ms=1000	
+capability	kv.put_if_absent	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.put_if_absent;value_bytes=1024	create_exclusive under atomic_write_dir is check-then-rename
+capability	kv.prefix_list	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.prefix_list	
+capability	kv.ordered_scan	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan	
+capability	kv.compare_and_swap	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	compare_and_swap
+capability	kv.compare_and_delete	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	compare_and_delete
+capability	lock.lease	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	put_if_absent with a time to live needs compare-and-delete to reclaim
+capability	kv.ttl_remaining	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	
+capability	kv.purge_expired	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	purge_expired
+capability	kv.batch_atomic.rollback	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.batch_atomic.rollback	batch
+capability	kv.batch_atomic.concurrent_read	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.batch_atomic.concurrent_read	batch
+capability	kv.ordered_scan_values	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;os=linux;test=kv::kv.ordered_scan_values	ordered_scan_values
+capability	kv.batch_atomic.optimistic_sequence	kv-on-blob:opendal-fs	0.6+0.59.4	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=8;os=linux;rounds=10;test=kv::kv.batch_atomic.optimistic_sequence	batch
