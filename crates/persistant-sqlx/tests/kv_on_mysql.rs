@@ -106,3 +106,40 @@ async fn kv_on_mysql_certifies_every_leaf_on() {
         .collect();
     assert!(off.is_empty(), "leaves off on MySQL: {off:#?}");
 }
+
+/// The fact `KvOnRelational::claim_two_step` is written around. If sqlx ever stops setting
+/// `CLIENT_FOUND_ROWS` this fails, and the two-step can go back to one statement.
+#[tokio::test]
+async fn an_upsert_cannot_say_whether_it_stored() {
+    let Some(db) = backend().await else { return };
+    db.execute("DROP TABLE IF EXISTS persistant_t_upsert", &[])
+        .await
+        .unwrap();
+    db.execute(
+        "CREATE TABLE persistant_t_upsert (k BIGINT PRIMARY KEY, v BIGINT NOT NULL) ENGINE=InnoDB",
+        &[],
+    )
+    .await
+    .unwrap();
+    let up = |k: i64, v: i64, set: &'static str| {
+        let db = &db;
+        async move {
+            db.execute(
+                &format!("INSERT INTO persistant_t_upsert VALUES (?, ?) ON DUPLICATE KEY UPDATE v = {set}"),
+                &[Value::Int(k), Value::Int(v)],
+            )
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(up(1, 1, "v").await, 1, "insert");
+    assert_eq!(
+        up(1, 1, "v").await,
+        1,
+        "existing row, nothing changed: 1 under CLIENT_FOUND_ROWS, 0 without"
+    );
+    assert_eq!(up(1, 2, "5").await, 2, "existing row, changed");
+    db.execute("DROP TABLE persistant_t_upsert", &[])
+        .await
+        .unwrap();
+}
