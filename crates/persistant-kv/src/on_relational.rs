@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+use crate::translate::{self, Translator};
 use crate::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};
-use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Value};
+use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -13,18 +14,19 @@ use std::time::Duration;
 /// case-insensitive). Expiry is judged by the **server's clock**, so clients with skewed clocks
 /// agree.
 ///
-/// The statements are written once, in PostgreSQL SQL (the source dialect), and the adapter
-/// refuses any other dialect until a translator (UniSQL) is available to it as a published
-/// dependency. Nothing here is *on* by derivation: each capability is certified per
+/// The statements are written once, in PostgreSQL SQL (the source dialect), and translated per
+/// target by UniSQL: PostgreSQL (unchanged) and SQLite (3.42 or later). Any other dialect is
+/// refused until UniSQL gives every construct the adapter uses. Nothing here is *on* by derivation: each capability is certified per
 /// `(server, version, config)` by [`crate::conformance`].
 #[derive(Debug)]
 pub struct KvOnRelational<R> {
     db: R,
+    tr: Translator,
     name: String,
     version: String,
 }
 
-const NOW: &str = "(extract(epoch from clock_timestamp()) * 1000)::bigint";
+const NOW: &str = "CAST(EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS BIGINT)";
 
 fn err(e: RelError) -> KvError {
     match e {
@@ -56,19 +58,25 @@ fn upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
 impl<R: RelationalBackend> KvOnRelational<R> {
     /// Check the dialect, create the table if it is missing, and return the store.
     pub async fn open(db: R) -> Result<Self, KvError> {
-        if db.dialect() != Dialect::Postgres {
-            return Err(KvError::Unsupported(format!(
-                "KvOnRelational writes PostgreSQL SQL only; {} needs a translator",
-                db.dialect()
-            )));
+        let tr = Translator::new(db.dialect()).map_err(err)?;
+        if *tr.dialect() == Dialect::Sqlite {
+            // `unixepoch('now', 'subsec')` is the clock in milliseconds; it needs SQLite 3.42.
+            let v: Vec<u32> = db
+                .version()
+                .split('.')
+                .filter_map(|p| p.parse().ok())
+                .collect();
+            if v.len() < 2 || (v[0], v[1]) < (3, 42) {
+                return Err(KvError::Unsupported(format!(
+                    "KvOnRelational on SQLite needs 3.42 or later (unixepoch subsec); this is {}",
+                    db.version()
+                )));
+            }
         }
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS persistant_kv (\
-                k BYTEA PRIMARY KEY, v BYTEA NOT NULL, expires_ms BIGINT)",
-            &[],
-        )
-        .await
-        .map_err(err)?;
+        let create = translate::ddl(tr.dialect()).ok_or_else(|| {
+            KvError::Unsupported(format!("no table definition for {}", tr.dialect()))
+        })?;
+        db.execute(create, &[]).await.map_err(err)?;
         let name = format!("kv-on-relational:{}", db.backend());
         let version = format!(
             "{}.{}+{}",
@@ -76,7 +84,51 @@ impl<R: RelationalBackend> KvOnRelational<R> {
             env!("CARGO_PKG_VERSION_MINOR"),
             db.version()
         );
-        Ok(KvOnRelational { db, name, version })
+        Ok(KvOnRelational {
+            db,
+            tr,
+            name,
+            version,
+        })
+    }
+
+    async fn exec(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        let (sql, params) = self.tr.prepare(sql, params)?;
+        self.db.execute(&sql, &params).await
+    }
+
+    async fn qry(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
+        let (sql, params) = self.tr.prepare(sql, params)?;
+        self.db.query(&sql, &params).await
+    }
+
+    async fn tx_exec<T: RelationalTx>(
+        &self,
+        tx: &mut T,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<u64, RelError> {
+        let (sql, params) = self.tr.prepare(sql, params)?;
+        tx.execute(&sql, &params).await
+    }
+
+    async fn tx_qry<T: RelationalTx>(
+        &self,
+        tx: &mut T,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<Vec<Row>, RelError> {
+        let (sql, params) = self.tr.prepare(sql, params)?;
+        tx.query(&sql, &params).await
+    }
+
+    /// SQLite has no row locks; its write transaction is already exclusive (`BEGIN IMMEDIATE`).
+    fn lock_clause(&self) -> &'static str {
+        if *self.tr.dialect() == Dialect::Sqlite {
+            ""
+        } else {
+            " FOR UPDATE"
+        }
     }
 
     /// The underlying relational backend.
@@ -105,7 +157,7 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         let fetch = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
         params.push(Value::Int(fetch));
         sql.push_str(&format!(" ORDER BY k LIMIT ${}", params.len()));
-        let rows = self.db.query(&sql, &params).await.map_err(err)?;
+        let rows = self.qry(&sql, &params).await.map_err(err)?;
         let mut keys = Vec::with_capacity(rows.len());
         for r in &rows {
             let bytes = r
@@ -134,8 +186,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
         let rows = self
-            .db
-            .query(
+            .qry(
                 &format!(
                     "SELECT v FROM persistant_kv WHERE k = $1 \
                      AND (expires_ms IS NULL OR expires_ms > {NOW})"
@@ -148,32 +199,30 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
     }
 
     async fn put(&self, key: &str, value: Vec<u8>, ttl: Option<Duration>) -> Result<(), KvError> {
-        self.db
-            .execute(
-                &format!(
-                    "INSERT INTO persistant_kv (k, v, expires_ms) \
+        self.exec(
+            &format!(
+                "INSERT INTO persistant_kv (k, v, expires_ms) \
                      VALUES ($1, $2, CASE WHEN $3 < 0 THEN NULL ELSE {NOW} + $3 END) \
                      ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, expires_ms = EXCLUDED.expires_ms"
-                ),
-                &[
-                    Value::Bytes(key.as_bytes().to_vec()),
-                    Value::Bytes(value),
-                    ttl_ms(ttl),
-                ],
-            )
-            .await
-            .map_err(err)?;
+            ),
+            &[
+                Value::Bytes(key.as_bytes().to_vec()),
+                Value::Bytes(value),
+                ttl_ms(ttl),
+            ],
+        )
+        .await
+        .map_err(err)?;
         Ok(())
     }
 
     async fn delete(&self, key: &str) -> Result<(), KvError> {
-        self.db
-            .execute(
-                "DELETE FROM persistant_kv WHERE k = $1",
-                &[Value::Bytes(key.as_bytes().to_vec())],
-            )
-            .await
-            .map_err(err)?;
+        self.exec(
+            "DELETE FROM persistant_kv WHERE k = $1",
+            &[Value::Bytes(key.as_bytes().to_vec())],
+        )
+        .await
+        .map_err(err)?;
         Ok(())
     }
 
@@ -186,8 +235,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         // Inserts, or reclaims an expired row; a live row makes the DO UPDATE's WHERE false, so
         // no row is affected. Concurrent callers serialise on the row.
         let n = self
-            .db
-            .execute(
+            .exec(
                 &format!(
                     "INSERT INTO persistant_kv (k, v, expires_ms) \
                      VALUES ($1, $2, CASE WHEN $3 < 0 THEN NULL ELSE {NOW} + $3 END) \
@@ -213,8 +261,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         ttl: Option<Duration>,
     ) -> Result<bool, KvError> {
         let n = self
-            .db
-            .execute(
+            .exec(
                 &format!(
                     "UPDATE persistant_kv \
                      SET v = $3, expires_ms = CASE WHEN $4 < 0 THEN NULL ELSE {NOW} + $4 END \
@@ -234,8 +281,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
 
     async fn compare_and_delete(&self, key: &str, expected: &[u8]) -> Result<bool, KvError> {
         let n = self
-            .db
-            .execute(
+            .exec(
                 &format!(
                     "DELETE FROM persistant_kv \
                      WHERE k = $1 AND v = $2 AND (expires_ms IS NULL OR expires_ms > {NOW})"
@@ -252,8 +298,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
 
     async fn ttl_remaining(&self, key: &str) -> Result<Option<Duration>, KvError> {
         let rows = self
-            .db
-            .query(
+            .qry(
                 &format!(
                     "SELECT expires_ms - {NOW} FROM persistant_kv \
                      WHERE k = $1 AND expires_ms IS NOT NULL AND expires_ms > {NOW}"
@@ -270,15 +315,14 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
     }
 
     async fn purge_expired(&self) -> Result<u64, KvError> {
-        self.db
-            .execute(
-                &format!(
-                    "DELETE FROM persistant_kv WHERE expires_ms IS NOT NULL AND expires_ms <= {NOW}"
-                ),
-                &[],
-            )
-            .await
-            .map_err(err)
+        self.exec(
+            &format!(
+                "DELETE FROM persistant_kv WHERE expires_ms IS NOT NULL AND expires_ms <= {NOW}"
+            ),
+            &[],
+        )
+        .await
+        .map_err(err)
     }
 
     async fn batch(&self, ops: &[BatchOp]) -> Result<bool, KvError> {
@@ -290,11 +334,13 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         for op in ops {
             match op {
                 BatchOp::Require { key, expected } => {
-                    let rows = tx
-                        .query(
+                    let rows = self
+                        .tx_qry(
+                            &mut tx,
                             &format!(
                                 "SELECT v FROM persistant_kv WHERE k = $1 \
-                                 AND (expires_ms IS NULL OR expires_ms > {NOW}) FOR UPDATE"
+                                 AND (expires_ms IS NULL OR expires_ms > {NOW}){lock}",
+                                lock = self.lock_clause()
                             ),
                             &[Value::Bytes(key.as_bytes().to_vec())],
                         )
@@ -324,8 +370,9 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
                     } else {
                         &insert
                     };
-                    let n = tx
-                        .execute(
+                    let n = self
+                        .tx_exec(
+                            &mut tx,
                             sql,
                             &[
                                 Value::Bytes(key.as_bytes().to_vec()),
@@ -341,7 +388,8 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
                     }
                 }
                 BatchOp::Delete { key } => {
-                    tx.execute(
+                    self.tx_exec(
+                        &mut tx,
                         "DELETE FROM persistant_kv WHERE k = $1",
                         &[Value::Bytes(key.as_bytes().to_vec())],
                     )
@@ -377,7 +425,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         params.push(Value::Int(fetch));
         sql.push_str(&format!(" ORDER BY k LIMIT ${}", params.len()));
         // One statement: one snapshot.
-        let rows = self.db.query(&sql, &params).await.map_err(err)?;
+        let rows = self.qry(&sql, &params).await.map_err(err)?;
         let mut entries = Vec::with_capacity(rows.len());
         for r in &rows {
             let k = r

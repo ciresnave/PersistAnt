@@ -2,7 +2,7 @@
 name = "persistant-kv"
 version.workspace = true
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.94"
 description = "PersistAnt's key-value kind: the KvBackend trait, KvOnBlob over any BlobBackend, a memory reference backend, and the contract tests that turn kv capabilities on. No driver."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ciresnave/PersistAnt"
@@ -13,6 +13,8 @@ categories = ["database-implementations", "development-tools::testing"]
 persistant-core = { workspace = true }
 persistant-blob = { workspace = true }
 persistant-relational = { workspace = true }
+# Pure translation, no I/O. Published version only (CireSnave rule 2026-10-07).
+unisql = "0.24.7"
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["rt", "macros"] }

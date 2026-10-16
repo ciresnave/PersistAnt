@@ -2,7 +2,7 @@
 name = "persistant-opendal"
 version.workspace = true
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.94"
 description = "PersistAnt's blob driver over Apache OpenDAL: implements BlobBackend for the fs and memory services."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ciresnave/PersistAnt"

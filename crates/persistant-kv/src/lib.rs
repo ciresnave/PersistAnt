@@ -9,7 +9,7 @@
 //!   [`persistant_blob::BlobBackend`]. What it *gives* is derived as eligible and then tested per
 //!   `(blob backend, version, config)`.
 //! - [`KvOnRelational`]: the same for any [`persistant_relational::RelationalBackend`] (D1, C+),
-//!   PostgreSQL SQL for now, keys as `BYTEA`, tested per server and version.
+//!   PostgreSQL SQL translated by UniSQL (PostgreSQL, SQLite), keys as bytes, tested per server and version.
 //! - [`MemoryKv`]: a reference backend with injectable [`Defect`]s for known-bad controls.
 //! - [`conformance`]: the contract tests, producing matrix rows.
 //! - [`contract`]: pass/fail eligibility for a set of required leaves; a failing backend is excluded,
@@ -26,6 +26,7 @@ mod lease;
 mod memory;
 mod on_blob;
 mod on_relational;
+mod translate;
 
 pub use backend::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};
 pub use lease::Lease;

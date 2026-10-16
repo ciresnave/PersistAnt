@@ -2,7 +2,7 @@
 name = "persistant-core"
 version.workspace = true
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.94"
 description = "PersistAnt's capability vocabulary, boolean capability sets, matrix row schema and conformance verdicts. No I/O."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ciresnave/PersistAnt"

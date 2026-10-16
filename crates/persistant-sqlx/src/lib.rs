@@ -9,9 +9,13 @@
 
 mod migrate;
 mod options;
+#[cfg(feature = "sqlite")]
+mod sqlite;
 
 pub use migrate::{MigrateError, MigrateReport, Migration};
 pub use options::{ConnectOptions, TlsPolicy};
+#[cfg(feature = "sqlite")]
+pub use sqlite::{SqliteBackend, SqliteTx};
 
 use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
 use sqlx::postgres::{PgArguments, PgPoolOptions, PgRow};

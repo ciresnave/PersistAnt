@@ -2,7 +2,7 @@
 name = "persistant-relational"
 version.workspace = true
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.94"
 description = "PersistAnt's relational kind: a small RelationalBackend trait (statement with parameters, transaction, dialect), portable values and typed error classification. No driver."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ciresnave/PersistAnt"

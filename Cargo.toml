@@ -2,21 +2,21 @@
 members = [".", "crates/persistant-core", "crates/persistant-blob", "crates/persistant-opendal", "crates/persistant-kv", "crates/persistant-relational", "crates/persistant-sqlx"]
 
 [workspace.package]
-version = "0.4.35"
+version = "0.5.0"
 
 [workspace.dependencies]
-persistant-core = { version = "0.4.35", path = "crates/persistant-core" }
-persistant-blob = { version = "0.4.35", path = "crates/persistant-blob" }
-persistant-kv = { version = "0.4.35", path = "crates/persistant-kv" }
-persistant-opendal = { version = "0.4.35", path = "crates/persistant-opendal" }
-persistant-relational = { version = "0.4.35", path = "crates/persistant-relational" }
-persistant-sqlx = { version = "0.4.35", path = "crates/persistant-sqlx" }
+persistant-core = { version = "0.5.0", path = "crates/persistant-core" }
+persistant-blob = { version = "0.5.0", path = "crates/persistant-blob" }
+persistant-kv = { version = "0.5.0", path = "crates/persistant-kv" }
+persistant-opendal = { version = "0.5.0", path = "crates/persistant-opendal" }
+persistant-relational = { version = "0.5.0", path = "crates/persistant-relational" }
+persistant-sqlx = { version = "0.5.0", path = "crates/persistant-sqlx" }
 
 [package]
 name = "persistant"
 version.workspace = true
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.94"
 description = "A thin persistence layer over Apache OpenDAL for blobs and records by key: declared capabilities, atomic replace, typed records, and a blocking facade for synchronous callers."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ciresnave/PersistAnt"
@@ -52,7 +52,7 @@ persistant-blob = { workspace = true, optional = true }
 persistant-kv = { workspace = true, optional = true }
 persistant-relational = { workspace = true, optional = true }
 persistant-opendal = { workspace = true, optional = true }
-# `sqlx-driver` needs a Rust 1.94 compiler (sqlx 0.9); the rest of this crate builds on 1.91.
+# `sqlx-driver` needs a Rust 1.94 compiler (sqlx 0.9); the rest of this crate builds on 1.94 too (UniSQL, which `persistant-kv` translates through).
 persistant-sqlx = { workspace = true, optional = true }
 
 [features]
