@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.4
+
+### Fixed
+- **`KvOnRelational::batch` on PostgreSQL and MySQL: racing committers could be handed "deadlock detected"** instead of `Ok(false)`.
+  Found by the Synapse mailbox consumer check (8 threads, unseeded version key, `Require(ver, None)` first). Cause: a `Require` of an *absent*
+  key locks nothing that excludes a second batch (a gap lock on MySQL, an in-flight insert on PostgreSQL), so racing batches took row locks in
+  opposite orders and the server aborted one. Now every batch first locks one row of a new table `persistant_kv_batch` (created by `open`, one row,
+  additive), so batches queue instead of deadlocking; SQLite already excludes. A batch the server still aborts as a deadlock or serialisation victim
+  is run again (up to 16 times), since it was rolled back whole. Trade-off: batches on one database now run one at a time.
+
+### Added
+- `kv.batch_atomic.absent_race` (17th kv leaf): concurrent read-then-batch committers racing for a version key that starts absent; every batch is
+  answered true or false, none gets an error, and no commit is lost. Red before the fix on PostgreSQL 16 and MySQL 8.4 (0/5 runs, "deadlock detected"),
+  green after. Known-bad control: `BatchIgnoresRequire`.
+
+
 ## 0.6.3
 
 ### Added

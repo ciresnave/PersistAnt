@@ -66,11 +66,15 @@ pub enum Leaf {
     /// `kv.batch_atomic.optimistic_sequence`: the Synapse mailbox pattern (read, then a batch of
     /// `Require` and `Put`, retried on refusal), by sampled concurrency
     OptimisticSequence,
+    /// `kv.batch_atomic.absent_race`: concurrent read-then-batch committers racing for a key that is
+    /// absent at the start (the Synapse mailbox's first commits); the losers get `Ok(false)`, never
+    /// an error (a deadlock victim, say), by sampled concurrency
+    AbsentRace,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 16] = [
+    pub const ALL: [Leaf; 17] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -87,6 +91,7 @@ impl Leaf {
         Leaf::BatchConcurrentRead,
         Leaf::ScanValues,
         Leaf::OptimisticSequence,
+        Leaf::AbsentRace,
     ];
 
     /// The capability id.
@@ -108,6 +113,7 @@ impl Leaf {
             Leaf::BatchConcurrentRead => "kv.batch_atomic.concurrent_read",
             Leaf::ScanValues => "kv.ordered_scan_values",
             Leaf::OptimisticSequence => "kv.batch_atomic.optimistic_sequence",
+            Leaf::AbsentRace => "kv.batch_atomic.absent_race",
         }
     }
 
@@ -122,6 +128,7 @@ impl Leaf {
             Leaf::BatchRollback => "contenders=16;rounds=20",
             Leaf::BatchConcurrentRead => "readers=4;batches=60",
             Leaf::OptimisticSequence => "contenders=8;rounds=10",
+            Leaf::AbsentRace => "contenders=8;commits=3;rounds=10",
             _ => "",
         }
     }
@@ -147,7 +154,8 @@ impl Leaf {
             | Leaf::CompareAndDelete
             | Leaf::BatchRollback
             | Leaf::BatchConcurrentRead
-            | Leaf::OptimisticSequence => false,
+            | Leaf::OptimisticSequence
+            | Leaf::AbsentRace => false,
         }
     }
 
@@ -176,6 +184,7 @@ impl Leaf {
             Leaf::BatchConcurrentRead => &[Defect::BatchNotAtomic],
             Leaf::ScanValues => &[Defect::ScanIsDescending, Defect::ListIgnoresPaging],
             Leaf::OptimisticSequence => &[Defect::BatchIgnoresRequire, Defect::BatchNotAtomic],
+            Leaf::AbsentRace => &[Defect::BatchIgnoresRequire],
             Leaf::Lease => &[
                 Defect::PutIfAbsentNotExclusive,
                 Defect::CasIgnoresExpected,
@@ -245,6 +254,7 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::BatchConcurrentRead => batch_concurrent_read(b, &base).await,
         Leaf::ScanValues => scan_values(b, &base).await,
         Leaf::OptimisticSequence => optimistic_sequence(b, &base).await,
+        Leaf::AbsentRace => absent_race(b, &base).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.prefix_list(&base, None, usize::MAX).await {
@@ -736,6 +746,80 @@ async fn batch_rollback<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> 
             return wrong(format!(
                 "round {round}: {entries} queue entries written, want exactly 1"
             ));
+        }
+    }
+    Ok(())
+}
+
+async fn absent_race<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    const CONTENDERS: usize = 8;
+    const ROUNDS: usize = 10;
+    const COMMITS: usize = 3;
+    const RETRIES: usize = 10_000;
+    for round in 0..ROUNDS {
+        // The version key is absent at the start of every round: the first racers all `Require` it
+        // absent, which no row lock can protect. Every commit also writes a key all of them write.
+        let ver = format!("{base}ver{round}");
+        let ver = ver.as_str();
+        let shared = format!("{base}shared{round}");
+        let shared = shared.as_str();
+        let tasks: Vec<Task<'_, Result<Vec<u64>, Failure>>> = (0..CONTENDERS)
+            .map(|_| -> Task<'_, _> {
+                Box::pin(async move {
+                    let mut got = Vec::new();
+                    for _ in 0..COMMITS {
+                        let mut attempts = 0;
+                        loop {
+                            attempts += 1;
+                            if attempts > RETRIES {
+                                return wrong("a commit was refused 10000 times");
+                            }
+                            let cur = b.get(ver).await?;
+                            let n: u64 = match &cur {
+                                Some(v) => std::str::from_utf8(v)
+                                    .ok()
+                                    .and_then(|t| t.parse().ok())
+                                    .ok_or_else(|| {
+                                        Failure::Wrong("the version is not a number".into())
+                                    })?,
+                                None => 0,
+                            };
+                            yield_now().await;
+                            let next = (n + 1).to_string().into_bytes();
+                            // An `Err` here is the defect: a racer that loses must be told `false`,
+                            // not handed the server's abort.
+                            if b.batch(&[
+                                BatchOp::require(ver, cur),
+                                BatchOp::put(shared, next.clone()),
+                                BatchOp::put(ver, next),
+                            ])
+                            .await?
+                            {
+                                got.push(n + 1);
+                                break;
+                            }
+                        }
+                    }
+                    Ok(got)
+                })
+            })
+            .collect();
+        let mut all = Vec::new();
+        for r in join_all(tasks).await {
+            all.extend(r?);
+        }
+        let distinct: BTreeSet<u64> = all.iter().copied().collect();
+        if distinct.len() != all.len() {
+            return wrong(format!(
+                "round {round}: {} of {} version numbers were handed out twice",
+                all.len() - distinct.len(),
+                all.len()
+            ));
+        }
+        let want = (CONTENDERS * COMMITS).to_string();
+        let last = b.get(ver).await?.and_then(|v| String::from_utf8(v).ok());
+        if last.as_deref() != Some(want.as_str()) {
+            return wrong(format!("round {round}: ended at {last:?}, want {want}"));
         }
     }
     Ok(())
@@ -1270,6 +1354,7 @@ mod tests {
                     | Leaf::BatchConcurrentRead
                     | Leaf::ScanValues
                     | Leaf::OptimisticSequence
+                    | Leaf::AbsentRace
             );
             assert_eq!(c.row.enabled, !needs_cad, "{}: {}", c.leaf.id(), c.row.note);
             if needs_cad {

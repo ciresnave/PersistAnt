@@ -26,6 +26,25 @@ pub struct KvOnRelational<R> {
     version: String,
 }
 
+/// How many times `batch` runs a batch the server aborted as a deadlock or serialisation victim.
+const BATCH_ATTEMPTS: usize = 16;
+
+/// Why one attempt at a batch did not finish.
+enum BatchFail {
+    /// The server rolled the transaction back and says to run it again.
+    Retry,
+    Kv(KvError),
+}
+
+impl From<RelError> for BatchFail {
+    fn from(e: RelError) -> Self {
+        match e {
+            RelError::Deadlock | RelError::Serialization => BatchFail::Retry,
+            other => BatchFail::Kv(err(other)),
+        }
+    }
+}
+
 const NOW: &str = "CAST(EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS BIGINT)";
 
 fn err(e: RelError) -> KvError {
@@ -77,6 +96,20 @@ impl<R: RelationalBackend> KvOnRelational<R> {
             KvError::Unsupported(format!("no table definition for {}", tr.dialect()))
         })?;
         db.execute(create, &[]).await.map_err(err)?;
+        // The row every `batch` locks first (see `batch_once`). Plain SQL, the same on every dialect.
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS persistant_kv_batch (id BIGINT NOT NULL PRIMARY KEY)",
+            &[],
+        )
+        .await
+        .map_err(err)?;
+        match db
+            .execute("INSERT INTO persistant_kv_batch (id) VALUES (1)", &[])
+            .await
+        {
+            Ok(_) | Err(RelError::UniqueViolation { .. }) => {}
+            Err(e) => return Err(err(e)),
+        }
         let name = format!("kv-on-relational:{}", db.backend());
         let version = format!(
             "{}.{}+{}",
@@ -136,7 +169,7 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         key: &str,
         value: &[u8],
         ttl: Option<Duration>,
-    ) -> Result<bool, KvError> {
+    ) -> Result<bool, RelError> {
         let reclaimed = self
             .tx_exec(
                 tx,
@@ -151,8 +184,7 @@ impl<R: RelationalBackend> KvOnRelational<R> {
                     ttl_ms(ttl),
                 ],
             )
-            .await
-            .map_err(err)?;
+            .await?;
         if reclaimed == 1 {
             return Ok(true);
         }
@@ -173,8 +205,104 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         {
             Ok(n) => Ok(n == 1),
             Err(RelError::UniqueViolation { .. }) => Ok(false),
-            Err(e) => Err(err(e)),
+            Err(e) => Err(e),
         }
+    }
+
+    async fn batch_once(&self, ops: &[BatchOp]) -> Result<bool, BatchFail> {
+        let mut tx = self.db.begin().await?;
+        // One batch at a time on a server with row locks. The preconditions below read rows that
+        // may not exist, and a lock on a missing row (a gap lock on MySQL, an in-flight insert on
+        // PostgreSQL) cannot exclude a second batch, so racing batches took locks in opposite orders
+        // and the server aborted one as a deadlock victim. SQLite's write transaction already
+        // excludes. The retry in `batch` is the backstop, not the plan: a deadlock costs the
+        // server's detection time.
+        if *self.tr.dialect() != Dialect::Sqlite {
+            tx.query(
+                "SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE",
+                &[],
+            )
+            .await?;
+        }
+        // Keys a precondition says are absent: their `Put` must not overwrite a row another
+        // writer inserted after the check, so it is an insert-or-reclaim-expired, and a miss
+        // refuses the batch.
+        let mut required_absent: BTreeSet<&str> = BTreeSet::new();
+        for op in ops {
+            match op {
+                BatchOp::Require { key, expected } => {
+                    let rows = self
+                        .tx_qry(
+                            &mut tx,
+                            &format!(
+                                "SELECT v FROM persistant_kv WHERE k = $1 \
+                                 AND (expires_ms IS NULL OR expires_ms > {NOW}){lock}",
+                                lock = self.lock_clause()
+                            ),
+                            &[Value::Bytes(key.as_bytes().to_vec())],
+                        )
+                        .await?;
+                    let current = rows.first().and_then(|r| r.bytes(0));
+                    if current != expected.as_deref() {
+                        tx.rollback().await?;
+                        return Ok(false);
+                    }
+                    if expected.is_none() {
+                        required_absent.insert(key.as_str());
+                    }
+                }
+                BatchOp::Put { key, value, ttl } => {
+                    if *self.tr.dialect() == Dialect::MySql
+                        && required_absent.contains(key.as_str())
+                    {
+                        if !self.claim_two_step(&mut tx, key, value, *ttl).await? {
+                            tx.rollback().await?;
+                            return Ok(false);
+                        }
+                        continue;
+                    }
+                    let insert = format!(
+                        "INSERT INTO persistant_kv (k, v, expires_ms) \
+                         VALUES ($1, $2, CASE WHEN $3 < 0 THEN NULL ELSE {NOW} + $3 END) \
+                         ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, expires_ms = EXCLUDED.expires_ms"
+                    );
+                    let insert_if_absent = format!(
+                        "{insert} \
+                         WHERE persistant_kv.expires_ms IS NOT NULL AND persistant_kv.expires_ms <= {NOW}"
+                    );
+                    let sql = if required_absent.contains(key.as_str()) {
+                        &insert_if_absent
+                    } else {
+                        &insert
+                    };
+                    let n = self
+                        .tx_exec(
+                            &mut tx,
+                            sql,
+                            &[
+                                Value::Bytes(key.as_bytes().to_vec()),
+                                Value::Bytes(value.clone()),
+                                ttl_ms(*ttl),
+                            ],
+                        )
+                        .await?;
+                    if required_absent.contains(key.as_str()) && n != 1 {
+                        tx.rollback().await?;
+                        return Ok(false);
+                    }
+                }
+                BatchOp::Delete { key } => {
+                    self.tx_exec(
+                        &mut tx,
+                        "DELETE FROM persistant_kv WHERE k = $1",
+                        &[Value::Bytes(key.as_bytes().to_vec())],
+                    )
+                    .await?;
+                }
+            }
+        }
+        tx.commit().await?;
+        Ok(true)
     }
 
     /// SQLite has no row locks; its write transaction is already exclusive (`BEGIN IMMEDIATE`).
@@ -289,7 +417,10 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
     ) -> Result<bool, KvError> {
         if *self.tr.dialect() == Dialect::MySql {
             let mut tx = self.db.begin().await.map_err(err)?;
-            let won = self.claim_two_step(&mut tx, key, &value, ttl).await?;
+            let won = self
+                .claim_two_step(&mut tx, key, &value, ttl)
+                .await
+                .map_err(err)?;
             tx.commit().await.map_err(err)?;
             return Ok(won);
         }
@@ -387,89 +518,19 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
     }
 
     async fn batch(&self, ops: &[BatchOp]) -> Result<bool, KvError> {
-        let mut tx = self.db.begin().await.map_err(err)?;
-        // Keys a precondition says are absent: their `Put` must not overwrite a row another
-        // writer inserted after the check, so it is an insert-or-reclaim-expired, and a miss
-        // refuses the batch.
-        let mut required_absent: BTreeSet<&str> = BTreeSet::new();
-        for op in ops {
-            match op {
-                BatchOp::Require { key, expected } => {
-                    let rows = self
-                        .tx_qry(
-                            &mut tx,
-                            &format!(
-                                "SELECT v FROM persistant_kv WHERE k = $1 \
-                                 AND (expires_ms IS NULL OR expires_ms > {NOW}){lock}",
-                                lock = self.lock_clause()
-                            ),
-                            &[Value::Bytes(key.as_bytes().to_vec())],
-                        )
-                        .await
-                        .map_err(err)?;
-                    let current = rows.first().and_then(|r| r.bytes(0));
-                    if current != expected.as_deref() {
-                        tx.rollback().await.map_err(err)?;
-                        return Ok(false);
-                    }
-                    if expected.is_none() {
-                        required_absent.insert(key.as_str());
-                    }
-                }
-                BatchOp::Put { key, value, ttl } => {
-                    if *self.tr.dialect() == Dialect::MySql
-                        && required_absent.contains(key.as_str())
-                    {
-                        if !self.claim_two_step(&mut tx, key, value, *ttl).await? {
-                            tx.rollback().await.map_err(err)?;
-                            return Ok(false);
-                        }
-                        continue;
-                    }
-                    let insert = format!(
-                        "INSERT INTO persistant_kv (k, v, expires_ms) \
-                         VALUES ($1, $2, CASE WHEN $3 < 0 THEN NULL ELSE {NOW} + $3 END) \
-                         ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v, expires_ms = EXCLUDED.expires_ms"
-                    );
-                    let insert_if_absent = format!(
-                        "{insert} \
-                         WHERE persistant_kv.expires_ms IS NOT NULL AND persistant_kv.expires_ms <= {NOW}"
-                    );
-                    let sql = if required_absent.contains(key.as_str()) {
-                        &insert_if_absent
-                    } else {
-                        &insert
-                    };
-                    let n = self
-                        .tx_exec(
-                            &mut tx,
-                            sql,
-                            &[
-                                Value::Bytes(key.as_bytes().to_vec()),
-                                Value::Bytes(value.clone()),
-                                ttl_ms(*ttl),
-                            ],
-                        )
-                        .await
-                        .map_err(err)?;
-                    if required_absent.contains(key.as_str()) && n != 1 {
-                        tx.rollback().await.map_err(err)?;
-                        return Ok(false);
-                    }
-                }
-                BatchOp::Delete { key } => {
-                    self.tx_exec(
-                        &mut tx,
-                        "DELETE FROM persistant_kv WHERE k = $1",
-                        &[Value::Bytes(key.as_bytes().to_vec())],
-                    )
-                    .await
-                    .map_err(err)?;
-                }
+        // A deadlock or serialisation victim was rolled back whole, so the batch changed nothing and
+        // running it again is the same as having started a moment later: the racer then reads the
+        // winner's write and is answered `false`, rather than handed the server's abort as an error.
+        for _ in 0..BATCH_ATTEMPTS {
+            match self.batch_once(ops).await {
+                Ok(applied) => return Ok(applied),
+                Err(BatchFail::Retry) => {}
+                Err(BatchFail::Kv(e)) => return Err(e),
             }
         }
-        tx.commit().await.map_err(err)?;
-        Ok(true)
+        Err(KvError::Backend(format!(
+            "batch: still a deadlock or serialisation victim after {BATCH_ATTEMPTS} attempts"
+        )))
     }
 
     async fn ordered_scan_values(

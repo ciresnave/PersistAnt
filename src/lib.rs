@@ -48,6 +48,10 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
+<<<<<<< HEAD
         assert_eq!(VERSION, "0.6.3");
+=======
+        assert_eq!(VERSION, "0.6.4");
+>>>>>>> 8d53a47 (kv: batches no longer deadlock racing for an absent key; kv.batch_atomic.absent_race (0.6.4))
     }
 }

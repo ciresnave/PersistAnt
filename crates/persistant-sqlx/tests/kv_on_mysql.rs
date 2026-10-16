@@ -169,6 +169,7 @@ async fn the_concurrency_leaves_are_exact_on_every_run() {
         Leaf::BatchRollback,
         Leaf::BatchConcurrentRead,
         Leaf::OptimisticSequence,
+        Leaf::AbsentRace,
     ];
     for s in measure(&kv, &leaves, 5).await {
         assert!(
