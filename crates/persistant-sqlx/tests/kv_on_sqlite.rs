@@ -146,3 +146,33 @@ async fn the_concurrency_leaves_are_exact_on_every_run() {
         );
     }
 }
+
+/// Stage 3 (see `persistant_kv::speed`): every workload is timed on SQLite, the file the example
+/// prints parses back, and nothing is asserted about how fast: the gate for a backend is the
+/// contract, and a figure holds only in the environment it was taken in.
+#[tokio::test]
+async fn every_workload_is_timed_and_the_data_file_round_trips() {
+    use persistant_kv::speed::{Environment, Outcome, SpeedTable, Workload, run};
+    let kv = KvOnRelational::open(open("speed").await.0)
+        .await
+        .expect("open");
+    let env = Environment::detect("cargo test -p persistant-sqlx --features sqlite", None);
+    let cfg = Config::new().with("dialect", "sqlite");
+    let rows = run(&kv, &cfg, &env, &Workload::ALL, 20).await;
+    assert_eq!(rows.len(), Workload::ALL.len());
+    for r in &rows {
+        match &r.outcome {
+            Outcome::Measured(s) => {
+                assert_eq!(s.n, 20, "{}", r.workload);
+                assert!(
+                    s.p50_ns <= s.p99_ns && s.p99_ns <= s.max_ns,
+                    "{}",
+                    r.workload
+                );
+            }
+            other => panic!("{}: {other:?}", r.workload),
+        }
+    }
+    let t = SpeedTable::from_rows(rows);
+    assert_eq!(SpeedTable::parse(&t.to_tsv()).unwrap(), t);
+}

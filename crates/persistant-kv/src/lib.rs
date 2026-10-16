@@ -14,6 +14,8 @@
 //! - [`conformance`]: the contract tests, producing matrix rows.
 //! - [`contract`]: pass/fail eligibility for a set of required leaves; a failing backend is excluded,
 //!   never ranked slower.
+//! - [`speed`]: stage 3, timings as data with the environment recorded; only backends that pass the
+//!   contract get a number, and nothing is ranked across machines.
 //! - [`stats`]: stage 2, how often each leaf passes and what each operation did (no timing).
 //!
 //! Not offered yet, so off everywhere: `kv.compare_and_swap`, `kv.take`, `kv.batch_atomic`,
@@ -27,6 +29,7 @@ mod lease;
 mod memory;
 mod on_blob;
 mod on_relational;
+pub mod speed;
 pub mod stats;
 mod translate;
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.5
+
+### Added
+- `persistant-kv`: `speed::{run, Workload, Environment, SpeedRow, SpeedTable, compare}`, benchmarking
+  stage 3. Seven workloads (put, get, put_if_absent, compare_and_swap, batch, ordered_scan,
+  ordered_scan_values) timed per operation in nanoseconds (nearest-rank p50/p95/p99, max). **Only a
+  backend that passes the contract leaf the workload needs is timed**; the rest get an `excluded` row
+  with the reason and are never ranked. Every row carries its `Environment` (CPU model and cores, OS,
+  architecture, date, the server image digest when there is one) and the command that re-runs it;
+  `compare` orders backends only within one environment, so a ranking never crosses machines. Results
+  are a tab-separated data file that round-trips.
+- Examples: `persistant-opendal --example speed` (MemoryKv, KvOnBlob over memory and fs),
+  `persistant-sqlx --example speed` (SQLite; PostgreSQL and MySQL when their URLs are set),
+  `persistant-kv --example speed_report` (prints per workload and environment, from the files).
+- `bench/`: a first dated run on one machine (a Windows desktop; PostgreSQL and MySQL in Docker
+  Desktop containers, so their round trip includes the VM). CI runs the same examples on its runner,
+  uploads the files as artifacts and prints the report; nothing compares a figure to a constant.
+- Not covered, stated: concurrency (every workload is one caller at a time), value sizes other than
+  256 bytes, warm-up beyond the first operations, the lock and relational kinds (no leaves of their own
+  yet: nothing to measure, owner PersistAnt lane), and the "best backend for X" API (stage 4).
+
 ## 0.5.4
 
 ### Added
