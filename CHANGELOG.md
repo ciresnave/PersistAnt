@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.36
+
+### Added
+- `persistant-sqlx` (feature `sqlite`, bundled library): `SqliteBackend` (`open(path)` / `from_pool`),
+  WAL, a bounded wait for the write lock, write transactions as `BEGIN IMMEDIATE`, errors classified
+  from SQLite's extended result codes. No server, so its tests cannot skip.
+- `persistant-kv`: `KvOnRelational` over SQLite. The statements are still written once, in PostgreSQL
+  SQL, and now translated by UniSQL 0.24.7 (`unisql`, from crates.io); PostgreSQL is passed through
+  unchanged. Allowances granted, each with its reason in `translate.rs`: `LenientCast`,
+  `ClockIsStatementStart` (SQLite reads the clock once per statement), `UpsertAnyUniqueKey`. The
+  table definition is per dialect (DDL is outside UniSQL's IR). `SELECT ... FOR UPDATE` is dropped
+  on SQLite, whose write transaction is already exclusive. SQLite older than 3.42 is refused
+  (`unixepoch('now','subsec')`).
+- `matrix/sqlx-sqlite.tsv` and a CI job that regenerates and compares it: all 16 kv/lock leaves
+  certified on SQLite, controls included.
+- Not covered, stated: MySQL/MariaDB (next), a shared in-memory SQLite database across connections
+  (use a file, or a one-connection pool), crash safety of SQLite itself.
+
 ## 0.4.35
 
 ### Added
