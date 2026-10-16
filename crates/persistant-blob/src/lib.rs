@@ -13,9 +13,12 @@
 //! produced and they stay off.
 
 mod backend;
+pub mod choose;
 pub mod concurrency;
 pub mod conformance;
+pub mod contract;
 mod memory;
+pub mod speed;
 pub mod stats;
 
 pub use backend::{BlobBackend, BlobError, Entry, Page};

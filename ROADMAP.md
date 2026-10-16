@@ -32,7 +32,8 @@ blob (#45). Not done, in this order (queued by the PM 2026-10-16):
    boot, with the same known-bad control: a store that acknowledges before it flushes). Scope: kv on a
    file (SQLite, OpenDAL fs) and on a server database inside the guest. Not built, not scheduled; it
    needs infrastructure the PM provides.
-2. **`choose` for the blob kind**, then **the relational kind**. The relational kind has no leaves of
+2. **`choose` for the blob kind** *(done, 0.6.0: contract, speed and choose on the shared core types;
+   blob durability is declared and unverified)*, then **the relational kind**. The relational kind has no leaves of
    its own yet (migrations are tested, not certified): *nothing to measure yet*, owner the PersistAnt
    lane, so its leaves come first.
 3. **Synapse `tests/mailbox_suite` as a stage-1 consumer check**: the Synapse lane runs `run_all` on

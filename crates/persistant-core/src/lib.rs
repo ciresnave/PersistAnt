@@ -10,6 +10,8 @@
 //! - [`Verdict`]: the four test outcomes, and the rule that an `on` row needs both controls;
 //! - [`vocabulary::SEED`]: the seed ids with their written contracts (all off until tested).
 
+pub mod bench;
+pub mod choose;
 mod config;
 mod id;
 mod matrix;

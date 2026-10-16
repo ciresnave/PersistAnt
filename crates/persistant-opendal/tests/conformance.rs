@@ -211,3 +211,66 @@ async fn speed_times_what_passes_the_contract_and_lists_what_does_not() {
         rows[2].outcome
     );
 }
+
+/// Stages 1, 3 and 4 for the blob kind on real OpenDAL services: the contract check makes the
+/// candidates, the speed rows come from `speed::run`, and `choose` returns a ranked list with
+/// evidence. Nothing is asserted about how fast; the memory service must not be offered to a need
+/// that asks for `Process` durability.
+#[tokio::test]
+async fn blob_choose_over_opendal_ranks_with_evidence_and_respects_durability() {
+    use persistant_blob::choose::{Durability, candidate, choose, need};
+    use persistant_blob::conformance::Leaf;
+    use persistant_blob::speed::{Environment, SpeedTable, Workload, run};
+    let dir = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let mem = OpendalBlob::memory().unwrap();
+    let fs = OpendalBlob::fs(dir.path(), Some(scratch.path())).unwrap();
+    let env = Environment::detect("cargo test -p persistant-opendal", None);
+    let leaves = [Leaf::Write, Leaf::Read];
+    let mut table = SpeedTable::default();
+    let mut cands = Vec::new();
+    for b in [&mem, &fs] {
+        table.merge(SpeedTable::from_rows(
+            run(b, b.config(), &env, &[Workload::Read], 10).await,
+        ));
+        cands.push(candidate(b, b.config(), &leaves).await);
+    }
+    // On a case-insensitive filesystem (Windows, default macOS) the fs service fails `blob.read` and
+    // is excluded, which is the contract working; elsewhere both are ranked.
+    let ci = case_insensitive(dir.path());
+    let n = need(
+        &leaves,
+        Durability::Volatile,
+        Workload::Read,
+        env.comparable_key(),
+    );
+    let c = choose(&cands, &n, &table).unwrap();
+    assert_eq!(
+        c.ranked.len(),
+        if ci { 1 } else { 2 },
+        "{:?}",
+        c.log_lines()
+    );
+    // A need for Process durability leaves the memory service out, with the reason.
+    let n = need(
+        &leaves,
+        Durability::Process,
+        Workload::Read,
+        env.comparable_key(),
+    );
+    match choose(&cands, &n, &table) {
+        Ok(c) => {
+            assert!(!ci);
+            assert_eq!(c.first().backend, "opendal-fs");
+            assert!(
+                c.log_lines()
+                    .iter()
+                    .any(|l| l.contains("excluded opendal-memory"))
+            );
+        }
+        Err(e) => {
+            assert!(ci, "{e}");
+            assert_eq!(e.excluded.len(), 2, "memory (durability) and fs (contract)");
+        }
+    }
+}
