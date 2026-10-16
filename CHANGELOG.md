@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.3
+
+### Added
+- `rel.isolation.no_dirty_read` (relational leaf 6): a write inside an open transaction is invisible to
+  another connection until it commits, and visible after. Known-bad control: the `NoTransactions` defect
+  (statements run at once) must fail it. Verified on SQLite locally; PostgreSQL and MySQL rows come from CI.
+  Not yet covered: the other `rel.isolation` levels (repeatable read, serializable).
+
+
 ## 0.6.2
 
 ### Fixed

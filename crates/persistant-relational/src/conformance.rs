@@ -10,6 +10,8 @@
 //!   opaque backend error.
 //! - `rel.foreign_key`: a reference to a missing row is rejected as [`RelError::ForeignKeyViolation`].
 //! - `rel.check_constraint`: a row violating a `CHECK` is rejected as [`RelError::CheckViolation`].
+//! - `rel.isolation.no_dirty_read`: a write inside an open transaction is invisible to another
+//!   connection until it commits, and visible after (read committed or stronger).
 //!
 //! **Controls.** There is no reference relational engine to use as a positive control, so the positive
 //! control is weaker than in the kv and blob suites: it is that the leaf's schema could be created on
@@ -40,16 +42,19 @@ pub enum Leaf {
     ForeignKey,
     /// `rel.check_constraint`
     CheckConstraint,
+    /// `rel.isolation.no_dirty_read`
+    IsolationNoDirtyRead,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 5] = [
+    pub const ALL: [Leaf; 6] = [
         Leaf::Values,
         Leaf::Transaction,
         Leaf::UniqueClassified,
         Leaf::ForeignKey,
         Leaf::CheckConstraint,
+        Leaf::IsolationNoDirtyRead,
     ];
 
     /// The capability id.
@@ -60,13 +65,14 @@ impl Leaf {
             Leaf::UniqueClassified => "rel.error.unique",
             Leaf::ForeignKey => "rel.foreign_key",
             Leaf::CheckConstraint => "rel.check_constraint",
+            Leaf::IsolationNoDirtyRead => "rel.isolation.no_dirty_read",
         }
     }
 
     fn defects(self) -> &'static [Defect] {
         match self {
             Leaf::Values => &[Defect::LossyBytes],
-            Leaf::Transaction => &[Defect::NoTransactions],
+            Leaf::Transaction | Leaf::IsolationNoDirtyRead => &[Defect::NoTransactions],
             Leaf::UniqueClassified => &[Defect::UnclassifiedErrors],
             Leaf::ForeignKey | Leaf::CheckConstraint => &[],
         }
@@ -317,6 +323,7 @@ pub async fn run_leaf<R: RelationalBackend>(
         Leaf::UniqueClassified => unique(b, &s).await,
         Leaf::ForeignKey => foreign_key(b, &s, constrained).await,
         Leaf::CheckConstraint => check(b, &s, constrained).await,
+        Leaf::IsolationNoDirtyRead => no_dirty_read(b, &s).await,
     }
 }
 
@@ -445,6 +452,41 @@ async fn transaction<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure
         }
         if count(b, T).await? != 1 {
             return wrong("a transaction dropped without commit was not rolled back");
+        }
+        Ok(())
+    }
+    .await;
+    drop_tables(b, &[T]).await?;
+    result
+}
+
+async fn no_dirty_read<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
+    const T: &str = "persistant_rel_isolation";
+    drop_tables(b, &[T]).await?;
+    b.execute(
+        &format!(
+            "CREATE TABLE {T} ({}, n BIGINT NOT NULL){}",
+            s.pk("id"),
+            s.tail()
+        ),
+        &[],
+    )
+    .await?;
+    let ins = format!("INSERT INTO {T} (id, n) VALUES ({}, {})", s.p(1), s.p(2));
+    let result = async {
+        let mut tx = b.begin().await?;
+        tx.execute(&ins, &[Value::Int(1), Value::Int(1)]).await?;
+        // `b.query` runs on another connection, outside `tx`.
+        let outside = count(b, T).await?;
+        if outside != 0 {
+            let _ = tx.rollback().await;
+            return wrong(format!(
+                "another connection saw {outside} uncommitted row(s) (dirty read)"
+            ));
+        }
+        tx.commit().await?;
+        if count(b, T).await? != 1 {
+            return wrong("a committed write is not visible to another connection");
         }
         Ok(())
     }
