@@ -19,6 +19,24 @@ the best backend for a capability. Four stages, each its own PR, in order:
 4. **`best backend for X` API.** Returns a **ranked list with the evidence**. The consumer states the
    capabilities it needs and a minimum durability class; the choice is explicit and logged, never silent.
 
+**Status (main = 0.5.6, 2026-10-16).** All four stages are done for the **kv** kind:
+`contract::check` (#39, with the Synapse duplicate-sequence workload as a leaf, #40), `stats::measure`
+(#43), `speed` with data files in `bench/` (#46), `choose::choose` (#47). Stage 2 also exists for
+blob (#45). Not done, in this order (queued by the PM 2026-10-16):
+
+1. **Durability verification.** `choose` ranks against a durability class that is only *declared*
+   (`declared_durability`, each entry with its basis). Verify what can be verified in CI: the
+   `Process` class by killing a writer process after acknowledged writes and reading them back after
+   restart (the `blob.replace_atomic` crash test is the model). The `Machine` class (power loss, an
+   OS crash) needs a VM hard reset and stays **declared** until a harness for that exists.
+2. **`choose` for the blob kind**, then **the relational kind**. The relational kind has no leaves of
+   its own yet (migrations are tested, not certified): *nothing to measure yet*, owner the PersistAnt
+   lane, so its leaves come first.
+3. **Synapse `tests/mailbox_suite` as a stage-1 consumer check**: the Synapse lane runs `run_all` on
+   each eligible backend (Postgres, SQLite, MySQL) and reports which leaves it adds.
+4. Not covered by any stage yet: concurrency-aware speed, value sizes other than 256 bytes, ranking
+   by more than one workload.
+
 Rules: benchmarks are tests. They run in CI or on the self-hosted runner, fail loudly on regression, and
 use no `#[ignore]` and no `allow(dead_code)`. Detector: the contract suite goes red for a backend that
 regresses.

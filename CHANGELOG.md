@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.7
+
+### Changed
+- `ROADMAP.md`: status of the benchmarking row (kv: all four stages) and the queued items in order
+  (durability verification, `choose` for blob and relational, the Synapse mailbox consumer check).
+  No code change.
+
 ## 0.5.6
 
 ### Added
