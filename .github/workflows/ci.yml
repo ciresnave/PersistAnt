@@ -183,6 +183,19 @@ jobs:
       - name: Compare with the checked-in file
         run: diff -u matrix/sqlx-sqlite.tsv generated/sqlx-sqlite.tsv
 
+      # Stage 3 (speed) is data, not a gate: it is recorded with this runner's environment and the
+      # command that re-runs it, uploaded, and printed. Nothing compares it to a constant.
+      - name: Time the key-value workloads on SQLite
+        run: |
+          cargo run -q --release -p persistant-sqlx --features sqlite --example speed > generated/sqlx-speed.tsv
+          cargo run -q -p persistant-kv --example speed_report -- generated/sqlx-speed.tsv
+
+      - name: Upload the speed data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: speed-sqlx-sqlite
+          path: generated/sqlx-speed.tsv
+
   mysql:
     name: MySQL 8.4 (service container)
     runs-on: ubuntu-latest
@@ -260,6 +273,18 @@ jobs:
       # version bump changes it, and that change belongs in the same review.
       - name: Compare with the checked-in file
         run: diff -u matrix/opendal.tsv generated/opendal.tsv
+
+      # Stage 3 (speed): data with its environment, not a gate. See the SQLite job.
+      - name: Time the key-value workloads
+        run: |
+          cargo run -q --release -p persistant-opendal --example speed > generated/opendal-speed.tsv
+          cargo run -q -p persistant-kv --example speed_report -- generated/opendal-speed.tsv
+
+      - name: Upload the speed data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: speed-opendal
+          path: generated/opendal-speed.tsv
 
   deny:
     name: cargo deny (advisories, licences, bans, sources)

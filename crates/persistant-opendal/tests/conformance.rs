@@ -180,3 +180,34 @@ async fn memory_service_concurrency_leaves_are_exact_and_append_is_unsupported_e
         assert!(s.ops["append"].unsupported >= 5, "{:?}", s.ops);
     }
 }
+
+/// Stage 3 (see `persistant_kv::speed`): on `KvOnBlob` over OpenDAL memory the workloads that need
+/// batch are excluded (Missing) and listed, the others are timed. Nothing is asserted about how fast.
+#[tokio::test]
+async fn speed_times_what_passes_the_contract_and_lists_what_does_not() {
+    use persistant_kv::KvOnBlob;
+    use persistant_kv::speed::{Environment, Outcome, Workload, run};
+    let kv = KvOnBlob::new(OpendalBlob::memory().unwrap());
+    let env = Environment::detect("cargo test -p persistant-opendal", None);
+    let rows = run(
+        &kv,
+        &Config::new(),
+        &env,
+        &[Workload::Put, Workload::Get, Workload::Batch],
+        10,
+    )
+    .await;
+    assert!(matches!(rows[0].outcome, Outcome::Measured(_)));
+    assert!(matches!(rows[1].outcome, Outcome::Measured(_)));
+    assert!(
+        matches!(
+            &rows[2].outcome,
+            Outcome::Excluded {
+                reason: Reason::Missing,
+                ..
+            }
+        ),
+        "{:?}",
+        rows[2].outcome
+    );
+}
