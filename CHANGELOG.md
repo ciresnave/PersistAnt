@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.12
+
+### Added
+- `PgBackend::verify_fresh(&[Migration])` (C2): installs the migrations on an empty scratch schema, in order, then drops it. The target's ledger and tables are never touched; success and failure both leave no schema behind. Migrations naming another schema, or creating cluster-wide objects, escape the scratch schema (documented, not detected).
 ## 0.7.11
 
 ### Added
