@@ -13,6 +13,9 @@
 //!   classification of the failure.
 //! - `rel.migrate.ddl_atomic`: the same, for a table the failed migration created. MySQL and MariaDB
 //!   commit DDL implicitly and cannot undo it, so this leaf is off there.
+//! - `rel.migrate.concurrent`: two migrators started at once against the same database apply each
+//!   migration exactly once between them and both finish cleanly (the second waits or finds the work
+//!   done); neither fails, and no migration runs twice.
 //!
 //! **Where it runs.** The ledger belongs to the connection's schema or database, so these tests must be
 //! pointed at a **disposable** one (a scratch schema, a scratch database, a fresh file): each leaf
@@ -29,6 +32,8 @@ use crate::{
 };
 use persistant_core::{CapabilityId, Config, Controls, Reason, Row as MatrixRow, Verdict};
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::task::Poll;
 
 /// A leaf this module can decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,16 +49,19 @@ pub enum MigrateLeaf {
     Atomic,
     /// `rel.migrate.ddl_atomic`
     DdlAtomic,
+    /// `rel.migrate.concurrent`
+    Concurrent,
 }
 
 impl MigrateLeaf {
     /// Every leaf with a test here.
-    pub const ALL: [MigrateLeaf; 5] = [
+    pub const ALL: [MigrateLeaf; 6] = [
         MigrateLeaf::Apply,
         MigrateLeaf::Checksum,
         MigrateLeaf::Newer,
         MigrateLeaf::Atomic,
         MigrateLeaf::DdlAtomic,
+        MigrateLeaf::Concurrent,
     ];
 
     /// The capability id.
@@ -64,6 +72,7 @@ impl MigrateLeaf {
             MigrateLeaf::Newer => "rel.migrate.newer",
             MigrateLeaf::Atomic => "rel.migrate.atomic",
             MigrateLeaf::DdlAtomic => "rel.migrate.ddl_atomic",
+            MigrateLeaf::Concurrent => "rel.migrate.concurrent",
         }
     }
 }
@@ -122,6 +131,7 @@ pub async fn run_leaf<M: Migrates>(leaf: MigrateLeaf, m: &M) -> Result<(), Failu
         MigrateLeaf::Newer => newer(m).await,
         MigrateLeaf::Atomic => atomic(m).await,
         MigrateLeaf::DdlAtomic => ddl_atomic(m).await,
+        MigrateLeaf::Concurrent => concurrent(m).await,
     };
     reset(m).await?;
     result
@@ -244,6 +254,57 @@ async fn ddl_atomic<M: Migrates>(m: &M) -> Result<(), Failure> {
     count(m, T).await?;
     if count(m, T2).await.is_ok() {
         return wrong("the failed migration left the table it created behind");
+    }
+    Ok(())
+}
+
+/// Poll two futures together on this task until both are done.
+async fn join2<A: Future, B: Future>(a: A, b: B) -> (A::Output, B::Output) {
+    let mut a = std::pin::pin!(a);
+    let mut b = std::pin::pin!(b);
+    let (mut ra, mut rb) = (None, None);
+    std::future::poll_fn(|cx| {
+        if ra.is_none()
+            && let Poll::Ready(v) = a.as_mut().poll(cx)
+        {
+            ra = Some(v);
+        }
+        if rb.is_none()
+            && let Poll::Ready(v) = b.as_mut().poll(cx)
+        {
+            rb = Some(v);
+        }
+        if ra.is_some() && rb.is_some() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    })
+    .await;
+    (ra.expect("a is done"), rb.expect("b is done"))
+}
+
+async fn concurrent<M: Migrates>(m: &M) -> Result<(), Failure> {
+    let migs = [
+        create_t(),
+        mig(2, &format!("INSERT INTO {T} (id, n) VALUES (1, 1)")),
+    ];
+    let (one, two) = join2(m.migrate(&migs), m.migrate(&migs)).await;
+    let one = migrated(one, "the first of two simultaneous runs")?;
+    let two = migrated(two, "the second of two simultaneous runs")?;
+    let mut applied: Vec<i64> = one.applied.iter().chain(&two.applied).copied().collect();
+    applied.sort_unstable();
+    if applied != [1, 2] {
+        return wrong(format!(
+            "two simultaneous runs applied {applied:?} between them, not each of [1, 2] once ({one:?}, {two:?})"
+        ));
+    }
+    if count(m, T).await? != 1 {
+        return wrong("a migration ran twice: its row is not there exactly once");
+    }
+    let ledger = migrated(m.applied_versions().await, "reading the ledger")?;
+    if ledger != [1, 2] {
+        return wrong(format!("the ledger lists {ledger:?}, not [1, 2]"));
     }
     Ok(())
 }

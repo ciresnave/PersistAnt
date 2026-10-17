@@ -64,7 +64,7 @@ Only Rust projects are in scope; TypeScript projects are listed in §6 for compl
 |---|---|---|---|
 | auth-framework | tokens, sessions, KV with TTL (`AuthStorage`); audit, MFA, roles (traits, mostly **no** persistent impl) | Postgres/SQLite via sqlx 0.9.0 (runtime strings, no macros), Redis, memory, DashMap, encrypted wrapper | key lookup, per-record expiry, secondary lookups by user and by access token, prefix list, count, upsert; **no** multi-key transaction (`core.rs:76-197`; `src/storage/postgres.rs:42-143` @ d96c00d) |
 | Humboldt (Rust backend) | 27 tables: roster, dismissal events, accounts, access log, secrets | Postgres only, sqlx 0.9.0, 32 forward-only migrations | transactions, 46 FKs, 11 triggers, expression/partial unique indexes, `FOR UPDATE`, advisory locks, compile-time-checked queries (§4) |
-| synapse | mailbox (queues, leases, acks), keystore, session cache, announce file, security log; legacy Postgres layer | redb 4.3.0 (format 2); files; sqlx 0.8.6 + redis 0.32.4 behind features | one atomic write transaction per mailbox operation, ordered composite-key scan, time-index sweep, 0600 files, no-clobber publish, OS file lock (`src/mailbox.rs:11-12,636-674`; `src/keystore.rs:581-624`; `crates/synapse-client/src/lib.rs:586-707` @ 3b58bab, pass) |
+| synapse | mailbox (queues, leases, acks), keystore, session cache, announce file, security log; legacy Postgres layer (**since removed**: synapse origin/main 6b8ad2e has no sqlx or redis use (the synapse lane, 2026-10-17: `git grep` for `sqlx::|redis::` finds 0, redb finds mailbox.rs)) | redb 4.3.0 (format 2); files; sqlx 0.8.6 + redis 0.32.4 behind features (**since removed**) | one atomic write transaction per mailbox operation, ordered composite-key scan, time-index sweep, 0600 files, no-clobber publish, OS file lock (`src/mailbox.rs:11-12,636-674`; `src/keystore.rs:581-624`; `crates/synapse-client/src/lib.rs:586-707` @ 3b58bab, pass) |
 | lightbulb | KV-cache cold tier (bytes by key); API keys, audit logs, user sessions, auth-attempt counters | `persistant` 0.4.1 on fs (`Cargo.toml:125`); Postgres via tokio-postgres 0.7 + deadpool-postgres + refinery 0.9 | atomic replace; UNIQUE, FKs, `ON CONFLICT`, expiry filter plus 300 s sweep; no explicit transactions (`src/cache/tiered_storage.rs:58-146`; `src/api/mod.rs:305-352` @ 674b06d, pass) |
 | agentlife | agent registry (file per agent), pending restores, journal, plans | `persistant` 0.4.4 for atomic replace only (`Cargo.toml:44`); own files | temp+sync+rename, create-new lock with stale reclaim and owner token, append with torn-line repair (`src/atomic.rs`, `src/lock.rs`, `src/restore.rs:653-722`, `src/journal.rs:124-174` @ 455b068, pass) |
 | OverMind / consent | grants, attempts, hash-chained audit, vault, lane state, restart log | files (one crate set lives in **both** repos, identical blobs) | OS file lock held for the store's lifetime, multi-file consistency with a chain verified on open, DPAPI key, atomic replace, plain append |
@@ -92,12 +92,12 @@ These are the findings the design below is built on. Each is a count or a quote,
    primitives (§1.3).
 3. **Only one consumer needs relational integrity enforced by the database:** Humboldt. lightbulb's five
    tables and auth-framework's SQL are plain CRUD with indexes and upserts.
-4. **Postgres is the production relational engine everywhere** (Humboldt, lightbulb, synapse legacy,
-   auth-framework default feature). SQLite appears as a second SQL backend only in auth-framework
-   (in-tree and the unpublished `auth-storage-sqlite`) and in synapse tests.
+4. **Postgres is the production relational engine everywhere** (Humboldt, lightbulb, auth-framework default
+   feature; synapse's legacy layer was removed, see the survey row). SQLite appears as a second SQL backend only in auth-framework
+   (in-tree and the unpublished `auth-storage-sqlite`) and, at the survey commit, in synapse tests.
 5. **The driver stack is already fragmented.** sqlx 0.9.0 (Humboldt, auth-framework), sqlx 0.8.6
-   (synapse), tokio-postgres + deadpool + refinery (lightbulb), tokio-postgres alone for auth-framework's
-   migration CLI with `NoTls` hard-coded (`src/migrations/mod.rs:280`, pass). redis 0.32.4 (synapse) vs
+   (synapse, at the survey commit; since removed), tokio-postgres + deadpool + refinery (lightbulb), tokio-postgres alone for auth-framework's
+   migration CLI with `NoTls` hard-coded (`src/migrations/mod.rs:280`, pass). redis 0.32.4 (synapse, since removed) vs
    1.7.1 (auth-framework lock). Three migration mechanisms across four projects: sqlx's checksummed
    ledger, refinery, and hand-rolled `CREATE TABLE IF NOT EXISTS` / a version-only table.
 6. **Only two repos depend on `persistant` today**, both by crates.io version, both behind main
@@ -113,7 +113,7 @@ These are the findings the design below is built on. Each is a count or a quote,
 | lightbulb `FileDiskStore` is a bare `fs::write` (A.4) | It is `persistant::blocking::Store` with atomic replace since 674b06d. FIT also **missed lightbulb's Postgres layer entirely** (it was present at the old head too). |
 | agentlife `write_atomic` is hand-written (A.6) | Goes through `persistant` since 037c7fe (#27). |
 | auth-framework Redis uses `expire` on the user set and `SCAN` (A.2) | That is `src/storage/redis.rs`, which no config path reaches. The factory builds the `RedisStorage` in `core.rs:388,645`: `KEYS` scans, **no** `EXPIRE` on the user set, no session index, three-to-four non-atomic round trips per token write (pass; the reading was by file listing, UNVERIFIED at runtime). |
-| sqlx 0.8.6 in auth-framework | 0.9.0 now (`Cargo.toml:397`). synapse is the one still on 0.8.6. |
+| sqlx 0.8.6 in auth-framework | 0.9.0 now (`Cargo.toml:397`). synapse was the one on 0.8.6 at the survey commit and no longer uses sqlx. |
 | Part A.2 lists several storage traits with backends | FIT already noted no `MfaStorage` impl. This adds: `SessionStorage` has **no** impl either; `AuthorizationStorage` is memory only; `RoleStorage`'s `DatabaseStorage` needs a `DatabaseConnection` that nothing implements; audit has no persistent backend (`src/audit.rs:310-319,401,434-460`). Only `AuthStorage` is durable. |
 | Humboldt: "32 migrations", 27 tables | Confirmed 27 tables, 11 triggers, 32 migrations; **46** FKs by statement count (PM said 45; UNVERIFIED against a live `pg_constraint`). |
 | OverMind `StoreLock` etc. at ~1613-1660 | `store.rs:1706-1751`; the old line numbers are stale. |
@@ -579,7 +579,7 @@ biggest benefit for least risk, and each step names the capability it needs that
 | 3 | auth-framework `AuthStorage` KV | `persistant-kv` backends (Postgres/SQLite/Redis/memory) beneath the existing trait; tokens/sessions as key schemes with `kv.ordered_scan`; user uniqueness via `kv.put_if_absent`; single-use via `kv.take` | `kv.*` and `kv.batch_atomic`, `persistant-kv` + `persistant-sqlx` | **medium-high**: security-critical; mid-release (rc43 → stable 0.6.0 with an *encryption-at-rest storage-interface change still to design*, `PORTFOLIO-ROADMAP.md:505`) | the largest correctness gain in §1.3 |
 | 4 | Humboldt | `persistant-sqlx` Option C: config/TLS/pool/error classification/probe/harness; **keeps** every `query!` | `rel.*` probes, secret handles | low if C; it is a thin wrapper | closes the TLS and pool-timeout gaps; one shared migration ledger |
 | 5 | lightbulb Postgres (5 tables) | from tokio-postgres + deadpool + refinery to the sqlx-based crate | `persistant-sqlx` | **medium**: a driver swap for a small schema; no transactions to port | one stack; refinery goes |
-| 6 | synapse legacy Postgres | sqlx 0.8.6 → current via the shared crate; collapse its **two** migration mechanisms | `persistant-sqlx` | low (optional feature `database`) | one ledger, dependency currency |
+| 6 | ~~synapse legacy Postgres~~ **gone** (synapse origin/main 6b8ad2e has no sqlx or redis use (the synapse lane, 2026-10-17: `git grep` for `sqlx::|redis::` finds 0, redb finds mailbox.rs)) | nothing to move | - | - | row retired |
 | 7 | auth-framework audit store | a first relational audit backend, where a typed repository (Option A) over C may be right | `persistant-sqlx` | low: nothing exists to regress | the only relational-shaped need with no backend |
 
 **Not migrated, and why:**

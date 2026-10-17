@@ -269,18 +269,13 @@ impl persistant_relational::Migrates for MysqlBackend {
         migrations: &[persistant_relational::Migration],
     ) -> Result<persistant_relational::MigrateReport, persistant_relational::MigrateError> {
         use crate::migrate::run_on_own_connection;
-        let before = persistant_relational::Migrates::applied_versions(self).await?;
-        run_on_own_connection!(self.pool, migrations, classify)?;
-        let after = persistant_relational::Migrates::applied_versions(self).await?;
-        let applied = after
-            .iter()
-            .copied()
-            .filter(|v| !before.contains(v))
-            .collect();
-        Ok(persistant_relational::MigrateReport {
-            applied,
-            already_applied: before,
-        })
+        run_on_own_connection!(
+            self.pool,
+            migrations,
+            classify,
+            "SELECT COUNT(*) FROM information_schema.tables \
+             WHERE table_schema = DATABASE() AND table_name = '_sqlx_migrations'"
+        )
     }
 
     async fn applied_versions(&self) -> Result<Vec<i64>, persistant_relational::MigrateError> {
