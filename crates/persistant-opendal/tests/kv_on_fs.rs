@@ -62,7 +62,7 @@ fn merged(blob: &Config, kv: &Config) -> Config {
 }
 
 /// The leaves a blob store cannot give at all (no compare-and-delete).
-const NEEDS_CAD: [&str; 8] = [
+const NEEDS_CAD: [&str; 9] = [
     "kv.compare_and_swap",
     "kv.compare_and_delete",
     "lock.lease",
@@ -71,6 +71,7 @@ const NEEDS_CAD: [&str; 8] = [
     "kv.batch_atomic.rollback",
     "kv.batch_atomic.concurrent_read",
     "kv.batch_atomic.optimistic_sequence",
+    "kv.batch_atomic.absent_race",
     "kv.ordered_scan_values",
 ];
 

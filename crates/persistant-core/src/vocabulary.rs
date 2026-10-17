@@ -119,6 +119,10 @@ pub const SEED: &[(&str, &str)] = &[
         "concurrent read-then-batch(Require, Put) callers, retrying on a refused batch, are each given a distinct sequence number: no lost update",
     ),
     (
+        "kv.batch_atomic.absent_race",
+        "concurrent committers that read a key, then batch a Require of what they read and writes, racing for a key that starts absent: each is answered true or false and none is handed an error (a deadlock victim, say), and no commit is lost",
+    ),
+    (
         "rel.values",
         "integers, text, bytes and floats written as parameters come back as written, and a NULL comes back as NULL",
     ),
