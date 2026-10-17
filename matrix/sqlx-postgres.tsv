@@ -23,3 +23,4 @@ capability	rel.foreign_key	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=l
 capability	rel.check_constraint	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.check_constraint	
 capability	rel.isolation.no_dirty_read	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.isolation.no_dirty_read	
 capability	rel.savepoint	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.savepoint	
+capability	rel.row_lock	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.row_lock	
