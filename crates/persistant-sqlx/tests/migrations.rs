@@ -345,3 +345,13 @@ async fn the_report_carries_each_migrations_checksum() {
     assert!(again.applied.is_empty());
     assert_eq!(again.checksums, want);
 }
+
+#[tokio::test]
+async fn applied_checksums_reads_the_ledger_without_applying_anything() {
+    let Some(db) = isolated("applied_checksums").await else {
+        return;
+    };
+    assert!(db.applied_checksums().await.unwrap().is_empty());
+    let report = db.migrate(&two()).await.unwrap();
+    assert_eq!(db.applied_checksums().await.unwrap(), report.checksums);
+}

@@ -67,7 +67,7 @@ jobs:
       - name: cargo check on the MSRV toolchain
         run: |
           rustc --version
-          cargo check --workspace --exclude persistant-sqlx --all-targets
+          cargo check --workspace --exclude persistant-sqlx --exclude persistant-migrate --all-targets
 
   msrv-sqlx:
     name: MSRV persistant-sqlx (its own rust-version)
@@ -91,7 +91,7 @@ jobs:
       - name: cargo check on the persistant-sqlx floor
         run: |
           rustc --version
-          cargo check -p persistant-sqlx --all-targets
+          cargo check -p persistant-sqlx -p persistant-migrate --all-targets
 
   relational:
     name: Relational (PostgreSQL 16 service container)

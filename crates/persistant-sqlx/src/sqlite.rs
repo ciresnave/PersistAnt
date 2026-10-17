@@ -134,6 +134,24 @@ impl SqliteBackend {
     pub fn pool(&self) -> &sqlx::SqlitePool {
         &self.pool
     }
+
+    /// The ledger's rows that succeeded, `(version, checksum)` ascending; empty if there is no ledger
+    /// yet. Reads the same rows [`Migrates::migrate`] checks against, so a caller can compare a
+    /// directory of migrations with a database without applying anything.
+    pub async fn applied_checksums(
+        &self,
+    ) -> Result<Vec<(i64, Vec<u8>)>, persistant_relational::MigrateError> {
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .map_err(crate::migrate::backend_error)?;
+        crate::migrate::ledger(
+            &mut *conn,
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sqlx_migrations'",
+        )
+        .await
+    }
 }
 
 impl RelationalBackend for SqliteBackend {
