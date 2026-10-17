@@ -236,7 +236,22 @@ jobs:
           toolchain: stable
 
       - name: cargo test persistant-sqlx --features mysql (against MariaDB)
-        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --no-fail-fast
+        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test checked_in_matrix_mariadb --no-fail-fast
+
+      - name: Regenerate matrix/sqlx-mariadb.tsv
+        run: |
+          mkdir -p generated
+          cargo run -q -p persistant-sqlx --features mysql --example matrix_mysql > generated/sqlx-mariadb.tsv
+
+      - name: Upload what was generated
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: matrix-sqlx-mariadb
+          path: generated/sqlx-mariadb.tsv
+
+      - name: Compare with the checked-in file
+        run: diff -u matrix/sqlx-mariadb.tsv generated/sqlx-mariadb.tsv
 
   mysql:
     name: MySQL 8.4 (service container)

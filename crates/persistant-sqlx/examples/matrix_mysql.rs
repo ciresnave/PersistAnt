@@ -6,6 +6,8 @@
 //!
 //! CI regenerates this against its pinned service container and fails if it differs from the
 //! checked-in `matrix/sqlx-mysql.tsv`. Rows are keyed by the *server's* version.
+//! Against a MariaDB server the same example writes `matrix/sqlx-mariadb.tsv`: the dialect is read from the
+//! server.
 
 use persistant_core::{Config, Matrix};
 use persistant_kv::KvOnRelational;
@@ -22,7 +24,7 @@ async fn main() {
     let env = Config::new()
         .with("os", std::env::consts::OS)
         .with("arch", std::env::consts::ARCH);
-    let config = Config::new().with("dialect", "mysql");
+    let config = Config::new().with("dialect", rel_db.dialect().to_string());
     let mut rows: Vec<_> = persistant_kv::conformance::certify(&kv, &config, &env)
         .await
         .into_iter()
