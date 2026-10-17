@@ -22,6 +22,7 @@ capability	rel.error.unique	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=lin
 capability	rel.foreign_key	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.foreign_key	
 capability	rel.check_constraint	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.check_constraint	
 capability	rel.isolation.no_dirty_read	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.isolation.no_dirty_read	
+capability	rel.isolation.repeatable_read	sqlite	3.51.3	dialect=sqlite	no	missing	arch=x86_64;os=linux;test=rel::rel.isolation.repeatable_read	database does not support: begin() is BEGIN IMMEDIATE: it holds the write lock, so no other connection can commit during the transaction and the probe cannot run
 capability	rel.savepoint	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.savepoint	
 capability	rel.row_lock	sqlite	3.51.3	dialect=sqlite	no	missing	arch=x86_64;os=linux;test=rel::rel.row_lock	database does not support: SQLite has no row locks: a write locks the whole database
 capability	rel.upsert_where	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.upsert_where	
