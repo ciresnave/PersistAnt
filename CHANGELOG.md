@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.8
+
+### Changed
+- docs: ROADMAP no longer lists concurrent-migrator tests as still to build; `rel.migrate.concurrent` has been a leaf since 0.7.4, and MariaDB runs it since 0.7.7.
+
 ## 0.7.7
 
 ### Added

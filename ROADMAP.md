@@ -19,7 +19,7 @@ the best backend for a capability. Four stages, each its own PR, in order:
 4. **`best backend for X` API.** Returns a **ranked list with the evidence**. The consumer states the
    capabilities it needs and a minimum durability class; the choice is explicit and logged, never silent.
 
-**Status (main = 0.5.6, 2026-10-16).** All four stages are done for the **kv** kind:
+**Status (kv as of 0.5.6, 2026-10-16; main is 0.7.8).** All four stages are done for the **kv** kind:
 `contract::check` (#39, with the Synapse duplicate-sequence workload as a leaf, #40), `stats::measure`
 (#43), `speed` with data files in `bench/` (#46), `choose::choose` (#47). Stage 2 also exists for
 blob (#45). Not done, in this order (queued by the PM 2026-10-16):
@@ -39,7 +39,7 @@ blob (#45). Not done, in this order (queued by the PM 2026-10-16):
    and blob: stated in the code); then `rel.isolation.*` (no_dirty_read, repeatable_read, serializable;
    0.7.0 made `begin` take an `Isolation`), `rel.savepoint`, `rel.row_lock`, `rel.upsert_where`; then
    contract, speed and `choose` for it (0.7.1: four workloads, durability declared and unverified).*
-   Migrations as leaves are built (0.7.2, five `rel.migrate.*` leaves; MySQL cannot undo DDL; `rel.upsert_where` runs on MySQL as `ON DUPLICATE KEY UPDATE .. IF(..)` since 0.7.5). Relational speed workloads for `rel.savepoint` and `rel.upsert_where` are built (0.7.3). Still to build: concurrent-migrator tests. Owner: the PersistAnt lane.
+   Migrations as leaves are built (0.7.2, five `rel.migrate.*` leaves; MySQL cannot undo DDL; `rel.upsert_where` runs on MySQL as `ON DUPLICATE KEY UPDATE .. IF(..)` since 0.7.5). Relational speed workloads for `rel.savepoint` and `rel.upsert_where` are built (0.7.3). Concurrent migrators are a leaf (`rel.migrate.concurrent`, 0.7.4; MariaDB 0.7.7). Owner: the PersistAnt lane.
 3. **Synapse `tests/mailbox_suite` as a stage-1 consumer check**: the Synapse lane runs `run_all` on
    each eligible backend (Postgres, SQLite, MySQL) and reports which leaves it adds.
 4. Not covered by any stage yet: concurrency-aware speed, value sizes other than 256 bytes, ranking
