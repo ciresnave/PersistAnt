@@ -21,7 +21,7 @@ mysql = ["sqlx/mysql"]
 persistant-core = { workspace = true }
 persistant-relational = { workspace = true }
 tokio = { version = "1.53.2", default-features = false, features = ["sync"], optional = true }
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "time"] }
 
 [dev-dependencies]
 sha2 = "0.10"

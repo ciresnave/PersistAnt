@@ -1,9 +1,21 @@
 # Changelog
 
+## 0.7.14
+
+### Added
+- Row decoder coverage (`docs/DECODER-AUDIT.md`): `uuid`, `numeric`/`DECIMAL`, dates and times, `timestamptz`, `json`/`jsonb`, `inet`/`cidr`, `ENUM`, unsigned integers and `YEAR` are carried (PostgreSQL, MySQL, MariaDB) as canonical text or `Int`, where they used to fail. Everything else still fails loud with the type name. A test per type per backend (`tests/decode_types.rs`).
+
+### Fixed
+- `real` / `FLOAT` read back as the shortest decimal (`0.1`), not the widened `0.10000000149011612`.
+- MySQL/MariaDB `TINYINT(1)` holding a value other than 0 or 1 was read as `true`; it is now that integer (a byte of 128 or more is refused, since signed or unsigned cannot be told).
+- PostgreSQL `char(n)` was refused although the decoder meant to carry it.
+- MySQL `BIGINT UNSIGNED` above `i64::MAX` is refused naming the value, never wrapped.
+
 ## 0.7.13
 
 ### Added
 - `persistant_relational::sweep(db, table, column, cutoff, batch, max_batches)` (C4): delete rows of a consumer's own table whose timestamp column is below a cutoff, in bounded autocommit batches (PostgreSQL by `ctid`, SQLite by `rowid`, MySQL and MariaDB by `DELETE .. LIMIT`). A mechanism only: no default cutoff, schedule or table list; the retention policy belongs to the table's owner. Names must be plain identifiers; `NULL` timestamps are never deleted; a row refreshed past the cutoff by a concurrent writer is kept. Tested on PostgreSQL, SQLite, MySQL and MariaDB.
+
 
 ## 0.7.12
 

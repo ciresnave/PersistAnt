@@ -7,6 +7,7 @@
 //!
 //! Failures are classified from the server's SQLSTATE into [`persistant_relational::RelError`].
 
+mod decode;
 mod migrate;
 #[cfg(feature = "mysql")]
 mod mysql;
@@ -101,6 +102,14 @@ fn bind<'q>(
     Ok(q)
 }
 
+fn decode_failed(e: sqlx::error::BoxDynError) -> RelError {
+    RelError::Backend(e.to_string())
+}
+
+fn malformed(column: &str, ty: &str, why: String) -> RelError {
+    RelError::Backend(format!("column {column:?} ({ty}): {why}"))
+}
+
 fn decode(row: &PgRow) -> Result<Row, RelError> {
     let mut values = Vec::with_capacity(row.columns().len());
     for (i, col) in row.columns().iter().enumerate() {
@@ -115,12 +124,59 @@ fn decode(row: &PgRow) -> Result<Row, RelError> {
             "INT2" => Value::Int(i64::from(row.try_get::<i16, _>(i).map_err(classify)?)),
             "INT4" => Value::Int(i64::from(row.try_get::<i32, _>(i).map_err(classify)?)),
             "INT8" => Value::Int(row.try_get::<i64, _>(i).map_err(classify)?),
-            "FLOAT4" => Value::Float(f64::from(row.try_get::<f32, _>(i).map_err(classify)?)),
+            "FLOAT4" => Value::Float(decode::f32_shortest(
+                row.try_get::<f32, _>(i).map_err(classify)?,
+            )),
             "FLOAT8" => Value::Float(row.try_get::<f64, _>(i).map_err(classify)?),
-            "TEXT" | "VARCHAR" | "NAME" | "BPCHAR" => {
+            // sqlx names `bpchar` (char(n)) "CHAR"; the quoted "CHAR" is the one-byte internal type.
+            "TEXT" | "VARCHAR" | "NAME" | "BPCHAR" | "CHAR" => {
                 Value::Text(row.try_get::<String, _>(i).map_err(classify)?)
             }
             "BYTEA" => Value::Bytes(row.try_get::<Vec<u8>, _>(i).map_err(classify)?),
+            // Types with a canonical text form (`decode.rs`): carried as that text.
+            "UUID" => Value::Text(
+                decode::uuid_text(raw.as_bytes().map_err(decode_failed)?)
+                    .map_err(|m| malformed(col.name(), &name, m))?,
+            ),
+            "NUMERIC" => Value::Text(
+                decode::numeric_text(raw.as_bytes().map_err(decode_failed)?)
+                    .map_err(|m| malformed(col.name(), &name, m))?,
+            ),
+            "INET" | "CIDR" => Value::Text(
+                decode::inet_text(raw.as_bytes().map_err(decode_failed)?)
+                    .map_err(|m| malformed(col.name(), &name, m))?,
+            ),
+            "JSON" => Value::Text(
+                String::from_utf8(raw.as_bytes().map_err(decode_failed)?.to_vec())
+                    .map_err(|e| malformed(col.name(), &name, e.to_string()))?,
+            ),
+            "JSONB" => {
+                // Version byte 1, then the JSON text.
+                let b = raw.as_bytes().map_err(decode_failed)?;
+                match b.split_first() {
+                    Some((1, rest)) => Value::Text(
+                        String::from_utf8(rest.to_vec())
+                            .map_err(|e| malformed(col.name(), &name, e.to_string()))?,
+                    ),
+                    _ => return Err(malformed(col.name(), &name, "unknown jsonb version".into())),
+                }
+            }
+            "DATE" => Value::Text(decode::date_text(
+                row.try_get::<sqlx::types::time::Date, _>(i)
+                    .map_err(classify)?,
+            )),
+            "TIME" => Value::Text(decode::time_text(
+                row.try_get::<sqlx::types::time::Time, _>(i)
+                    .map_err(classify)?,
+            )),
+            "TIMESTAMP" => Value::Text(decode::naive_text(
+                row.try_get::<sqlx::types::time::PrimitiveDateTime, _>(i)
+                    .map_err(classify)?,
+            )),
+            "TIMESTAMPTZ" => Value::Text(decode::utc_text(
+                row.try_get::<sqlx::types::time::OffsetDateTime, _>(i)
+                    .map_err(classify)?,
+            )),
             other => {
                 return Err(RelError::Unsupported(format!(
                     "column {:?} has type {other}, which Value cannot carry; use PgBackend::pool",
