@@ -72,6 +72,21 @@ provides the mechanism, the consumer names tables and ages.
 
 Order if approved: C3, C1, C2 (one PR each, small), then C4. Nothing here is scheduled until the PM answers.
 
+## Migration CLI (queued by the PM 2026-10-17, not started)
+
+A command-line tool over `Migrates`: apply, status (ledger with checksums, C1) and fresh-install check
+(`verify_fresh`, C2) for a directory of `NNN_name.up.sql` / `NNN_name.down.sql` files, loaded through
+`migrations_from_sqlx` (C3). Scope to settle before building:
+
+- **Down files.** `Migration` and `Migrates` have no undo today; `rel.migrate.*` pins that MySQL cannot undo DDL. A `down`
+  verb is a new trait method and leaf, so the first cut is **up, status and verify-fresh only**; `.down.sql` files are read and
+  checked for pairing, never run.
+- **Shape.** A new binary crate in this workspace, one binary for PostgreSQL, SQLite, MySQL and MariaDB by URL scheme; exit
+  codes distinguish `ChecksumMismatch`, `Dirty` and "database newer than the program".
+- **Node binding** is later and out of this row; **hosted mode** is later still and not designed here.
+
+Not scheduled until the PM assigns it.
+
 ## SQLite and MySQL backends (through UniSQL)
 
 `KvOnRelational` written once in PostgreSQL SQL and translated by UniSQL (`DESIGN-KINDS.md` §5).
