@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.3
+
+### Added
+- `MysqlBackend::verify_fresh(&[Migration])`: installs the migrations in an empty scratch database (`persistant_fresh_*`) on a one-connection pool, then drops it, pass or fail. The target's ledger and tables are never touched. Needs `CREATE`/`DROP` on the scratch name; a migration naming another database escapes it (documented).
+- `persistant-migrate verify-fresh` now works on MySQL and MariaDB.
+- `persistant-migrate` prints its target (scheme, user, host, port, database; never the password) to stderr on every run, and refuses a target that is not loopback, a unix socket or an SQLite file unless `--allow-remote` is given (exit 9). A `host=` query parameter is honoured when judging, and an unreadable URL counts as remote.
+- Tests `tests/cli_server.rs`: the binary end to end on PostgreSQL and MySQL/MariaDB (up, status, exit codes 3 and 4, verify-fresh leaves no scratch object and leaves the target alone, a broken set fails with 6). CI runs them in the PostgreSQL, MySQL and MariaDB jobs.
+
 ## 0.8.2
 
 ### Added

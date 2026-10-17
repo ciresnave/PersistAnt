@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! `persistant-migrate up|status|verify-fresh --dir DIR [--url URL]`
+//! `persistant-migrate up|status|verify-fresh --dir DIR [--url URL] [--allow-remote]`
 //!
 //! The URL may also come from `PERSISTANT_DATABASE_URL` (preferred: a command line is visible to
 //! other users of the machine). Schemes: `postgres://`, `postgresql://`, `mysql://`, `mariadb://`,
@@ -7,15 +7,20 @@
 //!
 //! Exit codes: 0 done; 2 usage; 3 an applied migration's text changed; 4 the database is newer than
 //! the directory; 5 a migration is recorded as dirty; 6 a migration failed; 7 anything else (cannot
-//! connect, cannot read the directory); 8 the command is not offered for this database.
+//! connect, cannot read the directory); 9 the target is not on this machine and `--allow-remote` was
+//! not given.
+//!
+//! Every run prints its target (host, port, database; never the password) before it connects, and a
+//! target that is not loopback, a unix socket or an SQLite file is refused without `--allow-remote`:
+//! a wrong URL in an environment variable must not silently migrate someone else's database.
 
-use persistant_migrate::{State, load_dir, status};
+use persistant_migrate::{State, describe_target, load_dir, status};
 use persistant_relational::{MigrateError, Migrates, Migration, RelError};
 use persistant_sqlx::{MysqlBackend, PgBackend, SqliteBackend};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: persistant-migrate <up|status|verify-fresh> --dir DIR [--url URL]\n  \
+const USAGE: &str = "usage: persistant-migrate <up|status|verify-fresh> --dir DIR [--url URL] [--allow-remote]\n  \
 URL defaults to $PERSISTANT_DATABASE_URL; schemes postgres://, mysql://, mariadb://, sqlite:PATH";
 
 enum Db {
@@ -119,9 +124,7 @@ async fn run(cmd: &str, db: &Db, migrations: &[Migration]) -> ExitCode {
                         Err(e) => return fail(e, 7),
                     }
                 }
-                Db::Mysql(_) => {
-                    return fail("verify-fresh is not offered for MySQL or MariaDB", 8);
-                }
+                Db::Mysql(b) => b.verify_fresh(migrations).await,
             };
             match r {
                 Ok(r) => {
@@ -146,16 +149,26 @@ async fn main() -> ExitCode {
     };
     let mut dir = None::<PathBuf>;
     let mut url = std::env::var("PERSISTANT_DATABASE_URL").ok();
+    let mut allow_remote = false;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--dir" => dir = args.next().map(PathBuf::from),
             "--url" => url = args.next(),
+            "--allow-remote" => allow_remote = true,
             _ => return fail(USAGE, 2),
         }
     }
     let (Some(dir), Some(url)) = (dir, url) else {
         return fail(USAGE, 2);
     };
+    let target = describe_target(&url);
+    eprintln!("persistant-migrate: {cmd} on {}", target.display);
+    if !target.local && !allow_remote {
+        return fail(
+            "that target is not on this machine; pass --allow-remote if it is the one you mean",
+            9,
+        );
+    }
     let migrations = match load_dir(&dir).await {
         Ok(m) => m,
         Err(e) => return fail(e, 7),

@@ -151,3 +151,64 @@ fn status_compares_text_checksums_and_names_unknown_versions() {
     let none = status(&[Migration::new(1, "a", "SELECT 1")], &[]);
     assert_eq!(none[0].state, State::Pending);
 }
+
+fn run_url(args: &[&str], url: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_persistant-migrate"))
+        .args(args)
+        .arg("--url")
+        .arg(url)
+        .env_remove("PERSISTANT_DATABASE_URL")
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn a_remote_target_is_refused_and_named_without_its_password() {
+    let t = tempfile::tempdir().unwrap();
+    let m = migrations(t.path());
+    let dir = m.to_str().unwrap();
+    // 192.0.2.1 is TEST-NET-1: never routable, and the guard must refuse before any connection.
+    let o = run_url(
+        &["up", "--dir", dir],
+        "postgres://app:s3cretpw@192.0.2.1:5432/prod",
+    );
+    assert_eq!(o.status.code(), Some(9), "{o:?}");
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("up on postgres://app@192.0.2.1:5432/prod"),
+        "{err}"
+    );
+    assert!(!err.contains("s3cretpw"), "{err}");
+    assert!(err.contains("--allow-remote"), "{err}");
+    // Read-only commands are guarded too, and a host= override cannot smuggle a remote host in.
+    let o = run_url(
+        &["status", "--dir", dir],
+        "postgres://app@localhost/prod?host=192.0.2.1",
+    );
+    assert_eq!(o.status.code(), Some(9), "{o:?}");
+    // Positive control: with the flag the guard lets it through (and the connection then fails, 7).
+    let o = run_url(
+        &["status", "--dir", dir, "--allow-remote"],
+        "mysql://app@192.0.2.1:1/prod",
+    );
+    assert_eq!(o.status.code(), Some(7), "{o:?}");
+}
+
+#[test]
+fn a_local_target_is_printed_and_allowed() {
+    let t = tempfile::tempdir().unwrap();
+    let m = migrations(t.path());
+    let db = t.path().join("g.db");
+    let o = run(&["status", "--dir", m.to_str().unwrap()], &db);
+    assert_eq!(o.status.code(), Some(0), "{o:?}");
+    assert!(String::from_utf8_lossy(&o.stderr).contains("status on sqlite:"));
+    for url in [
+        "postgres://u:p@localhost/d",
+        "mysql://u@127.0.0.1:3306/d",
+        "postgres://u@[::1]/d",
+        "postgres:///d?host=/var/run/postgresql",
+    ] {
+        assert!(persistant_migrate::describe_target(url).local, "{url}");
+    }
+    assert!(!persistant_migrate::describe_target("nonsense").local);
+}

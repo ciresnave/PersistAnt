@@ -186,6 +186,60 @@ impl MysqlBackend {
         .await
     }
 
+    /// Prove that `migrations` install on an **empty** database, in order, and leave nothing behind.
+    ///
+    /// A scratch database with a unique name is created, the migrations run in it on a pool of one
+    /// connection whose default database is that one (so the ledger is the scratch database's own),
+    /// and the database is dropped afterwards, whether the run passed or failed. The target's own
+    /// ledger and tables are never touched. Needs `CREATE` and `DROP` on `persistant_fresh_*`.
+    ///
+    /// Limits: a migration that names another database explicitly, or creates a user or other
+    /// server-wide object, escapes the scratch database; that is not detected.
+    pub async fn verify_fresh(
+        &self,
+        migrations: &[persistant_relational::Migration],
+    ) -> Result<persistant_relational::MigrateReport, persistant_relational::MigrateError> {
+        use crate::migrate::backend_error;
+        use persistant_relational::{MigrateError, Migrates};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let scratch_db = format!(
+            "persistant_fresh_{}_{}_{}",
+            std::process::id(),
+            nanos,
+            N.fetch_add(1, Ordering::Relaxed)
+        );
+        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {scratch_db}")))
+            .execute(&self.pool)
+            .await
+            .map_err(backend_error)?;
+        let scratch = MySqlPoolOptions::new()
+            .max_connections(1)
+            .connect_with((*self.pool.connect_options()).clone().database(&scratch_db))
+            .await;
+        let result = match scratch {
+            Ok(pool) => {
+                let r = match MysqlBackend::from_pool(pool.clone()).await {
+                    Ok(b) => Migrates::migrate(&b, migrations).await,
+                    Err(e) => Err(MigrateError::Backend(e.to_string())),
+                };
+                pool.close().await;
+                r
+            }
+            Err(e) => Err(backend_error(e)),
+        };
+        let dropped = sqlx::query(AssertSqlSafe(format!("DROP DATABASE {scratch_db}")))
+            .execute(&self.pool)
+            .await
+            .map_err(backend_error);
+        let report = result?;
+        dropped?;
+        Ok(report)
+    }
+
     /// Connect with a bounded pool and read the server version.
     pub async fn connect(url: &str) -> Result<Self, RelError> {
         let pool = MySqlPoolOptions::new()
