@@ -83,7 +83,7 @@ A command-line tool over `Migrates`: apply, status (ledger with checksums, C1) a
   checked for pairing, never run.
 - **Shape.** A new binary crate in this workspace, one binary for PostgreSQL, SQLite, MySQL and MariaDB by URL scheme; exit
   codes distinguish `ChecksumMismatch`, `Dirty` and "database newer than the program".
-- **Built:** crate `persistant-migrate` (`up`, `status`, `verify-fresh`; `verify-fresh` not offered for MySQL/MariaDB). Tested end to end on SQLite; the other databases run the same code through `persistant-sqlx`'s own tests.
+- **Built:** crate `persistant-migrate` (`up`, `status`, `verify-fresh` on all four databases, 0.8.3). Tested end to end on SQLite, PostgreSQL and MySQL/MariaDB in CI. A target-printing, `--allow-remote` guard refuses non-local targets (exit 9), after the Community 0033 incident (PM, 2026-10-17).
 - **Node binding** is later and out of this row; **hosted mode** is later still and not designed here.
 
 Not scheduled until the PM assigns it.
