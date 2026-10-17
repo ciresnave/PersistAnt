@@ -9,14 +9,17 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        26,
-        "seventeen kv/lock leaves and nine relational leaves are certified"
+        27,
+        "seventeen kv/lock leaves and ten relational leaves are certified"
     );
     for r in m.rows() {
-        // SQLite has no row locks, so that one leaf is recorded off.
+        // SQLite has no row locks and holds the write lock from `begin`: those leaves are recorded off.
         assert_eq!(
             r.enabled,
-            r.subject.as_str() != "rel.row_lock",
+            !matches!(
+                r.subject.as_str(),
+                "rel.row_lock" | "rel.isolation.repeatable_read"
+            ),
             "{}: {}",
             r.subject,
             r.note

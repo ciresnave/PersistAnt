@@ -147,6 +147,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a write inside an open transaction is invisible to every other connection until it commits, and visible after",
     ),
     (
+        "rel.isolation.repeatable_read",
+        "inside one transaction a row read twice reads the same and a table counted twice counts the same, though another connection committed an update and an insert in between",
+    ),
+    (
         "rel.savepoint",
         "inside a transaction, rolling back to a savepoint undoes the work after it, keeps the work before it, and the transaction still commits",
     ),
