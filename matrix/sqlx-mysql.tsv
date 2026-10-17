@@ -22,3 +22,4 @@ capability	rel.error.unique	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux
 capability	rel.foreign_key	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.foreign_key	
 capability	rel.check_constraint	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.check_constraint	
 capability	rel.isolation.no_dirty_read	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.isolation.no_dirty_read	
+capability	rel.savepoint	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.savepoint	
