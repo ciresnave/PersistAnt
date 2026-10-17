@@ -23,7 +23,7 @@
 //!   SQLite is off for the same reason as above.
 //! - `rel.row_lock`: a row locked `FOR UPDATE` by an open transaction cannot be locked by another connection
 //!   (probed with `SKIP LOCKED`, which skips it) until the transaction ends. SQLite has no row locks, so it is off there.
-//! - `rel.upsert_where`: `INSERT .. ON CONFLICT (..) DO UPDATE .. WHERE ..` updates only when the condition holds.
+//! - `rel.upsert_where`: `INSERT .. ON CONFLICT (..) DO UPDATE .. WHERE ..` (MySQL: `ON DUPLICATE KEY UPDATE n = IF(cond, new, n)`) updates only when the condition holds.
 //!   MySQL and MariaDB have no such clause, so it is off there.
 //! - `rel.savepoint`: inside a transaction, `ROLLBACK TO` a savepoint undoes the work after it and keeps the work before it.
 //!
@@ -859,11 +859,6 @@ async fn upsert_where<R: RelationalBackend>(
     constrained: bool,
 ) -> Result<(), Failure> {
     const T: &str = "persistant_rel_upsert";
-    if matches!(s.0, Dialect::MySql | Dialect::MariaDb) {
-        return Err(Failure::Backend(RelError::Unsupported(
-            "no ON CONFLICT .. DO UPDATE .. WHERE clause".to_string(),
-        )));
-    }
     drop_tables(b, &[T]).await?;
     b.execute(
         &format!(
@@ -874,16 +869,30 @@ async fn upsert_where<R: RelationalBackend>(
         &[],
     )
     .await?;
-    let cond = if constrained {
-        format!(" WHERE {T}.n < EXCLUDED.n")
+    // MySQL and MariaDB have no `DO UPDATE .. WHERE`: the condition moves into the assignment.
+    let up = if matches!(s.0, Dialect::MySql | Dialect::MariaDb) {
+        let set = if constrained {
+            format!("IF({T}.n < VALUES(n), VALUES(n), {T}.n)")
+        } else {
+            "VALUES(n)".to_string()
+        };
+        format!(
+            "INSERT INTO {T} (id, n) VALUES ({}, {}) ON DUPLICATE KEY UPDATE n = {set}",
+            s.p(1),
+            s.p(2)
+        )
     } else {
-        String::new()
+        let cond = if constrained {
+            format!(" WHERE {T}.n < EXCLUDED.n")
+        } else {
+            String::new()
+        };
+        format!(
+            "INSERT INTO {T} (id, n) VALUES ({}, {}) ON CONFLICT (id) DO UPDATE SET n = EXCLUDED.n{cond}",
+            s.p(1),
+            s.p(2)
+        )
     };
-    let up = format!(
-        "INSERT INTO {T} (id, n) VALUES ({}, {}) ON CONFLICT (id) DO UPDATE SET n = EXCLUDED.n{cond}",
-        s.p(1),
-        s.p(2)
-    );
     let result = async {
         // Absent: inserted. Then a lower value is refused by the WHERE, a higher one stored.
         for (n, want) in [(10, 10), (5, 10), (20, 20)] {

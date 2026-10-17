@@ -8,7 +8,7 @@
 
 use crate::conformance::{Leaf, Sql, Ty, drop_tables};
 use crate::contract;
-use crate::{RelError, RelationalBackend, RelationalTx, Value};
+use crate::{Dialect, RelError, RelationalBackend, RelationalTx, Value};
 use persistant_core::choose::Eligibility;
 use persistant_core::{Config, Reason};
 use std::time::Instant;
@@ -159,8 +159,13 @@ async fn timed_loop<R: RelationalBackend>(
     let upd = format!("UPDATE {TABLE} SET n = n + 1 WHERE id = {}", s.p(1));
     let row = |id: i64| [Value::Int(id), Value::Int(id), Value::Text("x".repeat(64))];
     // `n = id` for a seeded row, so an upsert of `n = 1000 + i` is always higher and always updates.
+    let tail = if matches!(s.0, Dialect::MySql | Dialect::MariaDb) {
+        format!("ON DUPLICATE KEY UPDATE n = IF({TABLE}.n < VALUES(n), VALUES(n), {TABLE}.n)")
+    } else {
+        format!("ON CONFLICT (id) DO UPDATE SET n = EXCLUDED.n WHERE {TABLE}.n < EXCLUDED.n")
+    };
     let ups = format!(
-        "INSERT INTO {TABLE} (id, n, t) VALUES ({}, {}, {}) ON CONFLICT (id) DO UPDATE SET n = EXCLUDED.n WHERE {TABLE}.n < EXCLUDED.n",
+        "INSERT INTO {TABLE} (id, n, t) VALUES ({}, {}, {}) {tail}",
         s.p(1),
         s.p(2),
         s.p(3)

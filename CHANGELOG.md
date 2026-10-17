@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.5
+
+### Changed
+- **`rel.upsert_where` is now on for MySQL and MariaDB.** They have no `ON CONFLICT .. DO UPDATE .. WHERE`, but `ON DUPLICATE KEY UPDATE n = IF(t.n < VALUES(n), VALUES(n), t.n)` holds the row back the same way. The leaf and `speed.rel.upsert_where` spell it that way for those dialects; the known-bad control (the unconditional `VALUES(n)`) is still caught. Checked on MySQL 8.4.11 and against unisql 0.24.9's `UpsertWhereAsIf` output, which is the same statement. MariaDB is not run here. Only `rel.migrate.ddl_atomic` stays off on MySQL. `bench/sqlx-rel-speed.tsv` regenerated: MySQL now has a number.
+
 ## 0.7.4
 
 ### Added
