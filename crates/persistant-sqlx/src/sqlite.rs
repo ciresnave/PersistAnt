@@ -5,7 +5,9 @@
 //! Writes are serialised by SQLite itself. A transaction here starts with `BEGIN IMMEDIATE`, so
 //! its reads and writes are one exclusive unit: that is what a row lock gives on a server database.
 
-use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
+use persistant_relational::{
+    Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
+};
 use sqlx::query::Query;
 use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{AssertSqlSafe, Row as SqlxRow, Sqlite, TypeInfo, ValueRef};
@@ -158,7 +160,8 @@ impl RelationalBackend for SqliteBackend {
         rows.iter().map(decode).collect()
     }
 
-    async fn begin(&self) -> Result<SqliteTx, RelError> {
+    /// Every level is `BEGIN IMMEDIATE`: the one write lock makes each of them serializable.
+    async fn begin(&self, _isolation: Isolation) -> Result<SqliteTx, RelError> {
         Ok(SqliteTx {
             tx: self
                 .pool

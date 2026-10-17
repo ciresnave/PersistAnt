@@ -82,7 +82,10 @@ async fn errors_are_classified_and_a_dropped_transaction_rolls_back() {
         "{null:?}"
     );
     {
-        let mut tx = db.begin().await.unwrap();
+        let mut tx = db
+            .begin(persistant_relational::Isolation::ReadCommitted)
+            .await
+            .unwrap();
         tx.execute("INSERT INTO t VALUES (3, 3)", &[])
             .await
             .unwrap();
@@ -192,20 +195,18 @@ async fn the_relational_leaves_certify_on() {
         .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
         .collect();
     // SQLite has no row locks (a write locks the whole database) and its `begin` holds that lock, so the
-    // repeatable-read probe cannot run: those two leaves are honestly off.
+    // probes that need a concurrent commit or transaction cannot run: those three leaves are honestly off.
+    let ids: Vec<&str> = off.iter().map(|o| o.split(':').next().unwrap()).collect();
     assert_eq!(
-        off.len(),
-        2,
-        "only rel.isolation.repeatable_read and rel.row_lock are off on SQLite: {off:#?}"
-    );
-    assert!(
-        off[0].starts_with("rel.isolation.repeatable_read: Some(Missing)"),
+        ids,
+        [
+            "rel.isolation.repeatable_read",
+            "rel.isolation.serializable",
+            "rel.row_lock"
+        ],
         "{off:#?}"
     );
-    assert!(
-        off[1].starts_with("rel.row_lock: Some(Missing)"),
-        "{off:#?}"
-    );
+    assert!(off.iter().all(|o| o.contains("Some(Missing)")), "{off:#?}");
     assert_eq!(
         rows.len(),
         persistant_relational::conformance::Leaf::ALL.len()

@@ -12,12 +12,15 @@
 //! - `rel.check_constraint`: a row violating a `CHECK` is rejected as [`RelError::CheckViolation`].
 //! - `rel.isolation.no_dirty_read`: a write inside an open transaction is invisible to another
 //!   connection until it commits, and visible after (read committed or stronger).
-//! - `rel.isolation.repeatable_read`: inside one transaction a row read twice reads the same, and a table
-//!   counted twice counts the same, though another connection committed an update and an insert in between.
-//!   PostgreSQL is asked for the level (`SET TRANSACTION`). MySQL is off: the backend's `begin` starts
-//!   READ COMMITTED (a deliberate choice, see `persistant-sqlx`), and InnoDB cannot change the level inside an
-//!   open transaction. Reaching it needs a level argument on `begin`, a breaking change. SQLite is off: its
-//!   `begin` is `BEGIN IMMEDIATE`, which holds the write lock, so another connection cannot commit in between.
+//! - `rel.isolation.repeatable_read`: inside one transaction begun at that level a row read twice reads the same,
+//!   and a table counted twice counts the same, though another connection committed an update and an insert in
+//!   between. SQLite is off: its `begin` is `BEGIN IMMEDIATE`, which holds the write lock, so another connection
+//!   cannot commit in between and the probe cannot run.
+//! - `rel.isolation.serializable`: PostgreSQL: two concurrent serializable transactions that each read both rows and
+//!   then change a different one (write skew) cannot both commit, while at read committed they can (the control).
+//!   MySQL and MariaDB: a plain read inside a serializable transaction takes a shared lock, so another connection's
+//!   `FOR UPDATE NOWAIT` on that row is refused, and is not at read committed or after the transaction ends.
+//!   SQLite is off for the same reason as above.
 //! - `rel.row_lock`: a row locked `FOR UPDATE` by an open transaction cannot be locked by another connection
 //!   (probed with `SKIP LOCKED`, which skips it) until the transaction ends. SQLite has no row locks, so it is off there.
 //! - `rel.upsert_where`: `INSERT .. ON CONFLICT (..) DO UPDATE .. WHERE ..` updates only when the condition holds.
@@ -35,7 +38,7 @@
 //! Booleans are left out of `rel.values`: how a driver returns one (`BOOL`, `TINYINT(1)`, `0/1`) is a
 //! documented difference, not a contract.
 
-use crate::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
+use crate::{Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value};
 use persistant_core::{CapabilityId, Config, Controls, Reason, Row as MatrixRow, Verdict};
 use std::collections::BTreeMap;
 
@@ -57,6 +60,8 @@ pub enum Leaf {
     IsolationNoDirtyRead,
     /// `rel.isolation.repeatable_read`
     IsolationRepeatableRead,
+    /// `rel.isolation.serializable`
+    IsolationSerializable,
     /// `rel.savepoint`
     Savepoint,
     /// `rel.row_lock`
@@ -67,7 +72,7 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 10] = [
+    pub const ALL: [Leaf; 11] = [
         Leaf::Values,
         Leaf::Transaction,
         Leaf::UniqueClassified,
@@ -75,6 +80,7 @@ impl Leaf {
         Leaf::CheckConstraint,
         Leaf::IsolationNoDirtyRead,
         Leaf::IsolationRepeatableRead,
+        Leaf::IsolationSerializable,
         Leaf::Savepoint,
         Leaf::RowLock,
         Leaf::UpsertWhere,
@@ -90,6 +96,7 @@ impl Leaf {
             Leaf::CheckConstraint => "rel.check_constraint",
             Leaf::IsolationNoDirtyRead => "rel.isolation.no_dirty_read",
             Leaf::IsolationRepeatableRead => "rel.isolation.repeatable_read",
+            Leaf::IsolationSerializable => "rel.isolation.serializable",
             Leaf::Savepoint => "rel.savepoint",
             Leaf::RowLock => "rel.row_lock",
             Leaf::UpsertWhere => "rel.upsert_where",
@@ -102,6 +109,7 @@ impl Leaf {
             Leaf::Transaction
             | Leaf::IsolationNoDirtyRead
             | Leaf::IsolationRepeatableRead
+            | Leaf::IsolationSerializable
             | Leaf::Savepoint
             | Leaf::RowLock => &[Defect::NoTransactions],
             Leaf::UniqueClassified => &[Defect::UnclassifiedErrors],
@@ -185,13 +193,13 @@ impl<R: RelationalBackend> RelationalBackend for Defective<'_, R> {
             .map_err(|e| unclassify(self.defect, e))
     }
 
-    async fn begin(&self) -> Result<DefectiveTx<'_, R>, RelError> {
+    async fn begin(&self, isolation: Isolation) -> Result<DefectiveTx<'_, R>, RelError> {
         if self.defect == Defect::NoTransactions {
             return Ok(DefectiveTx::Direct(self.inner));
         }
         Ok(DefectiveTx::Real(
             self.inner
-                .begin()
+                .begin(isolation)
                 .await
                 .map_err(|e| unclassify(self.defect, e))?,
             self.defect,
@@ -226,12 +234,10 @@ impl<R: RelationalBackend> RelationalTx for DefectiveTx<'_, R> {
                 .execute(sql, &lossy(*d, params))
                 .await
                 .map_err(|e| unclassify(*d, e)),
-            // With no transaction there is nothing for a savepoint or a transaction level to be in: the
-            // statements are no-ops (run on a pool they would open a transaction on one connection and
-            // leak it).
+            // With no transaction there is nothing for a savepoint to be in: the statements are
+            // no-ops (run on a pool they would open a transaction on one connection and leak it).
             DefectiveTx::Direct(_)
                 if sql.starts_with("SAVEPOINT")
-                    || sql.starts_with("SET TRANSACTION")
                     || sql.starts_with("RELEASE")
                     || sql.starts_with("ROLLBACK TO") =>
             {
@@ -370,6 +376,7 @@ pub async fn run_leaf<R: RelationalBackend>(
         Leaf::CheckConstraint => check(b, &s, constrained).await,
         Leaf::IsolationNoDirtyRead => no_dirty_read(b, &s).await,
         Leaf::IsolationRepeatableRead => repeatable_read(b, &s).await,
+        Leaf::IsolationSerializable => serializable(b, &s).await,
         Leaf::Savepoint => savepoint(b, &s).await,
         Leaf::RowLock => row_lock(b, &s).await,
         Leaf::UpsertWhere => upsert_where(b, &s, constrained).await,
@@ -477,7 +484,7 @@ async fn transaction<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure
     let ins = format!("INSERT INTO {T} (id, n) VALUES ({}, {})", s.p(1), s.p(2));
     let result = async {
         // Commit: visible.
-        let mut tx = b.begin().await?;
+        let mut tx = b.begin(Isolation::ReadCommitted).await?;
         tx.execute(&ins, &[Value::Int(1), Value::Int(10)]).await?;
         let own = tx.query(&format!("SELECT COUNT(*) FROM {T}"), &[]).await?;
         if own.first().and_then(|r| r.int(0)) != Some(1) {
@@ -488,7 +495,7 @@ async fn transaction<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure
             return wrong("a committed write is not visible");
         }
         // Rollback: not visible.
-        let mut tx = b.begin().await?;
+        let mut tx = b.begin(Isolation::ReadCommitted).await?;
         tx.execute(&ins, &[Value::Int(2), Value::Int(20)]).await?;
         tx.rollback().await?;
         if count(b, T).await? != 1 {
@@ -496,7 +503,7 @@ async fn transaction<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure
         }
         // Dropped without commit: rolled back.
         {
-            let mut tx = b.begin().await?;
+            let mut tx = b.begin(Isolation::ReadCommitted).await?;
             tx.execute(&ins, &[Value::Int(3), Value::Int(30)]).await?;
         }
         if count(b, T).await? != 1 {
@@ -523,7 +530,7 @@ async fn no_dirty_read<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failu
     .await?;
     let ins = format!("INSERT INTO {T} (id, n) VALUES ({}, {})", s.p(1), s.p(2));
     let result = async {
-        let mut tx = b.begin().await?;
+        let mut tx = b.begin(Isolation::ReadCommitted).await?;
         tx.execute(&ins, &[Value::Int(1), Value::Int(1)]).await?;
         // `b.query` runs on another connection, outside `tx`.
         let outside = count(b, T).await?;
@@ -544,20 +551,146 @@ async fn no_dirty_read<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failu
     result
 }
 
-async fn repeatable_read<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
-    const T: &str = "persistant_rel_repeatable";
-    if matches!(s.0, Dialect::MySql | Dialect::MariaDb) {
-        return Err(Failure::Backend(RelError::Unsupported(
-            "begin() starts READ COMMITTED and a level cannot be raised inside an open transaction"
-                .to_string(),
-        )));
-    }
+/// SQLite's `begin` is `BEGIN IMMEDIATE`: it holds the write lock, so the probes that need another
+/// connection to commit (or a second transaction to run) in the meantime cannot run.
+fn no_concurrent_commit(s: &Sql) -> Result<(), Failure> {
     if matches!(s.0, Dialect::Sqlite) {
         return Err(Failure::Backend(RelError::Unsupported(
             "begin() is BEGIN IMMEDIATE: it holds the write lock, so no other connection can commit during the transaction and the probe cannot run"
                 .to_string(),
         )));
     }
+    Ok(())
+}
+
+/// Run one transaction's last two steps. `Ok(true)` committed, `Ok(false)` was refused with a
+/// serialization failure (at the update or at the commit); any other error is the caller's.
+async fn finish<T: RelationalTx>(mut tx: T, sql: &str) -> Result<bool, Failure> {
+    match tx.execute(sql, &[]).await {
+        Ok(_) => {}
+        Err(RelError::Serialization) => {
+            let _ = tx.rollback().await;
+            return Ok(false);
+        }
+        Err(e) => {
+            let _ = tx.rollback().await;
+            return Err(e.into());
+        }
+    }
+    match tx.commit().await {
+        Ok(()) => Ok(true),
+        Err(RelError::Serialization) => Ok(false),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Two transactions at `level` each read how many rows have `n = 1` (two), then each sets a different
+/// row to 0 (write skew). Returns whether each committed.
+async fn write_skew<R: RelationalBackend>(
+    b: &R,
+    s: &Sql,
+    table: &str,
+    level: Isolation,
+) -> Result<(bool, bool), Failure> {
+    b.execute(&format!("DELETE FROM {table}"), &[]).await?;
+    let ins = format!("INSERT INTO {table} (id, n) VALUES ({}, 1)", s.p(1));
+    b.execute(&ins, &[Value::Int(1)]).await?;
+    b.execute(&ins, &[Value::Int(2)]).await?;
+    let read = format!("SELECT COUNT(*) FROM {table} WHERE n = 1");
+    let mut t1 = b.begin(level).await?;
+    let mut t2 = b.begin(level).await?;
+    t1.query(&read, &[]).await?;
+    t2.query(&read, &[]).await?;
+    let c1 = finish(t1, &format!("UPDATE {table} SET n = 0 WHERE id = 1")).await?;
+    let c2 = finish(t2, &format!("UPDATE {table} SET n = 0 WHERE id = 2")).await?;
+    Ok((c1, c2))
+}
+
+async fn serializable<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
+    const T: &str = "persistant_rel_serializable";
+    match s.0 {
+        Dialect::Postgres | Dialect::MySql | Dialect::MariaDb => {}
+        _ => {
+            no_concurrent_commit(s)?;
+            return Err(Failure::Backend(RelError::Unsupported(format!(
+                "no probe for {}",
+                s.0
+            ))));
+        }
+    }
+    drop_tables(b, &[T]).await?;
+    b.execute(
+        &format!(
+            "CREATE TABLE {T} ({}, n BIGINT NOT NULL){}",
+            s.pk("id"),
+            s.tail()
+        ),
+        &[],
+    )
+    .await?;
+    let result = if matches!(s.0, Dialect::Postgres) {
+        async {
+            // Control: at read committed the schedule does commit both, so the probe can see the anomaly.
+            let control = write_skew(b, s, T, Isolation::ReadCommitted).await?;
+            if control != (true, true) {
+                return wrong(format!(
+                    "control: at read committed the write-skew schedule committed {control:?}, not both"
+                ));
+            }
+            let (c1, c2) = write_skew(b, s, T, Isolation::Serializable).await?;
+            if c1 && c2 {
+                return wrong("two serializable transactions that each read both rows and wrote a different one both committed (write skew)");
+            }
+            if !c1 && !c2 {
+                return wrong("both serializable transactions were refused: one should have committed");
+            }
+            Ok(())
+        }
+        .await
+    } else {
+        async {
+            b.execute(
+                &format!("INSERT INTO {T} (id, n) VALUES ({}, 1)", s.p(1)),
+                &[Value::Int(1)],
+            )
+            .await?;
+            let read = format!("SELECT n FROM {T} WHERE id = 1");
+            let nowait = format!("SELECT id FROM {T} WHERE id = 1 FOR UPDATE NOWAIT");
+            // Control: after a plain read at read committed the row is not locked.
+            let mut rc = b.begin(Isolation::ReadCommitted).await?;
+            rc.query(&read, &[]).await?;
+            let free = b.query(&nowait, &[]).await;
+            let _ = rc.rollback().await;
+            if !matches!(&free, Ok(rows) if rows.len() == 1) {
+                return wrong(format!(
+                    "control: a plain read at read committed left the row locked ({free:?})"
+                ));
+            }
+            let mut tx = b.begin(Isolation::Serializable).await?;
+            tx.query(&read, &[]).await?;
+            let held = b.query(&nowait, &[]).await;
+            let _ = tx.rollback().await;
+            if held.is_ok() {
+                return wrong(
+                    "a plain read in a serializable transaction did not lock the row it read",
+                );
+            }
+            match b.query(&nowait, &[]).await {
+                Ok(rows) if rows.len() == 1 => Ok(()),
+                other => wrong(format!(
+                    "the row is still locked after the serializable transaction ended ({other:?})"
+                )),
+            }
+        }
+        .await
+    };
+    drop_tables(b, &[T]).await?;
+    result
+}
+
+async fn repeatable_read<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
+    const T: &str = "persistant_rel_repeatable";
+    no_concurrent_commit(s)?;
     drop_tables(b, &[T]).await?;
     b.execute(
         &format!(
@@ -572,11 +705,7 @@ async fn repeatable_read<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Fai
     let read = format!("SELECT n FROM {T} WHERE id = 1");
     let result = async {
         b.execute(&ins, &[Value::Int(1), Value::Int(1)]).await?;
-        let mut tx = b.begin().await?;
-        if matches!(s.0, Dialect::Postgres) {
-            tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ", &[])
-                .await?;
-        }
+        let mut tx = b.begin(Isolation::RepeatableRead).await?;
         let first = tx.query(&read, &[]).await?;
         if first.first().and_then(|r| r.int(0)) != Some(1) {
             let _ = tx.rollback().await;
@@ -633,7 +762,7 @@ async fn savepoint<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> 
     .await?;
     let ins = format!("INSERT INTO {T} (id, n) VALUES ({}, {})", s.p(1), s.p(2));
     let result = async {
-        let mut tx = b.begin().await?;
+        let mut tx = b.begin(Isolation::ReadCommitted).await?;
         tx.execute(&ins, &[Value::Int(1), Value::Int(1)]).await?;
         tx.execute("SAVEPOINT persistant_sp", &[]).await?;
         tx.execute(&ins, &[Value::Int(2), Value::Int(2)]).await?;
@@ -681,7 +810,7 @@ async fn row_lock<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
     let lock = format!("SELECT id FROM {T} WHERE id = 1 FOR UPDATE");
     let probe = format!("SELECT id FROM {T} WHERE id = 1 FOR UPDATE SKIP LOCKED");
     let result = async {
-        let mut tx = b.begin().await?;
+        let mut tx = b.begin(Isolation::ReadCommitted).await?;
         if tx.query(&lock, &[]).await?.len() != 1 {
             return wrong("FOR UPDATE did not return the row it locks");
         }
@@ -782,7 +911,7 @@ async fn unique<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
             other => return wrong(format!("a duplicate key came back as {other:?}")),
         }
         // Inside a transaction too.
-        let mut tx = b.begin().await?;
+        let mut tx = b.begin(Isolation::ReadCommitted).await?;
         let dup = tx.execute(&ins, &[Value::Int(1), Value::Int(3)]).await;
         let _ = tx.rollback().await;
         match dup {

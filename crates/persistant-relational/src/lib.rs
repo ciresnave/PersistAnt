@@ -17,7 +17,7 @@ mod error;
 mod secret;
 mod value;
 
-pub use backend::{RelationalBackend, RelationalTx};
+pub use backend::{Isolation, RelationalBackend, RelationalTx};
 pub use error::RelError;
 pub use secret::{ConnectionSecret, Redacted};
 pub use value::{Dialect, Row, Value};

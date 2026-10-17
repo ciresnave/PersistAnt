@@ -151,6 +151,10 @@ pub const SEED: &[(&str, &str)] = &[
         "inside one transaction a row read twice reads the same and a table counted twice counts the same, though another connection committed an update and an insert in between",
     ),
     (
+        "rel.isolation.serializable",
+        "concurrent serializable transactions behave as if run one at a time: PostgreSQL refuses one of two write-skew transactions, MySQL locks what a serializable transaction reads; absent on SQLite, whose single write lock is not probed",
+    ),
+    (
         "rel.savepoint",
         "inside a transaction, rolling back to a savepoint undoes the work after it, keeps the work before it, and the transaction still commits",
     ),
