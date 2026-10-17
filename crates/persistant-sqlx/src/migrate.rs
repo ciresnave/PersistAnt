@@ -83,6 +83,7 @@ macro_rules! run_on_own_connection {
         }
     }};
 }
+#[cfg(any(feature = "mysql", feature = "sqlite"))]
 pub(crate) use run_on_own_connection;
 
 impl Migrates for PgBackend {

@@ -9,14 +9,17 @@ fn the_recorded_mysql_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        28,
-        "seventeen kv/lock leaves and eleven relational leaves are certified"
+        33,
+        "seventeen kv/lock leaves and sixteen relational leaves (eleven contract, five migration) are certified"
     );
     for r in m.rows() {
-        // MySQL has no ON CONFLICT .. DO UPDATE .. WHERE, so that one leaf is recorded off.
+        // MySQL has no ON CONFLICT .. DO UPDATE .. WHERE and commits DDL implicitly: those leaves are off.
         assert_eq!(
             r.enabled,
-            r.subject.as_str() != "rel.upsert_where",
+            !matches!(
+                r.subject.as_str(),
+                "rel.upsert_where" | "rel.migrate.ddl_atomic"
+            ),
             "{}: {}",
             r.subject,
             r.note

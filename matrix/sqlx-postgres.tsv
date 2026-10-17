@@ -27,3 +27,8 @@ capability	rel.isolation.serializable	postgres	16.15	dialect=postgres	yes		arch=
 capability	rel.savepoint	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.savepoint	
 capability	rel.row_lock	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.row_lock	
 capability	rel.upsert_where	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.upsert_where	
+capability	rel.migrate.apply	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.migrate.apply	
+capability	rel.migrate.checksum	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.migrate.checksum	
+capability	rel.migrate.newer	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.migrate.newer	
+capability	rel.migrate.atomic	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.migrate.atomic	
+capability	rel.migrate.ddl_atomic	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.migrate.ddl_atomic	
