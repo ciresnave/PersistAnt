@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0
+
+### Changed (breaking)
+- `MigrateReport` gained `checksums: Vec<(i64, Vec<u8>)>` (C1): the ledger's checksum (SHA-384 of the migration text, sqlx's own) for every version applied after the run, ascending. A consumer that builds a `MigrateReport` by literal must add the field; a backend whose ledger keeps no checksum leaves it empty.
+
 ## 0.7.14
 
 ### Added

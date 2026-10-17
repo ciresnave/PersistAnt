@@ -210,7 +210,7 @@ macro_rules! run_on_own_connection {
                 break 'run;
             }
             match crate::migrate::ledger(&mut *conn, $exists).await {
-                Ok(v) => before = v,
+                Ok(v) => before = v.into_iter().map(|(version, _)| version).collect(),
                 Err(e) => {
                     failure = Some(e);
                     break 'run;
@@ -247,12 +247,14 @@ macro_rules! run_on_own_connection {
             None => {
                 let applied = after
                     .iter()
-                    .copied()
+                    .map(|(version, _)| *version)
                     .filter(|v| !before.contains(v))
                     .collect();
+                let checksums = after;
                 Ok(persistant_relational::MigrateReport {
                     applied,
                     already_applied: before,
+                    checksums,
                 })
             }
             Some(e) => {
@@ -267,11 +269,15 @@ pub(crate) use run_on_own_connection;
 
 /// The versions the ledger says succeeded, read on `conn`; empty if there is no ledger. `exists` is a
 /// statement that returns 1 when the ledger table is there and 0 when it is not.
-pub(crate) async fn ledger<C>(conn: &mut C, exists: &str) -> Result<Vec<i64>, MigrateError>
+pub(crate) async fn ledger<C>(
+    conn: &mut C,
+    exists: &str,
+) -> Result<Vec<(i64, Vec<u8>)>, MigrateError>
 where
     C: sqlx::Connection,
     for<'c> &'c mut C: sqlx::Executor<'c, Database = C::Database>,
     for<'q> i64: sqlx::Decode<'q, C::Database> + sqlx::Type<C::Database>,
+    for<'q> Vec<u8>: sqlx::Decode<'q, C::Database> + sqlx::Type<C::Database>,
     <C::Database as sqlx::Database>::Arguments: sqlx::IntoArguments<C::Database>,
     usize: sqlx::ColumnIndex<<C::Database as sqlx::Database>::Row>,
 {
@@ -282,8 +288,8 @@ where
     if there == 0 {
         return Ok(Vec::new());
     }
-    sqlx::query_scalar(sqlx::AssertSqlSafe(
-        "SELECT version FROM _sqlx_migrations WHERE success ORDER BY version".to_string(),
+    sqlx::query_as(sqlx::AssertSqlSafe(
+        "SELECT version, checksum FROM _sqlx_migrations WHERE success ORDER BY version".to_string(),
     ))
     .fetch_all(&mut *conn)
     .await

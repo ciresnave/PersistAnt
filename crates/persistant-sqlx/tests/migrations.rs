@@ -329,3 +329,19 @@ async fn verify_fresh_fails_for_a_migration_that_only_works_on_an_existing_datab
     // Positive control: applied for real against the existing table, it succeeds.
     assert_eq!(db.migrate(&ms).await.unwrap().applied, vec![1]);
 }
+
+#[tokio::test]
+async fn the_report_carries_each_migrations_checksum() {
+    let Some(db) = isolated("report_checksums").await else {
+        return;
+    };
+    let want: Vec<(i64, Vec<u8>)> = two()
+        .iter()
+        .map(|m| (m.version, Sha384::digest(m.sql.as_bytes()).to_vec()))
+        .collect();
+    let first = db.migrate(&two()).await.unwrap();
+    assert_eq!(first.checksums, want);
+    let again = db.migrate(&two()).await.unwrap();
+    assert!(again.applied.is_empty());
+    assert_eq!(again.checksums, want);
+}

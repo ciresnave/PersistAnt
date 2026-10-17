@@ -58,7 +58,7 @@ read 2026-10-17. Ruling it cites (board 196, relayed by the PM): all projects ad
 | Humboldt asks for | PersistAnt at 0.7.9 | Candidate |
 |---|---|---|
 | Advisory-lock-guarded migration apply | Built: `Migrates::migrate` holds the lock; `rel.migrate.concurrent` proves two simultaneous migrators (PostgreSQL, MySQL, MariaDB) | none |
-| Per-migration checksums | Built: ledger is sqlx's own (SHA-384 of the text), a changed applied migration is `ChecksumMismatch`; but `MigrateReport` lists versions only | **C1.** `MigrateReport` carries each applied migration's checksum |
+| Per-migration checksums | Built: ledger is sqlx's own (SHA-384 of the text), a changed applied migration is `ChecksumMismatch`; but `MigrateReport` lists versions only | **C1, built (0.8.0):** `MigrateReport.checksums` carries each applied migration's checksum |
 | Fresh-install check | Not built | **C2.** `verify_fresh(&[Migration])`: apply to an empty schema, return the ledger, no side effects elsewhere |
 | Load Humboldt's 36 `migrations/*.sql` | `Migration { version, description, sql }` built by hand | **C3.** a loader from `sqlx::migrate!` / a directory, so a consumer does not copy files into code |
 | Row expiry sweep over its own tables | `kv.purge_expired` sweeps the kv table only | **C4, built (0.7.13):** `persistant_relational::sweep(db, table, column, cutoff, batch, max_batches)`; the consumer owns the retention policy (PM, 2026-10-17) |

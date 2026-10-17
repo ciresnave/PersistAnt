@@ -97,6 +97,9 @@ pub struct MigrateReport {
     pub applied: Vec<i64>,
     /// Versions that were already applied and still match.
     pub already_applied: Vec<i64>,
+    /// The checksum the ledger holds for every version applied after this run (both lists above), as
+    /// `(version, checksum)` ascending. A backend whose ledger keeps none leaves this empty.
+    pub checksums: Vec<(i64, Vec<u8>)>,
 }
 
 /// A relational backend that keeps a migration ledger.

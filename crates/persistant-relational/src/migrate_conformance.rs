@@ -156,12 +156,10 @@ async fn apply<M: Migrates>(m: &M) -> Result<(), Failure> {
         return wrong(format!("the ledger lists {ledger:?}, not [1, 2]"));
     }
     let again = migrated(m.migrate(&migs).await, "the second run")?;
-    let want = MigrateReport {
-        applied: vec![],
-        already_applied: vec![1, 2],
-    };
-    if again != want {
-        return wrong(format!("the second run reported {again:?}, not {want:?}"));
+    if !again.applied.is_empty() || again.already_applied != [1, 2] {
+        return wrong(format!(
+            "the second run reported {again:?}, not [1, 2] already applied"
+        ));
     }
     if count(m, T).await? != 1 {
         return wrong("the second run ran a migration again");
@@ -405,6 +403,7 @@ impl<R: RelationalBackend> Migrates for Defective<'_, R> {
         Ok(MigrateReport {
             applied,
             already_applied: Vec::new(),
+            checksums: Vec::new(),
         })
     }
 
