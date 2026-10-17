@@ -30,15 +30,21 @@ pub enum Workload {
     Update,
     /// `begin`, one `INSERT`, `commit`.
     Transaction,
+    /// Inside an open transaction: `SAVEPOINT`, one `INSERT`, `ROLLBACK TO SAVEPOINT` (three statements).
+    Savepoint,
+    /// `INSERT .. ON CONFLICT (id) DO UPDATE .. WHERE`, over 100 rows, always taking the update branch.
+    UpsertWhere,
 }
 
 impl Workload {
     /// Every workload.
-    pub const ALL: [Workload; 4] = [
+    pub const ALL: [Workload; 6] = [
         Workload::Insert,
         Workload::SelectByKey,
         Workload::Update,
         Workload::Transaction,
+        Workload::Savepoint,
+        Workload::UpsertWhere,
     ];
 
     /// The id used in data files.
@@ -48,6 +54,8 @@ impl Workload {
             Workload::SelectByKey => "speed.rel.select_by_key",
             Workload::Update => "speed.rel.update",
             Workload::Transaction => "speed.rel.transaction",
+            Workload::Savepoint => "speed.rel.savepoint",
+            Workload::UpsertWhere => "speed.rel.upsert_where",
         }
     }
 
@@ -56,6 +64,8 @@ impl Workload {
         match self {
             Workload::Insert | Workload::SelectByKey | Workload::Update => Leaf::Values,
             Workload::Transaction => Leaf::Transaction,
+            Workload::Savepoint => Leaf::Savepoint,
+            Workload::UpsertWhere => Leaf::UpsertWhere,
         }
     }
 }
@@ -148,7 +158,17 @@ async fn timed_loop<R: RelationalBackend>(
     let sel = format!("SELECT n, t FROM {TABLE} WHERE id = {}", s.p(1));
     let upd = format!("UPDATE {TABLE} SET n = n + 1 WHERE id = {}", s.p(1));
     let row = |id: i64| [Value::Int(id), Value::Int(id), Value::Text("x".repeat(64))];
-    if matches!(w, Workload::SelectByKey | Workload::Update) {
+    // `n = id` for a seeded row, so an upsert of `n = 1000 + i` is always higher and always updates.
+    let ups = format!(
+        "INSERT INTO {TABLE} (id, n, t) VALUES ({}, {}, {}) ON CONFLICT (id) DO UPDATE SET n = EXCLUDED.n WHERE {TABLE}.n < EXCLUDED.n",
+        s.p(1),
+        s.p(2),
+        s.p(3)
+    );
+    if matches!(
+        w,
+        Workload::SelectByKey | Workload::Update | Workload::UpsertWhere
+    ) {
         for id in 0..SEED_ROWS {
             b.execute(&ins, &row(id)).await?;
         }
@@ -162,6 +182,12 @@ async fn timed_loop<R: RelationalBackend>(
             r
         }};
     }
+    // One transaction for every iteration of the savepoint workload, rolled back at the end.
+    let mut sp_tx = if w == Workload::Savepoint {
+        Some(b.begin(crate::Isolation::ReadCommitted).await?)
+    } else {
+        None
+    };
     for i in 0..i64::from(iterations) {
         match w {
             Workload::Insert => {
@@ -190,7 +216,39 @@ async fn timed_loop<R: RelationalBackend>(
                 tx.commit().await?;
                 us.push(u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX));
             }
+            Workload::Savepoint => {
+                let tx = sp_tx.as_mut().expect("opened above for this workload");
+                let t = Instant::now();
+                tx.execute("SAVEPOINT persistant_speed_sp", &[]).await?;
+                tx.execute(&ins, &row(i)).await?;
+                tx.execute("ROLLBACK TO SAVEPOINT persistant_speed_sp", &[])
+                    .await?;
+                us.push(u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX));
+            }
+            Workload::UpsertWhere => {
+                let id = i % SEED_ROWS;
+                let r = [
+                    Value::Int(id),
+                    Value::Int(1000 + i),
+                    Value::Text("x".repeat(64)),
+                ];
+                timed!(b.execute(&ups, &r).await?);
+                let got = b
+                    .query(
+                        &format!("SELECT n FROM {TABLE} WHERE id = {}", s.p(1)),
+                        &[Value::Int(id)],
+                    )
+                    .await?;
+                if got.first().and_then(|r| r.int(0)) != Some(1000 + i) {
+                    return Err(RelError::Backend(
+                        "the upsert did not take the update branch".to_string(),
+                    ));
+                }
+            }
         }
+    }
+    if let Some(tx) = sp_tx {
+        tx.rollback().await?;
     }
     Ok(Stats::from_samples(us))
 }
