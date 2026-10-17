@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.3
+
+### Added
+- **Two relational speed workloads**: `speed.rel.savepoint` (in one open transaction, `SAVEPOINT`, an `INSERT`, `ROLLBACK TO SAVEPOINT`: three statements per sample) and `speed.rel.upsert_where` (`INSERT .. ON CONFLICT (id) DO UPDATE .. WHERE` over 100 rows, always taking the update branch, each result read back). Each needs the contract leaf of the same name (`rel.savepoint`, `rel.upsert_where`), so MySQL gets an excluded row for `upsert_where`, not a number. `Workload::ALL` is now six. `bench/sqlx-rel-speed.tsv` regenerated.
+
 ## 0.7.2
 
 ### Added
