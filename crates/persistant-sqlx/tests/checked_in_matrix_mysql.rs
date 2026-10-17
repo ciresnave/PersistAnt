@@ -13,13 +13,10 @@ fn the_recorded_mysql_rows_are_all_on_and_read_by_the_gate() {
         "seventeen kv/lock leaves and seventeen relational leaves (eleven contract, six migration) are certified"
     );
     for r in m.rows() {
-        // MySQL has no ON CONFLICT .. DO UPDATE .. WHERE and commits DDL implicitly: those leaves are off.
+        // MySQL commits DDL implicitly: that leaf is off.
         assert_eq!(
             r.enabled,
-            !matches!(
-                r.subject.as_str(),
-                "rel.upsert_where" | "rel.migrate.ddl_atomic"
-            ),
+            r.subject.as_str() != "rel.migrate.ddl_atomic",
             "{}: {}",
             r.subject,
             r.note

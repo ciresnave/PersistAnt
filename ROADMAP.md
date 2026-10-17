@@ -39,7 +39,7 @@ blob (#45). Not done, in this order (queued by the PM 2026-10-16):
    and blob: stated in the code); then `rel.isolation.*` (no_dirty_read, repeatable_read, serializable;
    0.7.0 made `begin` take an `Isolation`), `rel.savepoint`, `rel.row_lock`, `rel.upsert_where`; then
    contract, speed and `choose` for it (0.7.1: four workloads, durability declared and unverified).*
-   Migrations as leaves are built (0.7.2, five `rel.migrate.*` leaves; MySQL cannot undo DDL). Relational speed workloads for `rel.savepoint` and `rel.upsert_where` are built (0.7.3). Still to build: concurrent-migrator tests. Owner: the PersistAnt lane.
+   Migrations as leaves are built (0.7.2, five `rel.migrate.*` leaves; MySQL cannot undo DDL; `rel.upsert_where` runs on MySQL as `ON DUPLICATE KEY UPDATE .. IF(..)` since 0.7.5). Relational speed workloads for `rel.savepoint` and `rel.upsert_where` are built (0.7.3). Still to build: concurrent-migrator tests. Owner: the PersistAnt lane.
 3. **Synapse `tests/mailbox_suite` as a stage-1 consumer check**: the Synapse lane runs `run_all` on
    each eligible backend (Postgres, SQLite, MySQL) and reports which leaves it adds.
 4. Not covered by any stage yet: concurrency-aware speed, value sizes other than 256 bytes, ranking

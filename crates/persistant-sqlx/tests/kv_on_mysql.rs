@@ -201,15 +201,10 @@ async fn the_relational_leaves_certify_on() {
         .filter(|c| !c.row.enabled)
         .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
         .collect();
-    // MySQL has no ON CONFLICT .. DO UPDATE .. WHERE: that leaf is honestly off.
-    assert_eq!(
-        off.len(),
-        1,
-        "only rel.upsert_where is off on mysql: {off:#?}"
-    );
+    // MySQL spells the guarded upsert `ON DUPLICATE KEY UPDATE n = IF(..)`: every leaf is on.
     assert!(
-        off[0].starts_with("rel.upsert_where: Some(Missing)"),
-        "{off:#?}"
+        off.is_empty(),
+        "no relational leaf is off on mysql: {off:#?}"
     );
 }
 
