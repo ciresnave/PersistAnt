@@ -8,7 +8,7 @@ use std::time::Duration;
 
 /// How a connection is secured. A typed setting, not a `sslmode=` string someone has to remember.
 ///
-/// The policy given to [`PgBackend::connect_with`] **overrides** whatever `sslmode` the connection
+/// The policy given to [`PgBackend::connect_with`] (or `MysqlBackend::connect_with`) **overrides** whatever `sslmode` the connection
 /// string carries, so a URL cannot weaken it. The default is [`TlsPolicy::Require`]: encryption is
 /// on unless a program says otherwise in code.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -36,7 +36,7 @@ pub enum TlsPolicy {
     },
 }
 
-/// Settings for [`PgBackend::connect_with`].
+/// Settings for [`PgBackend::connect_with`] (and `MysqlBackend::connect_with`, feature `mysql`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectOptions {
     /// How the connection is secured. Overrides the URL's `sslmode`.

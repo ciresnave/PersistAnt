@@ -238,6 +238,19 @@ jobs:
       - name: cargo test persistant-sqlx --features mysql
         run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test checked_in_matrix_mysql --test durability_mysql --no-fail-fast
 
+      # Two more servers from the same pinned image: one with TLS (its own private CA), one without.
+      # SUP-008 waiver reason as above: CI-only, no credential of ours reaches them.
+      - name: Start a MySQL with TLS and one without
+        run: bash .github/scripts/mysql-tls.sh my-tls 3307 my-plain 3308 "${{ runner.temp }}/my-tls-ca.pem"
+
+      - name: cargo test persistant-sqlx --features mysql --test tls_mysql
+        env:
+          PERSISTANT_TEST_MYSQL_TLS_URL: mysql://root:persistant-test@127.0.0.1:3307/persistant
+          PERSISTANT_TEST_MYSQL_TLS_CA: ${{ runner.temp }}/my-tls-ca.pem
+          PERSISTANT_TEST_MYSQL_PLAIN_URL: mysql://root:persistant-test@127.0.0.1:3308/persistant
+          PERSISTANT_REQUIRE_MYSQL_TLS: "1"
+        run: cargo test -p persistant-sqlx --features mysql --test tls_mysql
+
       - name: Regenerate matrix/sqlx-mysql.tsv
         run: |
           mkdir -p generated
