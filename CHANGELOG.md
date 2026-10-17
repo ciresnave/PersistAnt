@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+
+### Changed
+- `ROADMAP.md`: a queued row for a migration CLI (up, status, verify-fresh over `.up.sql`/`.down.sql` files). No code change.
+
 ## 0.8.0
 
 ### Changed (breaking)
