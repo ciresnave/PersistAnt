@@ -397,4 +397,16 @@ impl PgBackend {
     pub async fn applied_versions(&self) -> Result<Vec<i64>, MigrateError> {
         Migrates::applied_versions(self).await
     }
+
+    /// The ledger's rows that succeeded, `(version, checksum)` ascending; empty if there is no ledger
+    /// yet. Reads the same rows [`Migrates::migrate`] checks against, so a caller can compare a
+    /// directory of migrations with a database without applying anything.
+    pub async fn applied_checksums(&self) -> Result<Vec<(i64, Vec<u8>)>, MigrateError> {
+        let mut conn = self.pool.acquire().await.map_err(backend_error)?;
+        ledger(
+            &mut *conn,
+            "SELECT CASE WHEN to_regclass('_sqlx_migrations') IS NULL THEN 0::int8 ELSE 1::int8 END",
+        )
+        .await
+    }
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2
+
+### Added
+- `persistant-migrate`, a command-line tool over `Migrates` (a new crate and binary): `up`, `status` and `verify-fresh` for a directory of `NNN_name.up.sql` files (or plain `NNN_name.sql`), on PostgreSQL, SQLite, MySQL and MariaDB by URL scheme. `.down.sql` files are read and checked for pairing but never run (`Migrates` has no undo). `status` compares the directory with the ledger's checksums; exit codes tell a changed migration (3), a database newer than the directory (4), a dirty migration (5) and a failed one (6) apart. `verify-fresh` is offered for PostgreSQL and SQLite, not MySQL/MariaDB. The URL may come from `PERSISTANT_DATABASE_URL`.
+- `PgBackend`, `SqliteBackend` and `MysqlBackend` gained `applied_checksums()`: the ledger's `(version, checksum)` rows, so a caller can compare a directory with a database without applying anything.
+
 ## 0.8.1
 
 ### Changed

@@ -1,0 +1,27 @@
+[package]
+name = "persistant-migrate"
+version.workspace = true
+edition = "2024"
+# Depends on persistant-sqlx (sqlx 0.9), so it pays the same floor.
+rust-version = "1.94"
+description = "A command-line tool over PersistAnt's migrations: apply, status and fresh-install check for a directory of .up.sql files, on PostgreSQL, SQLite, MySQL and MariaDB."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ciresnave/PersistAnt"
+keywords = ["sql", "migrations", "cli", "postgres", "sqlite"]
+categories = ["command-line-utilities", "database"]
+
+[lib]
+name = "persistant_migrate"
+path = "src/lib.rs"
+
+[[bin]]
+name = "persistant-migrate"
+path = "src/main.rs"
+
+[dependencies]
+persistant-relational = { workspace = true }
+persistant-sqlx = { workspace = true, features = ["sqlite", "mysql"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["migrate"] }
+sha2 = "0.10"
+tempfile = "3.27.0"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros"] }
