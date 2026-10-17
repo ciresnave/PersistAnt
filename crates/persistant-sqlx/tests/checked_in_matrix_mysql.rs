@@ -9,8 +9,8 @@ fn the_recorded_mysql_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        27,
-        "seventeen kv/lock leaves and ten relational leaves are certified"
+        28,
+        "seventeen kv/lock leaves and eleven relational leaves are certified"
     );
     for r in m.rows() {
         // MySQL has no ON CONFLICT .. DO UPDATE .. WHERE, so that one leaf is recorded off.
