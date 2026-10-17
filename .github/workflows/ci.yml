@@ -236,7 +236,7 @@ jobs:
           toolchain: stable
 
       - name: cargo test persistant-sqlx --features mysql (against MariaDB)
-        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test checked_in_matrix_mariadb --no-fail-fast
+        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test checked_in_matrix_mariadb --test sweep --no-fail-fast
 
       - name: Regenerate matrix/sqlx-mariadb.tsv
         run: |
@@ -286,7 +286,7 @@ jobs:
           toolchain: stable
 
       - name: cargo test persistant-sqlx --features mysql
-        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test checked_in_matrix_mysql --test durability_mysql --no-fail-fast
+        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test checked_in_matrix_mysql --test durability_mysql --test sweep --no-fail-fast
 
       # Two more servers from the same pinned image: one with TLS (its own private CA), one without.
       # SUP-008 waiver reason as above: CI-only, no credential of ours reaches them.

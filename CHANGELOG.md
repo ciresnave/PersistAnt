@@ -1,9 +1,15 @@
 # Changelog
 
+## 0.7.13
+
+### Added
+- `persistant_relational::sweep(db, table, column, cutoff, batch, max_batches)` (C4): delete rows of a consumer's own table whose timestamp column is below a cutoff, in bounded autocommit batches (PostgreSQL by `ctid`, SQLite by `rowid`, MySQL and MariaDB by `DELETE .. LIMIT`). A mechanism only: no default cutoff, schedule or table list; the retention policy belongs to the table's owner. Names must be plain identifiers; `NULL` timestamps are never deleted; a row refreshed past the cutoff by a concurrent writer is kept. Tested on PostgreSQL, SQLite, MySQL and MariaDB.
+
 ## 0.7.12
 
 ### Added
 - `PgBackend::verify_fresh(&[Migration])` (C2): installs the migrations on an empty scratch schema, in order, then drops it. The target's ledger and tables are never touched; success and failure both leave no schema behind. Migrations naming another schema, or creating cluster-wide objects, escape the scratch schema (documented, not detected).
+
 ## 0.7.11
 
 ### Added
