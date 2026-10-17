@@ -9,11 +9,18 @@ fn the_recorded_mysql_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        25,
-        "seventeen kv/lock leaves and eight relational leaves are certified"
+        26,
+        "seventeen kv/lock leaves and nine relational leaves are certified"
     );
     for r in m.rows() {
-        assert!(r.enabled, "{}: {}", r.subject, r.note);
+        // MySQL has no ON CONFLICT .. DO UPDATE .. WHERE, so that one leaf is recorded off.
+        assert_eq!(
+            r.enabled,
+            r.subject.as_str() != "rel.upsert_where",
+            "{}: {}",
+            r.subject,
+            r.note
+        );
         // kv rows are keyed by the adapter, relational rows by the server itself.
         let want = if r.subject.as_str().starts_with("rel.") {
             "mysql"

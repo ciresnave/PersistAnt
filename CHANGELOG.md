@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.7
+
+### Added
+- `rel.upsert_where` (relational leaf 9): `INSERT .. ON CONFLICT (..) DO UPDATE .. WHERE ..` inserts when absent, updates only when the condition holds. Known-bad control: the same statement without the `WHERE` must fail it. **Off on MySQL and MariaDB, honestly**: they have no such clause (the MySQL matrix records `missing`). PostgreSQL and SQLite rows come from CI.
+
+### Fixed
+- Conformance harness: the `NoTransactions` known-bad control ran `SAVEPOINT` straight on the pool, which on SQLite opened a transaction on one pooled connection and never closed it, so any later leaf that wrote hit `SQLITE_BUSY`. Savepoint statements are now no-ops in that control. Latent since 0.6.5 (no later leaf wrote on SQLite until `rel.upsert_where`).
+
 ## 0.6.6
 
 ### Added

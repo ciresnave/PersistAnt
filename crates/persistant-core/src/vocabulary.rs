@@ -155,6 +155,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a row locked FOR UPDATE by an open transaction cannot be locked by another connection until that transaction ends; absent where the engine has no row locks (SQLite)",
     ),
     (
+        "rel.upsert_where",
+        "INSERT .. ON CONFLICT (key) DO UPDATE .. WHERE updates the existing row only when the condition holds, and inserts when the row is absent; absent where the dialect has no such clause (MySQL, MariaDB)",
+    ),
+    (
         "kv.durability.process",
         "a write acknowledged as stored is still there after the writing process is killed hard and the store is opened again; says nothing about power loss or an operating-system crash (that is the Machine class, declared not verified)",
     ),

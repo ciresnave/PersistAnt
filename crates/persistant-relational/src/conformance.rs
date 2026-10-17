@@ -14,6 +14,8 @@
 //!   connection until it commits, and visible after (read committed or stronger).
 //! - `rel.row_lock`: a row locked `FOR UPDATE` by an open transaction cannot be locked by another connection
 //!   (probed with `SKIP LOCKED`, which skips it) until the transaction ends. SQLite has no row locks, so it is off there.
+//! - `rel.upsert_where`: `INSERT .. ON CONFLICT (..) DO UPDATE .. WHERE ..` updates only when the condition holds.
+//!   MySQL and MariaDB have no such clause, so it is off there.
 //! - `rel.savepoint`: inside a transaction, `ROLLBACK TO` a savepoint undoes the work after it and keeps the work before it.
 //!
 //! **Controls.** There is no reference relational engine to use as a positive control, so the positive
@@ -51,11 +53,13 @@ pub enum Leaf {
     Savepoint,
     /// `rel.row_lock`
     RowLock,
+    /// `rel.upsert_where`
+    UpsertWhere,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 8] = [
+    pub const ALL: [Leaf; 9] = [
         Leaf::Values,
         Leaf::Transaction,
         Leaf::UniqueClassified,
@@ -64,6 +68,7 @@ impl Leaf {
         Leaf::IsolationNoDirtyRead,
         Leaf::Savepoint,
         Leaf::RowLock,
+        Leaf::UpsertWhere,
     ];
 
     /// The capability id.
@@ -77,6 +82,7 @@ impl Leaf {
             Leaf::IsolationNoDirtyRead => "rel.isolation.no_dirty_read",
             Leaf::Savepoint => "rel.savepoint",
             Leaf::RowLock => "rel.row_lock",
+            Leaf::UpsertWhere => "rel.upsert_where",
         }
     }
 
@@ -87,13 +93,16 @@ impl Leaf {
                 &[Defect::NoTransactions]
             }
             Leaf::UniqueClassified => &[Defect::UnclassifiedErrors],
-            Leaf::ForeignKey | Leaf::CheckConstraint => &[],
+            Leaf::ForeignKey | Leaf::CheckConstraint | Leaf::UpsertWhere => &[],
         }
     }
 
     /// Whether the leaf has a "schema without the constraint" known-bad run.
     fn has_unconstrained_control(self) -> bool {
-        matches!(self, Leaf::ForeignKey | Leaf::CheckConstraint)
+        matches!(
+            self,
+            Leaf::ForeignKey | Leaf::CheckConstraint | Leaf::UpsertWhere
+        )
     }
 }
 
@@ -205,6 +214,15 @@ impl<R: RelationalBackend> RelationalTx for DefectiveTx<'_, R> {
                 .execute(sql, &lossy(*d, params))
                 .await
                 .map_err(|e| unclassify(*d, e)),
+            // With no transaction there is nothing for a savepoint to be in: the statements are
+            // no-ops (run on a pool they would open a transaction on one connection and leak it).
+            DefectiveTx::Direct(_)
+                if sql.starts_with("SAVEPOINT")
+                    || sql.starts_with("RELEASE")
+                    || sql.starts_with("ROLLBACK TO") =>
+            {
+                Ok(0)
+            }
             DefectiveTx::Direct(db) => db.execute(sql, params).await,
         }
     }
@@ -339,6 +357,7 @@ pub async fn run_leaf<R: RelationalBackend>(
         Leaf::IsolationNoDirtyRead => no_dirty_read(b, &s).await,
         Leaf::Savepoint => savepoint(b, &s).await,
         Leaf::RowLock => row_lock(b, &s).await,
+        Leaf::UpsertWhere => upsert_where(b, &s, constrained).await,
     }
 }
 
@@ -592,6 +611,59 @@ async fn row_lock<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
         tx.commit().await?;
         if b.query(&probe, &[]).await?.len() != 1 {
             return wrong("the row is still locked after the transaction committed");
+        }
+        Ok(())
+    }
+    .await;
+    drop_tables(b, &[T]).await?;
+    result
+}
+
+/// `constrained = false` drops the `WHERE`: the known-bad control, a backend that ignores the condition.
+async fn upsert_where<R: RelationalBackend>(
+    b: &R,
+    s: &Sql,
+    constrained: bool,
+) -> Result<(), Failure> {
+    const T: &str = "persistant_rel_upsert";
+    if matches!(s.0, Dialect::MySql | Dialect::MariaDb) {
+        return Err(Failure::Backend(RelError::Unsupported(
+            "no ON CONFLICT .. DO UPDATE .. WHERE clause".to_string(),
+        )));
+    }
+    drop_tables(b, &[T]).await?;
+    b.execute(
+        &format!(
+            "CREATE TABLE {T} ({}, n BIGINT NOT NULL){}",
+            s.pk("id"),
+            s.tail()
+        ),
+        &[],
+    )
+    .await?;
+    let cond = if constrained {
+        format!(" WHERE {T}.n < EXCLUDED.n")
+    } else {
+        String::new()
+    };
+    let up = format!(
+        "INSERT INTO {T} (id, n) VALUES ({}, {}) ON CONFLICT (id) DO UPDATE SET n = EXCLUDED.n{cond}",
+        s.p(1),
+        s.p(2)
+    );
+    let result = async {
+        // Absent: inserted. Then a lower value is refused by the WHERE, a higher one stored.
+        for (n, want) in [(10, 10), (5, 10), (20, 20)] {
+            b.execute(&up, &[Value::Int(1), Value::Int(n)]).await?;
+            let rows = b
+                .query(&format!("SELECT n FROM {T} WHERE id = 1"), &[])
+                .await?;
+            let got = rows.first().and_then(|r| r.int(0));
+            if got != Some(want) {
+                return wrong(format!(
+                    "upsert of {n} left {got:?}, expected {want} (the WHERE must hold the row when n is not higher)"
+                ));
+            }
         }
         Ok(())
     }
