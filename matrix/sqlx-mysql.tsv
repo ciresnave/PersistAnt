@@ -24,3 +24,4 @@ capability	rel.check_constraint	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=l
 capability	rel.isolation.no_dirty_read	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.isolation.no_dirty_read	
 capability	rel.savepoint	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.savepoint	
 capability	rel.row_lock	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.row_lock	
+capability	rel.upsert_where	mysql	8.4.11	dialect=mysql	no	missing	arch=x86_64;os=linux;test=rel::rel.upsert_where	database does not support: no ON CONFLICT .. DO UPDATE .. WHERE clause

@@ -9,8 +9,8 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        25,
-        "seventeen kv/lock leaves and eight relational leaves are certified"
+        26,
+        "seventeen kv/lock leaves and nine relational leaves are certified"
     );
     for r in m.rows() {
         // SQLite has no row locks, so that one leaf is recorded off.
