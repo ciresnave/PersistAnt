@@ -13,13 +13,14 @@ categories = ["database"]
 
 [features]
 # SQLite is compiled in (bundled C library): opt in.
-sqlite = ["sqlx/sqlite"]
+sqlite = ["sqlx/sqlite", "dep:tokio"]
 # MySQL and MariaDB (pure Rust driver).
 mysql = ["sqlx/mysql"]
 
 [dependencies]
 persistant-core = { workspace = true }
 persistant-relational = { workspace = true }
+tokio = { version = "1.53.2", default-features = false, features = ["sync"], optional = true }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate"] }
 
 [dev-dependencies]

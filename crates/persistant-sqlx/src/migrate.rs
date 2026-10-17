@@ -59,26 +59,71 @@ pub(crate) fn backend_error(e: sqlx::Error) -> MigrateError {
     MigrateError::Backend(e.to_string())
 }
 
-/// Run the migrations on one connection taken from the pool. sqlx holds a session advisory lock for the
-/// length of a run and does **not** release it when a migration fails, so the pooled connection would keep
-/// it and the next run, on another connection, would wait for it forever (measured on MySQL 8.4: a hang
-/// after a failed migration). The lock belongs to the session, so after a failure the session is ended
-/// instead of returned to the pool.
+/// Run the migrations on one connection taken from the pool and report what **this run** applied.
+/// sqlx holds a session advisory lock for the length of a run and does **not** release it when a
+/// migration fails, so the pooled connection would keep it and the next run, on another connection, would
+/// wait for it forever (measured on MySQL 8.4: a hang after a failed migration). The lock belongs to the
+/// session, so after a failure the session is ended instead of returned to the pool.
+///
+/// The ledger is read before and after on the same connection, **inside the lock** (the advisory lock
+/// stacks, so sqlx taking it again is harmless). Read outside it, two simultaneous runs both see the
+/// ledger empty at the start and full at the end, and both report every version as theirs. `$exists` is a
+/// statement that counts the ledger table (0 or 1).
 macro_rules! run_on_own_connection {
-    ($pool:expr, $migrations:expr, $classify:expr) => {{
+    ($pool:expr, $migrations:expr, $classify:expr, $exists:expr) => {{
         let mut conn = $pool
             .acquire()
             .await
             .map_err(crate::migrate::backend_error)?;
-        // `run_direct` is sqlx own way round "implementation of `Acquire` is not general enough".
-        match crate::migrate::migrator($migrations)
-            .run_direct(None, &mut *conn, false)
-            .await
-        {
-            Ok(()) => Ok(()),
-            Err(e) => {
+        let mut failure = None;
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        'run: {
+            if let Err(e) = sqlx::migrate::Migrate::lock(&mut *conn).await {
+                failure = Some(persistant_relational::MigrateError::Backend(e.to_string()));
+                break 'run;
+            }
+            match crate::migrate::ledger(&mut *conn, $exists).await {
+                Ok(v) => before = v,
+                Err(e) => {
+                    failure = Some(e);
+                    break 'run;
+                }
+            }
+            // `run_direct` is sqlx own way round "implementation of `Acquire` is not general enough".
+            if let Err(e) = crate::migrate::migrator($migrations)
+                .run_direct(None, &mut *conn, false)
+                .await
+            {
+                failure = Some(crate::migrate::map_error(e, $classify));
+                break 'run;
+            }
+            match crate::migrate::ledger(&mut *conn, $exists).await {
+                Ok(v) => after = v,
+                Err(e) => {
+                    failure = Some(e);
+                    break 'run;
+                }
+            }
+            if let Err(e) = sqlx::migrate::Migrate::unlock(&mut *conn).await {
+                failure = Some(persistant_relational::MigrateError::Backend(e.to_string()));
+            }
+        }
+        match failure {
+            None => {
+                let applied = after
+                    .iter()
+                    .copied()
+                    .filter(|v| !before.contains(v))
+                    .collect();
+                Ok(persistant_relational::MigrateReport {
+                    applied,
+                    already_applied: before,
+                })
+            }
+            Some(e) => {
                 let _ = sqlx::Connection::close(conn.detach()).await;
-                Err(crate::migrate::map_error(e, $classify))
+                Err(e)
             }
         }
     }};
@@ -86,20 +131,39 @@ macro_rules! run_on_own_connection {
 #[cfg(any(feature = "mysql", feature = "sqlite"))]
 pub(crate) use run_on_own_connection;
 
+/// The versions the ledger says succeeded, read on `conn`; empty if there is no ledger. `exists` is a
+/// statement that returns 1 when the ledger table is there and 0 when it is not.
+pub(crate) async fn ledger<C>(conn: &mut C, exists: &str) -> Result<Vec<i64>, MigrateError>
+where
+    C: sqlx::Connection,
+    for<'c> &'c mut C: sqlx::Executor<'c, Database = C::Database>,
+    for<'q> i64: sqlx::Decode<'q, C::Database> + sqlx::Type<C::Database>,
+    <C::Database as sqlx::Database>::Arguments: sqlx::IntoArguments<C::Database>,
+    usize: sqlx::ColumnIndex<<C::Database as sqlx::Database>::Row>,
+{
+    let there: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(exists.to_string()))
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(backend_error)?;
+    if there == 0 {
+        return Ok(Vec::new());
+    }
+    sqlx::query_scalar(sqlx::AssertSqlSafe(
+        "SELECT version FROM _sqlx_migrations WHERE success ORDER BY version".to_string(),
+    ))
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(backend_error)
+}
+
 impl Migrates for PgBackend {
     async fn migrate(&self, migrations: &[Migration]) -> Result<MigrateReport, MigrateError> {
-        let before = Migrates::applied_versions(self).await?;
-        run_on_own_connection!(self.pool, migrations, classify)?;
-        let after = Migrates::applied_versions(self).await?;
-        let applied = after
-            .iter()
-            .copied()
-            .filter(|v| !before.contains(v))
-            .collect();
-        Ok(MigrateReport {
-            applied,
-            already_applied: before,
-        })
+        run_on_own_connection!(
+            self.pool,
+            migrations,
+            classify,
+            "SELECT CASE WHEN to_regclass('_sqlx_migrations') IS NULL THEN 0::int8 ELSE 1::int8 END"
+        )
     }
 
     async fn applied_versions(&self) -> Result<Vec<i64>, MigrateError> {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.4
+
+### Added
+- **`rel.migrate.concurrent`**: two migrators started at once against one database apply each migration exactly once between them and both finish cleanly; none runs twice.
+
+### Fixed
+- **`MigrateReport.applied` was wrong under concurrency** (found by the new leaf, on MySQL and SQLite): the ledger was read before and after the run *outside* sqlx's lock, so two simultaneous runs each reported every version as theirs. It is now read on the migrating connection inside the lock. The migrations themselves always ran once. SQLite: sqlx takes no lock there, so runs through one `SqliteBackend` (and its clones) now take turns on an in-process mutex; a second *process* migrating the same file is not excluded. `persistant-sqlx` gains an optional `tokio` (sync) dependency under its `sqlite` feature.
+
 ## 0.7.3
 
 ### Added

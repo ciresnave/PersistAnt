@@ -97,6 +97,7 @@ fn decode(row: &SqliteRow) -> Result<Row, RelError> {
 pub struct SqliteBackend {
     pool: sqlx::SqlitePool,
     version: String,
+    migrating: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl SqliteBackend {
@@ -122,7 +123,11 @@ impl SqliteBackend {
             .fetch_one(&pool)
             .await
             .map_err(classify)?;
-        Ok(SqliteBackend { pool, version })
+        Ok(SqliteBackend {
+            pool,
+            version,
+            migrating: Default::default(),
+        })
     }
 
     /// The concrete pool.
@@ -208,18 +213,15 @@ impl persistant_relational::Migrates for SqliteBackend {
         migrations: &[persistant_relational::Migration],
     ) -> Result<persistant_relational::MigrateReport, persistant_relational::MigrateError> {
         use crate::migrate::run_on_own_connection;
-        let before = persistant_relational::Migrates::applied_versions(self).await?;
-        run_on_own_connection!(self.pool, migrations, classify)?;
-        let after = persistant_relational::Migrates::applied_versions(self).await?;
-        let applied = after
-            .iter()
-            .copied()
-            .filter(|v| !before.contains(v))
-            .collect();
-        Ok(persistant_relational::MigrateReport {
-            applied,
-            already_applied: before,
-        })
+        // sqlx takes no lock on SQLite, so runs through this backend (and its clones) take turns here.
+        // A second process migrating the same file is not excluded.
+        let _turn = self.migrating.lock().await;
+        run_on_own_connection!(
+            self.pool,
+            migrations,
+            classify,
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sqlx_migrations'"
+        )
     }
 
     async fn applied_versions(&self) -> Result<Vec<i64>, persistant_relational::MigrateError> {

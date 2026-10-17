@@ -175,6 +175,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a migration that fails part-way also leaves none of the tables it created; absent where DDL commits implicitly (MySQL, MariaDB)",
     ),
     (
+        "rel.migrate.concurrent",
+        "two migrators started at once against one database apply each migration exactly once between them and both finish cleanly; none runs twice",
+    ),
+    (
         "rel.savepoint",
         "inside a transaction, rolling back to a savepoint undoes the work after it, keeps the work before it, and the transaction still commits",
     ),
