@@ -9,8 +9,8 @@ fn the_recorded_mysql_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        23,
-        "seventeen kv/lock leaves and six relational leaves are certified"
+        24,
+        "seventeen kv/lock leaves and seven relational leaves are certified"
     );
     for r in m.rows() {
         assert!(r.enabled, "{}: {}", r.subject, r.note);

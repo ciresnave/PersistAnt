@@ -22,3 +22,4 @@ capability	rel.error.unique	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=lin
 capability	rel.foreign_key	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.foreign_key	
 capability	rel.check_constraint	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.check_constraint	
 capability	rel.isolation.no_dirty_read	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.isolation.no_dirty_read	
+capability	rel.savepoint	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.savepoint	

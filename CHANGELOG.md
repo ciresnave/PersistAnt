@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.5
+
+### Added
+- `rel.savepoint` (relational leaf 7): inside a transaction, `ROLLBACK TO SAVEPOINT` undoes the work after the savepoint, keeps the work before it, and the transaction still commits. Known-bad control: the `NoTransactions` defect must fail it. Verified locally; CI supplies the matrix rows.
+
 ## 0.6.4
 
 ### Fixed
