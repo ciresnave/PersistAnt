@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.10
+
+### Added
+- docs: ROADMAP section "Adoption candidates: Humboldt" (what a concrete-pool consumer needs; two of its asks are already built). No code change.
+
 ## 0.7.9
 
 ### Added
