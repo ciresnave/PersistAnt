@@ -294,18 +294,18 @@ fn wrong<T>(msg: impl Into<String>) -> Result<T, Failure> {
 // ---- per-dialect statement text -------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-enum Ty {
+pub(crate) enum Ty {
     Int,
     Text,
     Bytes,
     Float,
 }
 
-struct Sql(Dialect);
+pub(crate) struct Sql(pub(crate) Dialect);
 
 impl Sql {
     /// The placeholder for parameter `n` (1-based).
-    fn p(&self, n: usize) -> String {
+    pub(crate) fn p(&self, n: usize) -> String {
         match self.0 {
             Dialect::Postgres => format!("${n}"),
             Dialect::Sqlite => format!("?{n}"),
@@ -313,7 +313,7 @@ impl Sql {
         }
     }
 
-    fn ty(&self, t: Ty) -> &'static str {
+    pub(crate) fn ty(&self, t: Ty) -> &'static str {
         match (&self.0, t) {
             (_, Ty::Int) => "BIGINT",
             (Dialect::Postgres, Ty::Text) => "TEXT",
@@ -328,7 +328,7 @@ impl Sql {
     }
 
     /// Table options (InnoDB is explicit on MySQL so constraints and transactions exist).
-    fn tail(&self) -> &'static str {
+    pub(crate) fn tail(&self) -> &'static str {
         match self.0 {
             Dialect::MySql | Dialect::MariaDb => " ENGINE=InnoDB",
             _ => "",
@@ -336,7 +336,7 @@ impl Sql {
     }
 
     /// An integer primary key column definition.
-    fn pk(&self, name: &str) -> String {
+    pub(crate) fn pk(&self, name: &str) -> String {
         format!("{name} BIGINT NOT NULL PRIMARY KEY")
     }
 }
@@ -350,7 +350,10 @@ fn supported(d: &Dialect) -> Result<(), Failure> {
     }
 }
 
-async fn drop_tables<R: RelationalBackend>(b: &R, names: &[&str]) -> Result<(), RelError> {
+pub(crate) async fn drop_tables<R: RelationalBackend>(
+    b: &R,
+    names: &[&str],
+) -> Result<(), RelError> {
     for n in names {
         b.execute(&format!("DROP TABLE IF EXISTS {n}"), &[]).await?;
     }
@@ -1035,8 +1038,18 @@ pub async fn certify<R: RelationalBackend>(
     config: &Config,
     metadata: &Config,
 ) -> Vec<Certified> {
+    certify_leaves(target, config, metadata, &Leaf::ALL).await
+}
+
+/// As [`certify`], for the given leaves only (the eligibility check of a consumer that needs a few).
+pub async fn certify_leaves<R: RelationalBackend>(
+    target: &R,
+    config: &Config,
+    metadata: &Config,
+    leaves: &[Leaf],
+) -> Vec<Certified> {
     let mut out = Vec::new();
-    for leaf in Leaf::ALL {
+    for leaf in leaves.iter().copied() {
         let result = run_leaf(leaf, target, true).await;
         let positive_passed = !matches!(
             &result,
