@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.6
+
+### Added
+- **`MysqlBackend::connect_with(secret, &ConnectOptions)`: a typed TLS policy for MySQL and MariaDB**, the same `TlsPolicy` and `ConnectOptions` as PostgreSQL (`Disable`, `Prefer`, `Require` by default, `VerifyCa`, `VerifyFull`; `VerifyFull` is sqlx's `VERIFY_IDENTITY`). The policy overrides the URL's `ssl-mode`. `MysqlBackend::connection_is_encrypted` asks the server (`Ssl_cipher`). `tests/tls_mysql.rs` runs against a TLS server and a `--tls-version=` (no TLS) server started by `.github/scripts/mysql-tls.sh`.
+
+### Changed
+- persistant-kv now takes unisql 0.24.11 (was 0.24.7), which no longer demands a text collation for a BIGINT column in `DO UPDATE .. WHERE`.
+
 ## 0.7.5
 
 ### Changed

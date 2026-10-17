@@ -57,3 +57,7 @@ harness = false
 name = "durability_mysql"
 harness = false
 required-features = ["mysql"]
+
+[[test]]
+name = "tls_mysql"
+required-features = ["mysql"]

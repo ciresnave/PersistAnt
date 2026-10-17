@@ -6,14 +6,19 @@
 //! *matched* and an upsert that changes nothing reports 1, the same as an insert (measured on MySQL
 //! 8.4; `ROW_COUNT()` follows the same flag). A caller that must tell them apart does not use an
 //! upsert's count: `KvOnRelational::claim_two_step` is written around that.
-//! TLS policy is not typed here yet: the URL's `ssl-mode` decides (sqlx's default is `PREFERRED`).
+//! TLS: [`MysqlBackend::connect_with`] takes a typed [`crate::TlsPolicy`] that overrides the URL's
+//! `ssl-mode`. `connect` and `connect_secret` leave the URL's `ssl-mode` in charge (sqlx's default
+//! is `PREFERRED`, a silent downgrade). `VerifyCa` maps to `VERIFY_CA`, `VerifyFull` to
+//! `VERIFY_IDENTITY`.
 
+use crate::{ConnectOptions, TlsPolicy};
 use persistant_relational::{
     Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
 };
-use sqlx::mysql::{MySqlArguments, MySqlPoolOptions, MySqlRow};
+use sqlx::mysql::{MySqlArguments, MySqlConnectOptions, MySqlPoolOptions, MySqlRow, MySqlSslMode};
 use sqlx::query::Query;
 use sqlx::{AssertSqlSafe, MySql, Row as SqlxRow, TypeInfo, ValueRef};
+use std::str::FromStr;
 
 /// Classify an sqlx error by MySQL's error number
 /// (<https://dev.mysql.com/doc/mysql-errors/8.4/en/server-error-reference.html>).
@@ -130,6 +135,54 @@ impl MysqlBackend {
     ) -> Result<Self, RelError> {
         let url = secret.resolve()?;
         Self::connect(url.expose()).await
+    }
+
+    /// Connect with an explicit TLS policy and pool bounds, to a connection string held as a
+    /// [`persistant_relational::ConnectionSecret`]. The policy **overrides** the URL's `ssl-mode`,
+    /// so a URL cannot weaken it; the default policy is [`TlsPolicy::Require`].
+    pub async fn connect_with(
+        secret: &persistant_relational::ConnectionSecret,
+        options: &ConnectOptions,
+    ) -> Result<Self, RelError> {
+        let url = secret.resolve()?;
+        let mut o = MySqlConnectOptions::from_str(url.expose())
+            .map_err(|_| RelError::Backend("connection string is not valid".to_string()))?;
+        o = match &options.tls {
+            TlsPolicy::Disable => o.ssl_mode(MySqlSslMode::Disabled),
+            TlsPolicy::Prefer => o.ssl_mode(MySqlSslMode::Preferred),
+            TlsPolicy::Require => o.ssl_mode(MySqlSslMode::Required),
+            TlsPolicy::VerifyCa { root_cert } => {
+                let o = o.ssl_mode(MySqlSslMode::VerifyCa);
+                match root_cert {
+                    Some(p) => o.ssl_ca(p),
+                    None => o,
+                }
+            }
+            TlsPolicy::VerifyFull { root_cert } => {
+                let o = o.ssl_mode(MySqlSslMode::VerifyIdentity);
+                match root_cert {
+                    Some(p) => o.ssl_ca(p),
+                    None => o,
+                }
+            }
+        };
+        let pool = MySqlPoolOptions::new()
+            .max_connections(options.max_connections)
+            .acquire_timeout(options.acquire_timeout)
+            .connect_with(o)
+            .await
+            .map_err(classify)?;
+        Self::from_pool(pool).await
+    }
+
+    /// Whether the connection this backend uses is encrypted, as the **server** reports it
+    /// (`Ssl_cipher` is non-empty), not as the client was asked.
+    pub async fn connection_is_encrypted(&self) -> Result<bool, RelError> {
+        let (_, cipher): (String, String) = sqlx::query_as("SHOW SESSION STATUS LIKE 'Ssl_cipher'")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(classify)?;
+        Ok(!cipher.is_empty())
     }
 
     /// Wrap an existing pool. The dialect is `MariaDb` when the server says so, else `MySql`.
