@@ -69,8 +69,13 @@ pub(crate) fn backend_error(e: sqlx::Error) -> MigrateError {
 /// stacks, so sqlx taking it again is harmless). Read outside it, two simultaneous runs both see the
 /// ledger empty at the start and full at the end, and both report every version as theirs. `$exists` is a
 /// statement that counts the ledger table (0 or 1).
+///
+/// `$guard` is `Some((take, release))` where sqlx's own lock is not a lock. MariaDB rejects the negative
+/// timeout sqlx passes to `GET_LOCK(.., -1)` and returns NULL, which sqlx ignores, so two runs overlap
+/// (measured on MariaDB 11.4: `Duplicate entry '2' for key 'PRIMARY'`). `take` is a statement returning 1
+/// once the lock is held; `release` frees it.
 macro_rules! run_on_own_connection {
-    ($pool:expr, $migrations:expr, $classify:expr, $exists:expr) => {{
+    ($pool:expr, $migrations:expr, $classify:expr, $exists:expr, $guard:expr) => {{
         let mut conn = $pool
             .acquire()
             .await
@@ -78,7 +83,26 @@ macro_rules! run_on_own_connection {
         let mut failure = None;
         let mut before = Vec::new();
         let mut after = Vec::new();
+        let guard: Option<(&str, &str)> = $guard;
         'run: {
+            if let Some((take, _)) = guard {
+                match sqlx::query_scalar::<_, Option<i64>>(sqlx::AssertSqlSafe(take.to_string()))
+                    .fetch_one(&mut *conn)
+                    .await
+                {
+                    Ok(Some(1)) => {}
+                    Ok(other) => {
+                        failure = Some(persistant_relational::MigrateError::Backend(format!(
+                            "the migration lock was not granted: {other:?}"
+                        )));
+                        break 'run;
+                    }
+                    Err(e) => {
+                        failure = Some(crate::migrate::backend_error(e));
+                        break 'run;
+                    }
+                }
+            }
             if let Err(e) = sqlx::migrate::Migrate::lock(&mut *conn).await {
                 failure = Some(persistant_relational::MigrateError::Backend(e.to_string()));
                 break 'run;
@@ -107,6 +131,14 @@ macro_rules! run_on_own_connection {
             }
             if let Err(e) = sqlx::migrate::Migrate::unlock(&mut *conn).await {
                 failure = Some(persistant_relational::MigrateError::Backend(e.to_string()));
+            }
+            if let Some((_, release)) = guard {
+                if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(release.to_string()))
+                    .execute(&mut *conn)
+                    .await
+                {
+                    failure = Some(crate::migrate::backend_error(e));
+                }
             }
         }
         match failure {
@@ -162,7 +194,8 @@ impl Migrates for PgBackend {
             self.pool,
             migrations,
             classify,
-            "SELECT CASE WHEN to_regclass('_sqlx_migrations') IS NULL THEN 0::int8 ELSE 1::int8 END"
+            "SELECT CASE WHEN to_regclass('_sqlx_migrations') IS NULL THEN 0::int8 ELSE 1::int8 END",
+            None
         )
     }
 

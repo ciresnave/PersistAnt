@@ -254,7 +254,7 @@ impl<R: RelationalBackend> KvOnRelational<R> {
                     }
                 }
                 BatchOp::Put { key, value, ttl } => {
-                    if *self.tr.dialect() == Dialect::MySql
+                    if matches!(self.tr.dialect(), Dialect::MySql | Dialect::MariaDb)
                         && required_absent.contains(key.as_str())
                     {
                         if !self.claim_two_step(&mut tx, key, value, *ttl).await? {
@@ -417,7 +417,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         value: Vec<u8>,
         ttl: Option<Duration>,
     ) -> Result<bool, KvError> {
-        if *self.tr.dialect() == Dialect::MySql {
+        if matches!(self.tr.dialect(), Dialect::MySql | Dialect::MariaDb) {
             let mut tx = self.db.begin(Isolation::ReadCommitted).await.map_err(err)?;
             let won = self
                 .claim_two_step(&mut tx, key, &value, ttl)

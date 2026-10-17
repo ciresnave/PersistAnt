@@ -34,8 +34,8 @@ fn classify(e: sqlx::Error) -> RelError {
                 Some(1062) | Some(1586) => RelError::UniqueViolation { constraint },
                 // ER_NO_REFERENCED_ROW_2, ER_ROW_IS_REFERENCED_2
                 Some(1452) | Some(1451) => RelError::ForeignKeyViolation { constraint },
-                // ER_CHECK_CONSTRAINT_VIOLATED, ER_BAD_NULL_ERROR
-                Some(3819) | Some(1048) => RelError::CheckViolation { constraint },
+                // ER_CHECK_CONSTRAINT_VIOLATED (MySQL), ER_CONSTRAINT_FAILED (MariaDB), ER_BAD_NULL_ERROR
+                Some(3819) | Some(4025) | Some(1048) => RelError::CheckViolation { constraint },
                 // ER_LOCK_DEADLOCK
                 Some(1213) => RelError::Deadlock,
                 // ER_LOCK_WAIT_TIMEOUT
@@ -327,7 +327,15 @@ impl persistant_relational::Migrates for MysqlBackend {
             migrations,
             classify,
             "SELECT COUNT(*) FROM information_schema.tables \
-             WHERE table_schema = DATABASE() AND table_name = '_sqlx_migrations'"
+             WHERE table_schema = DATABASE() AND table_name = '_sqlx_migrations'",
+            if self.dialect == Dialect::MariaDb {
+                Some((
+                    "SELECT GET_LOCK(CONCAT('persistant_migrate:', DATABASE()), 86400)",
+                    "SELECT RELEASE_LOCK(CONCAT('persistant_migrate:', DATABASE()))",
+                ))
+            } else {
+                None
+            }
         )
     }
 

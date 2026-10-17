@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.7
+
+### Added
+- **MariaDB certifies like MySQL.** `KvOnRelational` translates to UniSQL's `mariadb` target (it refused with "no translation to mariadb yet"), and `kv_on_mysql` runs against MariaDB 11.4 when `PERSISTANT_TEST_MYSQL_FLAVOR=mariadb` (new CI job `mariadb`): every kv, relational and migration leaf is on except `rel.migrate.ddl_atomic`, as on MySQL.
+
+### Fixed
+- MariaDB's `ER_CONSTRAINT_FAILED` (4025) is a `CheckViolation`; only MySQL's 3819 was.
+- Two simultaneous migrators on MariaDB no longer race (`Duplicate entry '2' for key 'PRIMARY'`): sqlx takes its migration lock with `GET_LOCK(.., -1)`, which MariaDB rejects with NULL, which sqlx ignores. `MysqlBackend::migrate` now takes its own finite `GET_LOCK` first on MariaDB.
+
 ## 0.7.6
 
 ### Added
