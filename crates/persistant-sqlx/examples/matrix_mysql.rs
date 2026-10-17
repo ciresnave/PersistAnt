@@ -9,6 +9,7 @@
 
 use persistant_core::{Config, Matrix};
 use persistant_kv::KvOnRelational;
+use persistant_relational::RelationalBackend;
 use persistant_sqlx::MysqlBackend;
 
 #[tokio::main(flavor = "current_thread")]
@@ -34,5 +35,35 @@ async fn main() {
             .into_iter()
             .map(|c| c.row),
     );
+    // The migration ledger, in a scratch database so the ledger is its own.
+    rel_db
+        .execute("DROP DATABASE IF EXISTS persistant_mig_matrix", &[])
+        .await
+        .expect("drop scratch database");
+    rel_db
+        .execute("CREATE DATABASE persistant_mig_matrix", &[])
+        .await
+        .expect("create scratch database");
+    let (head, tail) = url.split_once('?').unwrap_or((url.as_str(), ""));
+    let base = head.rsplit_once('/').expect("a database in the url").0;
+    let scoped = if tail.is_empty() {
+        format!("{base}/persistant_mig_matrix")
+    } else {
+        format!("{base}/persistant_mig_matrix?{tail}")
+    };
+    let mig_db = MysqlBackend::connect(&scoped)
+        .await
+        .expect("connect scoped");
+    rows.extend(
+        persistant_relational::migrate_conformance::certify(&mig_db, &config, &env)
+            .await
+            .into_iter()
+            .map(|c| c.row),
+    );
+    drop(mig_db);
+    rel_db
+        .execute("DROP DATABASE IF EXISTS persistant_mig_matrix", &[])
+        .await
+        .expect("drop scratch database");
     print!("{}", Matrix::from_rows(rows).to_tsv());
 }

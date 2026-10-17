@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2
+
+### Added
+- **Migrations as leaves**: `persistant_relational::Migrates` (`migrate`, `applied_versions`) and `migrate_conformance`, five leaves on a **disposable ledger** (a scratch schema, a scratch database or a fresh file; each leaf drops the ledger and its own tables first and last): `rel.migrate.apply` (ordered, ledger lists them, a second run applies nothing), `rel.migrate.checksum` (an edited applied migration is refused), `rel.migrate.newer` (a program older than the database is refused), `rel.migrate.atomic` (a failing migration leaves none of its row changes, keeps the migrations before it, and is a classified failure), `rel.migrate.ddl_atomic` (the same for tables it created). Known-bad control: `Defect::NoMigrationLedger`, a migrator with no ledger, checksum or transaction. `Migration`, `MigrateError` and `MigrateReport` moved into `persistant-relational` and are re-exported by `persistant-sqlx` under the same names. `Migrates` is implemented for PostgreSQL (as before), and now MySQL and SQLite. **`rel.migrate.ddl_atomic` is off on MySQL**: DDL commits implicitly.
+
+### Fixed
+- **A failed migration no longer wedges the next run.** sqlx takes a session advisory lock for a migration run and does not release it when a migration fails; the pooled connection kept it, and the next run, on another connection, waited for it forever (MySQL 8.4: `GET_LOCK(.., -1)` still waiting after 550 s; PostgreSQL held it too and only escaped because the pool handed back the same session). Migrations now run on one connection, and after a failure that session is closed rather than returned to the pool (`run_direct`, sqlx's own route round the `Acquire` lifetime error). Regression test with a timeout on PostgreSQL and MySQL.
+
 ## 0.7.1
 
 ### Added

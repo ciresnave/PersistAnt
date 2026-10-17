@@ -14,10 +14,10 @@ mod options;
 #[cfg(feature = "sqlite")]
 mod sqlite;
 
-pub use migrate::{MigrateError, MigrateReport, Migration};
 #[cfg(feature = "mysql")]
 pub use mysql::{MysqlBackend, MysqlTx};
 pub use options::{ConnectOptions, TlsPolicy};
+pub use persistant_relational::{MigrateError, MigrateReport, Migrates, Migration};
 #[cfg(feature = "sqlite")]
 pub use sqlite::{SqliteBackend, SqliteTx};
 

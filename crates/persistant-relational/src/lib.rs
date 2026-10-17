@@ -16,11 +16,14 @@ pub mod choose;
 pub mod conformance;
 pub mod contract;
 mod error;
+mod migrate;
+pub mod migrate_conformance;
 mod secret;
 pub mod speed;
 mod value;
 
 pub use backend::{Isolation, RelationalBackend, RelationalTx};
 pub use error::RelError;
+pub use migrate::{MigrateError, MigrateReport, Migrates, Migration};
 pub use secret::{ConnectionSecret, Redacted};
 pub use value::{Dialect, Row, Value};

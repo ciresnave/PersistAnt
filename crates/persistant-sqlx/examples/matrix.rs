@@ -10,6 +10,7 @@
 
 use persistant_core::{Config, Matrix};
 use persistant_kv::KvOnRelational;
+use persistant_relational::RelationalBackend;
 use persistant_sqlx::PgBackend;
 
 #[tokio::main(flavor = "current_thread")]
@@ -35,5 +36,28 @@ async fn main() {
             .into_iter()
             .map(|c| c.row),
     );
+    // The migration ledger, in a scratch schema so the ledger is its own.
+    rel_db
+        .execute("DROP SCHEMA IF EXISTS persistant_mig_matrix CASCADE", &[])
+        .await
+        .expect("drop scratch schema");
+    rel_db
+        .execute("CREATE SCHEMA persistant_mig_matrix", &[])
+        .await
+        .expect("create scratch schema");
+    let sep = if url.contains('?') { '&' } else { '?' };
+    let scoped = format!("{url}{sep}options=-c%20search_path%3Dpersistant_mig_matrix");
+    let mig_db = PgBackend::connect(&scoped).await.expect("connect scoped");
+    rows.extend(
+        persistant_relational::migrate_conformance::certify(&mig_db, &config, &env)
+            .await
+            .into_iter()
+            .map(|c| c.row),
+    );
+    drop(mig_db);
+    rel_db
+        .execute("DROP SCHEMA IF EXISTS persistant_mig_matrix CASCADE", &[])
+        .await
+        .expect("drop scratch schema");
     print!("{}", Matrix::from_rows(rows).to_tsv());
 }

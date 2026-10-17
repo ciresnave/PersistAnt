@@ -12,7 +12,7 @@ set -euo pipefail
 LICENCE="MIT OR Apache-2.0"
 # Source extensions checked. A tracked file of any of these without the header fails the gate.
 EXTENSIONS=('*.rs' '*.sh' '*.py' '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' '*.go' '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' '*.ps1' '*.sql')
-MINIMUM_FILES=87   # src (4), tests (5), example, core/src (7), blob/src (5), opendal src+tests (5), kv/src (8), relational/src (8: adds contract, speed, choose), sqlx src+tests+example (10: adds rel_speed.rs example and test; lib, migrate, options, 4 tests, example), tls script (1), opendal example+tests (4: crash.rs, replace_crash, checked_in_matrix, matrix example), tests/reexports.rs, this script; raise as the tree grows
+MINIMUM_FILES=89   # src (4), tests (5), example, core/src (7), blob/src (5), opendal src+tests (5), kv/src (8), relational/src (10: adds contract, speed, choose, migrate, migrate_conformance), sqlx src+tests+example (10: adds rel_speed.rs example and test; lib, migrate, options, 4 tests, example), tls script (1), opendal example+tests (4: crash.rs, replace_crash, checked_in_matrix, matrix example), tests/reexports.rs, this script; raise as the tree grows
 
 check_tree() { # $1 = repo root; prints missing files, one per line; returns count via stdout
     local root=$1 file hits missing=0 total=0

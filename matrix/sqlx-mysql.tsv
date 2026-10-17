@@ -27,3 +27,8 @@ capability	rel.isolation.serializable	mysql	8.4.11	dialect=mysql	yes		arch=x86_6
 capability	rel.savepoint	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.savepoint	
 capability	rel.row_lock	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.row_lock	
 capability	rel.upsert_where	mysql	8.4.11	dialect=mysql	no	missing	arch=x86_64;os=linux;test=rel::rel.upsert_where	database does not support: no ON CONFLICT .. DO UPDATE .. WHERE clause
+capability	rel.migrate.apply	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.migrate.apply	
+capability	rel.migrate.checksum	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.migrate.checksum	
+capability	rel.migrate.newer	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.migrate.newer	
+capability	rel.migrate.atomic	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.migrate.atomic	
+capability	rel.migrate.ddl_atomic	mysql	8.4.11	dialect=mysql	no	missing	arch=x86_64;os=linux;test=rel::rel.migrate.ddl_atomic	database does not support: DDL commits implicitly: a failed migration cannot undo the tables it created

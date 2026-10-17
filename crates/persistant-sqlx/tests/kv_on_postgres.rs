@@ -375,3 +375,75 @@ async fn futures_join_all<F: std::future::Future>(
     out.extend(results.into_iter().flatten());
     out
 }
+
+/// The migration ledger (`persistant_relational::migrate_conformance`) on postgres, in a scratch schema
+/// so the ledger is the test own: every leaf on, with the ledger-less migrator caught.
+#[tokio::test]
+async fn the_migration_leaves_certify_on() {
+    let Some(admin) = backend().await else { return };
+    let _serial = SERVER.lock().await;
+    let url = std::env::var("PERSISTANT_TEST_DATABASE_URL").unwrap();
+    admin
+        .execute("DROP SCHEMA IF EXISTS persistant_mig_leaves CASCADE", &[])
+        .await
+        .unwrap();
+    admin
+        .execute("CREATE SCHEMA persistant_mig_leaves", &[])
+        .await
+        .unwrap();
+    let sep = if url.contains('?') { '&' } else { '?' };
+    let scoped = format!("{url}{sep}options=-c%20search_path%3Dpersistant_mig_leaves");
+    let db = persistant_sqlx::PgBackend::connect(&scoped).await.unwrap();
+    let config = Config::new().with("dialect", "postgres");
+    let rows =
+        persistant_relational::migrate_conformance::certify(&db, &config, &Config::new()).await;
+    let off: Vec<_> = rows
+        .iter()
+        .filter(|c| !c.row.enabled)
+        .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
+        .collect();
+    assert!(off.is_empty(), "migration leaves off on postgres: {off:#?}");
+    assert_eq!(
+        rows.len(),
+        persistant_relational::migrate_conformance::MigrateLeaf::ALL.len()
+    );
+
+    // A failed migration must not wedge the next run. sqlx holds a session advisory lock for a run and does
+    // not release it on failure; without ending that session the next run, on another pooled connection,
+    // waited for it forever (measured on MySQL 8.4: 550 s and counting).
+    use persistant_relational::{MigrateError, Migration};
+    for t in ["persistant_wedge_t", "_sqlx_migrations"] {
+        db.execute(&format!("DROP TABLE IF EXISTS {t}"), &[])
+            .await
+            .unwrap();
+    }
+    let bad = [
+        Migration::new(
+            1,
+            "t",
+            "CREATE TABLE persistant_wedge_t (id BIGINT PRIMARY KEY)",
+        ),
+        Migration::new(
+            2,
+            "bad",
+            "INSERT INTO persistant_wedge_t (id) VALUES (1); INSERT INTO persistant_wedge_t (id) VALUES (1)",
+        ),
+    ];
+    assert!(matches!(
+        db.migrate(&bad).await,
+        Err(MigrateError::Failed { version: 2, .. })
+    ));
+    let good = [
+        bad[0].clone(),
+        Migration::new(2, "good", "INSERT INTO persistant_wedge_t (id) VALUES (1)"),
+    ];
+    let next = tokio::time::timeout(std::time::Duration::from_secs(30), db.migrate(&good))
+        .await
+        .expect("the run after a failed migration waited on a lock the failed run left behind");
+    assert_eq!(next.unwrap().applied, vec![2]);
+    for t in ["persistant_wedge_t", "_sqlx_migrations"] {
+        db.execute(&format!("DROP TABLE IF EXISTS {t}"), &[])
+            .await
+            .unwrap();
+    }
+}
