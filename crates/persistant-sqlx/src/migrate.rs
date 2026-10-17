@@ -323,6 +323,70 @@ impl PgBackend {
         Migrates::migrate(self, migrations).await
     }
 
+    /// Prove that `migrations` install on an **empty** schema, in order, and leave nothing behind.
+    ///
+    /// A scratch schema with a unique name is created, the migrations run in it on a pool of one
+    /// connection whose `search_path` is that schema (so the ledger is the scratch schema's own), and
+    /// the schema is dropped afterwards, whether the run passed or failed. The report lists every
+    /// version as applied. The database being installed to is never touched: not its ledger, not its
+    /// tables.
+    ///
+    /// Limits: a migration that names another schema explicitly, or creates an extension, role or
+    /// other cluster-wide object, escapes the scratch schema; that is not detected. This is the
+    /// PostgreSQL driver only.
+    pub async fn verify_fresh(
+        &self,
+        migrations: &[Migration],
+    ) -> Result<MigrateReport, MigrateError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let schema = format!(
+            "persistant_fresh_{}_{}_{}",
+            std::process::id(),
+            nanos,
+            N.fetch_add(1, Ordering::Relaxed)
+        );
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
+            .execute(&self.pool)
+            .await
+            .map_err(backend_error)?;
+        let search = format!("SET search_path TO {schema}");
+        let scratch = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .after_connect(move |conn, _| {
+                let search = search.clone();
+                Box::pin(async move {
+                    sqlx::query(sqlx::AssertSqlSafe(search))
+                        .execute(&mut *conn)
+                        .await
+                        .map(|_| ())
+                })
+            })
+            .connect_with((*self.pool.connect_options()).clone())
+            .await;
+        let result = match scratch {
+            Ok(pool) => {
+                let r = match PgBackend::from_pool(pool.clone()).await {
+                    Ok(b) => Migrates::migrate(&b, migrations).await,
+                    Err(e) => Err(MigrateError::Backend(e.to_string())),
+                };
+                pool.close().await;
+                r
+            }
+            Err(e) => Err(backend_error(e)),
+        };
+        let dropped = sqlx::query(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&self.pool)
+            .await
+            .map_err(backend_error);
+        let report = result?;
+        dropped?;
+        Ok(report)
+    }
+
     /// The versions the ledger says succeeded, ascending; empty if there is no ledger yet.
     pub async fn applied_versions(&self) -> Result<Vec<i64>, MigrateError> {
         Migrates::applied_versions(self).await

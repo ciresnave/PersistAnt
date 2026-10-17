@@ -277,3 +277,55 @@ async fn a_database_migrated_by_sqlx_is_accepted_and_the_other_way_round() {
     let want: Vec<Vec<u8>> = sqlx_side.iter().map(|m| m.checksum.to_vec()).collect();
     assert_eq!(stored, want);
 }
+
+/// The scratch-schema count is server-wide, so the two tests that read it run one at a time.
+static FRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn schemas_named_fresh(db: &PgBackend) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'persistant_fresh_%'")
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn verify_fresh_installs_on_an_empty_schema_and_leaves_nothing() {
+    let _one = FRESH.lock().await;
+    let Some(db) = isolated("fresh_ok").await else {
+        return;
+    };
+    let before = schemas_named_fresh(&db).await;
+    let r = db.verify_fresh(&two()).await.unwrap();
+    assert_eq!(r.applied, vec![1, 2]);
+    // Nothing in the target schema: no ledger, no table. Nothing left over in the scratch schema.
+    assert!(db.applied_versions().await.unwrap().is_empty());
+    assert!(db.execute("SELECT * FROM things", &[]).await.is_err());
+    assert_eq!(schemas_named_fresh(&db).await, before);
+    // Positive control: the same migrations do install for real.
+    assert_eq!(db.migrate(&two()).await.unwrap().applied, vec![1, 2]);
+}
+
+#[tokio::test]
+async fn verify_fresh_fails_for_a_migration_that_only_works_on_an_existing_database() {
+    let _one = FRESH.lock().await;
+    let Some(db) = isolated("fresh_bad").await else {
+        return;
+    };
+    // The target already has the table; a fresh install must not, so the second migration fails.
+    db.execute("CREATE TABLE legacy (id INT)", &[])
+        .await
+        .unwrap();
+    let ms = vec![Migration::new(
+        1,
+        "uses legacy",
+        "ALTER TABLE legacy ADD COLUMN n INT;",
+    )];
+    let before = schemas_named_fresh(&db).await;
+    assert!(matches!(
+        db.verify_fresh(&ms).await,
+        Err(MigrateError::Failed { version: 1, .. })
+    ));
+    assert_eq!(schemas_named_fresh(&db).await, before);
+    // Positive control: applied for real against the existing table, it succeeds.
+    assert_eq!(db.migrate(&ms).await.unwrap().applied, vec![1]);
+}
