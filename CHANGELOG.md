@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.8
+
+### Added
+- `rel.isolation.repeatable_read` (relational leaf 10): inside one transaction a row read twice reads the same and a table counted twice counts the same, though another connection committed an update and an insert in between. Known-bad control: `NoTransactions`. **Off on MySQL, honestly**: its `begin` starts READ COMMITTED (the deadlock fix of 0.6.4) and InnoDB cannot raise the level inside an open transaction; reaching it needs a level argument on `begin` (breaking, 0.7.0). PostgreSQL asks for the level with `SET TRANSACTION`.
+- Not yet covered: `rel.isolation.serializable` (needs the same level argument to be probed on MySQL).
+
 ## 0.6.7
 
 ### Added

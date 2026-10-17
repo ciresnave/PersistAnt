@@ -198,14 +198,19 @@ async fn the_relational_leaves_certify_on() {
         .filter(|c| !c.row.enabled)
         .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
         .collect();
-    // MySQL has no ON CONFLICT .. DO UPDATE .. WHERE: that leaf is honestly off.
+    // MySQL has no ON CONFLICT .. DO UPDATE .. WHERE, and its transactions begin READ COMMITTED: those two
+    // leaves are honestly off.
     assert_eq!(
         off.len(),
-        1,
-        "only rel.upsert_where is off on mysql: {off:#?}"
+        2,
+        "only rel.isolation.repeatable_read and rel.upsert_where are off on mysql: {off:#?}"
     );
     assert!(
-        off[0].starts_with("rel.upsert_where: Some(Missing)"),
+        off[0].starts_with("rel.isolation.repeatable_read: Some(Missing)"),
+        "{off:#?}"
+    );
+    assert!(
+        off[1].starts_with("rel.upsert_where: Some(Missing)"),
         "{off:#?}"
     );
 }

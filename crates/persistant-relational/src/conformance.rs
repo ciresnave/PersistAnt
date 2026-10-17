@@ -12,6 +12,12 @@
 //! - `rel.check_constraint`: a row violating a `CHECK` is rejected as [`RelError::CheckViolation`].
 //! - `rel.isolation.no_dirty_read`: a write inside an open transaction is invisible to another
 //!   connection until it commits, and visible after (read committed or stronger).
+//! - `rel.isolation.repeatable_read`: inside one transaction a row read twice reads the same, and a table
+//!   counted twice counts the same, though another connection committed an update and an insert in between.
+//!   PostgreSQL is asked for the level (`SET TRANSACTION`). MySQL is off: the backend's `begin` starts
+//!   READ COMMITTED (a deliberate choice, see `persistant-sqlx`), and InnoDB cannot change the level inside an
+//!   open transaction. Reaching it needs a level argument on `begin`, a breaking change. SQLite is off: its
+//!   `begin` is `BEGIN IMMEDIATE`, which holds the write lock, so another connection cannot commit in between.
 //! - `rel.row_lock`: a row locked `FOR UPDATE` by an open transaction cannot be locked by another connection
 //!   (probed with `SKIP LOCKED`, which skips it) until the transaction ends. SQLite has no row locks, so it is off there.
 //! - `rel.upsert_where`: `INSERT .. ON CONFLICT (..) DO UPDATE .. WHERE ..` updates only when the condition holds.
@@ -49,6 +55,8 @@ pub enum Leaf {
     CheckConstraint,
     /// `rel.isolation.no_dirty_read`
     IsolationNoDirtyRead,
+    /// `rel.isolation.repeatable_read`
+    IsolationRepeatableRead,
     /// `rel.savepoint`
     Savepoint,
     /// `rel.row_lock`
@@ -59,13 +67,14 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 9] = [
+    pub const ALL: [Leaf; 10] = [
         Leaf::Values,
         Leaf::Transaction,
         Leaf::UniqueClassified,
         Leaf::ForeignKey,
         Leaf::CheckConstraint,
         Leaf::IsolationNoDirtyRead,
+        Leaf::IsolationRepeatableRead,
         Leaf::Savepoint,
         Leaf::RowLock,
         Leaf::UpsertWhere,
@@ -80,6 +89,7 @@ impl Leaf {
             Leaf::ForeignKey => "rel.foreign_key",
             Leaf::CheckConstraint => "rel.check_constraint",
             Leaf::IsolationNoDirtyRead => "rel.isolation.no_dirty_read",
+            Leaf::IsolationRepeatableRead => "rel.isolation.repeatable_read",
             Leaf::Savepoint => "rel.savepoint",
             Leaf::RowLock => "rel.row_lock",
             Leaf::UpsertWhere => "rel.upsert_where",
@@ -89,9 +99,11 @@ impl Leaf {
     fn defects(self) -> &'static [Defect] {
         match self {
             Leaf::Values => &[Defect::LossyBytes],
-            Leaf::Transaction | Leaf::IsolationNoDirtyRead | Leaf::Savepoint | Leaf::RowLock => {
-                &[Defect::NoTransactions]
-            }
+            Leaf::Transaction
+            | Leaf::IsolationNoDirtyRead
+            | Leaf::IsolationRepeatableRead
+            | Leaf::Savepoint
+            | Leaf::RowLock => &[Defect::NoTransactions],
             Leaf::UniqueClassified => &[Defect::UnclassifiedErrors],
             Leaf::ForeignKey | Leaf::CheckConstraint | Leaf::UpsertWhere => &[],
         }
@@ -214,10 +226,12 @@ impl<R: RelationalBackend> RelationalTx for DefectiveTx<'_, R> {
                 .execute(sql, &lossy(*d, params))
                 .await
                 .map_err(|e| unclassify(*d, e)),
-            // With no transaction there is nothing for a savepoint to be in: the statements are
-            // no-ops (run on a pool they would open a transaction on one connection and leak it).
+            // With no transaction there is nothing for a savepoint or a transaction level to be in: the
+            // statements are no-ops (run on a pool they would open a transaction on one connection and
+            // leak it).
             DefectiveTx::Direct(_)
                 if sql.starts_with("SAVEPOINT")
+                    || sql.starts_with("SET TRANSACTION")
                     || sql.starts_with("RELEASE")
                     || sql.starts_with("ROLLBACK TO") =>
             {
@@ -355,6 +369,7 @@ pub async fn run_leaf<R: RelationalBackend>(
         Leaf::ForeignKey => foreign_key(b, &s, constrained).await,
         Leaf::CheckConstraint => check(b, &s, constrained).await,
         Leaf::IsolationNoDirtyRead => no_dirty_read(b, &s).await,
+        Leaf::IsolationRepeatableRead => repeatable_read(b, &s).await,
         Leaf::Savepoint => savepoint(b, &s).await,
         Leaf::RowLock => row_lock(b, &s).await,
         Leaf::UpsertWhere => upsert_where(b, &s, constrained).await,
@@ -521,6 +536,81 @@ async fn no_dirty_read<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failu
         tx.commit().await?;
         if count(b, T).await? != 1 {
             return wrong("a committed write is not visible to another connection");
+        }
+        Ok(())
+    }
+    .await;
+    drop_tables(b, &[T]).await?;
+    result
+}
+
+async fn repeatable_read<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
+    const T: &str = "persistant_rel_repeatable";
+    if matches!(s.0, Dialect::MySql | Dialect::MariaDb) {
+        return Err(Failure::Backend(RelError::Unsupported(
+            "begin() starts READ COMMITTED and a level cannot be raised inside an open transaction"
+                .to_string(),
+        )));
+    }
+    if matches!(s.0, Dialect::Sqlite) {
+        return Err(Failure::Backend(RelError::Unsupported(
+            "begin() is BEGIN IMMEDIATE: it holds the write lock, so no other connection can commit during the transaction and the probe cannot run"
+                .to_string(),
+        )));
+    }
+    drop_tables(b, &[T]).await?;
+    b.execute(
+        &format!(
+            "CREATE TABLE {T} ({}, n BIGINT NOT NULL){}",
+            s.pk("id"),
+            s.tail()
+        ),
+        &[],
+    )
+    .await?;
+    let ins = format!("INSERT INTO {T} (id, n) VALUES ({}, {})", s.p(1), s.p(2));
+    let read = format!("SELECT n FROM {T} WHERE id = 1");
+    let result = async {
+        b.execute(&ins, &[Value::Int(1), Value::Int(1)]).await?;
+        let mut tx = b.begin().await?;
+        if matches!(s.0, Dialect::Postgres) {
+            tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ", &[])
+                .await?;
+        }
+        let first = tx.query(&read, &[]).await?;
+        if first.first().and_then(|r| r.int(0)) != Some(1) {
+            let _ = tx.rollback().await;
+            return wrong("the first read did not return the row written before the transaction");
+        }
+        // `b.execute` runs on another connection, outside `tx`, and commits at once.
+        b.execute(
+            &format!("UPDATE {T} SET n = 2 WHERE id = 1"),
+            &[],
+        )
+        .await?;
+        b.execute(&ins, &[Value::Int(2), Value::Int(2)]).await?;
+        let again = tx.query(&read, &[]).await?;
+        let seen = again.first().and_then(|r| r.int(0));
+        if seen != Some(1) {
+            let _ = tx.rollback().await;
+            return wrong(format!(
+                "a row read twice in one transaction changed from 1 to {seen:?} (non-repeatable read)"
+            ));
+        }
+        let rows = tx
+            .query(&format!("SELECT COUNT(*) FROM {T}"), &[])
+            .await?;
+        let n = rows.first().and_then(|r| r.int(0));
+        if n != Some(1) {
+            let _ = tx.rollback().await;
+            return wrong(format!(
+                "a table counted inside one transaction went from 1 to {n:?} rows (phantom read)"
+            ));
+        }
+        tx.commit().await?;
+        let after = b.query(&read, &[]).await?;
+        if after.first().and_then(|r| r.int(0)) != Some(2) {
+            return wrong("the other connection's committed update is not visible after the transaction ends");
         }
         Ok(())
     }

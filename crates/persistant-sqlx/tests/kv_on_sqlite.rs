@@ -191,10 +191,19 @@ async fn the_relational_leaves_certify_on() {
         .filter(|c| !c.row.enabled)
         .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
         .collect();
-    // SQLite has no row locks (a write locks the whole database): that leaf is honestly off.
-    assert_eq!(off.len(), 1, "only rel.row_lock is off on SQLite: {off:#?}");
+    // SQLite has no row locks (a write locks the whole database) and its `begin` holds that lock, so the
+    // repeatable-read probe cannot run: those two leaves are honestly off.
+    assert_eq!(
+        off.len(),
+        2,
+        "only rel.isolation.repeatable_read and rel.row_lock are off on SQLite: {off:#?}"
+    );
     assert!(
-        off[0].starts_with("rel.row_lock: Some(Missing)"),
+        off[0].starts_with("rel.isolation.repeatable_read: Some(Missing)"),
+        "{off:#?}"
+    );
+    assert!(
+        off[1].starts_with("rel.row_lock: Some(Missing)"),
         "{off:#?}"
     );
     assert_eq!(
