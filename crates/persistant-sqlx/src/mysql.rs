@@ -8,7 +8,9 @@
 //! upsert's count: `KvOnRelational::claim_two_step` is written around that.
 //! TLS policy is not typed here yet: the URL's `ssl-mode` decides (sqlx's default is `PREFERRED`).
 
-use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
+use persistant_relational::{
+    Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
+};
 use sqlx::mysql::{MySqlArguments, MySqlPoolOptions, MySqlRow};
 use sqlx::query::Query;
 use sqlx::{AssertSqlSafe, MySql, Row as SqlxRow, TypeInfo, ValueRef};
@@ -191,17 +193,25 @@ impl RelationalBackend for MysqlBackend {
         rows.iter().map(decode).collect()
     }
 
-    async fn begin(&self) -> Result<MysqlTx, RelError> {
+    async fn begin(&self, isolation: Isolation) -> Result<MysqlTx, RelError> {
+        let statement = match isolation {
+            Isolation::ReadCommitted => {
+                "SET TRANSACTION ISOLATION LEVEL READ COMMITTED; START TRANSACTION"
+            }
+            Isolation::RepeatableRead => {
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ; START TRANSACTION"
+            }
+            Isolation::Serializable => {
+                "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE; START TRANSACTION"
+            }
+            other => return Err(RelError::Unsupported(format!("isolation level {other:?}"))),
+        };
         Ok(MysqlTx {
-            // READ COMMITTED: under InnoDB's default REPEATABLE READ a locking read or an
+            // The default is READ COMMITTED: under InnoDB's default REPEATABLE READ a locking read or an
             // `UPDATE` that matches no row takes a gap lock, and two transactions that then insert
             // into the same gap deadlock. The statement runs as a text query, so the isolation
             // level applies to exactly this transaction.
-            tx: self
-                .pool
-                .begin_with("SET TRANSACTION ISOLATION LEVEL READ COMMITTED; START TRANSACTION")
-                .await
-                .map_err(classify)?,
+            tx: self.pool.begin_with(statement).await.map_err(classify)?,
         })
     }
 }

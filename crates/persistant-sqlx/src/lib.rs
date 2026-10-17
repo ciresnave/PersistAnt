@@ -21,7 +21,9 @@ pub use options::{ConnectOptions, TlsPolicy};
 #[cfg(feature = "sqlite")]
 pub use sqlite::{SqliteBackend, SqliteTx};
 
-use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
+use persistant_relational::{
+    Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
+};
 use sqlx::postgres::{PgArguments, PgPoolOptions, PgRow};
 use sqlx::query::Query;
 use sqlx::{Column, Postgres, Row as SqlxRow, TypeInfo, ValueRef};
@@ -205,9 +207,15 @@ impl RelationalBackend for PgBackend {
         rows.iter().map(decode).collect()
     }
 
-    async fn begin(&self) -> Result<PgTx<'_>, RelError> {
+    async fn begin(&self, isolation: Isolation) -> Result<PgTx<'_>, RelError> {
+        let statement = match isolation {
+            Isolation::ReadCommitted => "BEGIN",
+            Isolation::RepeatableRead => "BEGIN ISOLATION LEVEL REPEATABLE READ",
+            Isolation::Serializable => "BEGIN ISOLATION LEVEL SERIALIZABLE",
+            other => return Err(RelError::Unsupported(format!("isolation level {other:?}"))),
+        };
         Ok(PgTx {
-            tx: self.pool.begin().await.map_err(classify)?,
+            tx: self.pool.begin_with(statement).await.map_err(classify)?,
         })
     }
 }

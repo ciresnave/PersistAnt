@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::translate::{self, Translator};
 use crate::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};
-use persistant_relational::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
+use persistant_relational::{
+    Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
+};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -210,7 +212,7 @@ impl<R: RelationalBackend> KvOnRelational<R> {
     }
 
     async fn batch_once(&self, ops: &[BatchOp]) -> Result<bool, BatchFail> {
-        let mut tx = self.db.begin().await?;
+        let mut tx = self.db.begin(Isolation::ReadCommitted).await?;
         // One batch at a time on a server with row locks. The preconditions below read rows that
         // may not exist, and a lock on a missing row (a gap lock on MySQL, an in-flight insert on
         // PostgreSQL) cannot exclude a second batch, so racing batches took locks in opposite orders
@@ -416,7 +418,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         ttl: Option<Duration>,
     ) -> Result<bool, KvError> {
         if *self.tr.dialect() == Dialect::MySql {
-            let mut tx = self.db.begin().await.map_err(err)?;
+            let mut tx = self.db.begin(Isolation::ReadCommitted).await.map_err(err)?;
             let won = self
                 .claim_two_step(&mut tx, key, &value, ttl)
                 .await

@@ -18,7 +18,7 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
             r.enabled,
             !matches!(
                 r.subject.as_str(),
-                "rel.row_lock" | "rel.isolation.repeatable_read"
+                "rel.row_lock" | "rel.isolation.repeatable_read" | "rel.isolation.serializable"
             ),
             "{}: {}",
             r.subject,

@@ -166,7 +166,10 @@ async fn a_dropped_transaction_rolls_back_and_a_committed_one_persists() {
         .await
         .unwrap();
     {
-        let mut tx = db.begin().await.unwrap();
+        let mut tx = db
+            .begin(persistant_relational::Isolation::ReadCommitted)
+            .await
+            .unwrap();
         tx.execute("INSERT INTO persistant_tx VALUES (1)", &[])
             .await
             .unwrap();
@@ -177,7 +180,10 @@ async fn a_dropped_transaction_rolls_back_and_a_committed_one_persists() {
         .await
         .unwrap();
     assert_eq!(n[0].int(0), Some(0), "dropped transaction must roll back");
-    let mut tx = db.begin().await.unwrap();
+    let mut tx = db
+        .begin(persistant_relational::Isolation::ReadCommitted)
+        .await
+        .unwrap();
     tx.execute("INSERT INTO persistant_tx VALUES (2)", &[])
         .await
         .unwrap();

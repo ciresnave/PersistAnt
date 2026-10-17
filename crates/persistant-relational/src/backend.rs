@@ -2,6 +2,21 @@
 use crate::{Dialect, RelError, Row, Value};
 use std::future::Future;
 
+/// The isolation level a transaction asks for. A backend gives the level asked for or a stronger one;
+/// which it can actually show is what the `rel.isolation.*` leaves certify.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Isolation {
+    /// No dirty reads: the backend's usual level for a transaction here.
+    #[default]
+    ReadCommitted,
+    /// A row or count read twice in the transaction reads the same.
+    RepeatableRead,
+    /// Concurrent transactions behave as if they ran one at a time (a conflicting one fails with
+    /// [`RelError::Serialization`], or waits).
+    Serializable,
+}
+
 /// A relational database, as small as it can be.
 ///
 /// Statements are written in the backend's own [`Dialect`]; parameters are positional and written
@@ -35,8 +50,11 @@ pub trait RelationalBackend: Send + Sync {
         params: &[Value],
     ) -> impl Future<Output = Result<Vec<Row>, RelError>> + Send;
 
-    /// Begin a transaction.
-    fn begin(&self) -> impl Future<Output = Result<Self::Tx<'_>, RelError>> + Send;
+    /// Begin a transaction at (at least) `isolation`.
+    fn begin(
+        &self,
+        isolation: Isolation,
+    ) -> impl Future<Output = Result<Self::Tx<'_>, RelError>> + Send;
 }
 
 /// A transaction. Statements run inside it are committed or rolled back together.

@@ -149,7 +149,10 @@ async fn an_exhausted_pool_is_an_error_after_the_bound_not_a_hang() {
         .unwrap();
     use persistant_relational::RelationalBackend;
     // Hold the only connection in a transaction, then ask for another.
-    let _held = db.begin().await.unwrap();
+    let _held = db
+        .begin(persistant_relational::Isolation::ReadCommitted)
+        .await
+        .unwrap();
     let started = std::time::Instant::now();
     let second = db.query("SELECT 1", &[]).await;
     assert!(

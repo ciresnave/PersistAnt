@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+### Breaking
+- **`RelationalBackend::begin` takes an `Isolation`** (`ReadCommitted`, the default, `RepeatableRead`, `Serializable`). Migration: pass `Isolation::ReadCommitted` (re-exported from `persistant_relational`) to every `begin()` call to get exactly what `begin()` gave before; implementers of the trait add the parameter and map the level (PostgreSQL `BEGIN ISOLATION LEVEL ..`, MySQL `SET TRANSACTION ISOLATION LEVEL ..; START TRANSACTION`; SQLite ignores it, every transaction there is `BEGIN IMMEDIATE`). `Isolation` is `non_exhaustive`: a backend that does not know a level returns `RelError::Unsupported`.
+
+### Added
+- `rel.isolation.serializable` (relational leaf 11). PostgreSQL: of two concurrent serializable transactions that each read both rows and write a different one, one is refused with a serialization failure; the control is that at read committed both commit. MySQL: a plain read in a serializable transaction locks the row (another connection's `FOR UPDATE NOWAIT` is refused, and is not at read committed or after the transaction). Known-bad control: `NoTransactions`. **Off on SQLite**, with the reason in the row: `BEGIN IMMEDIATE` holds the write lock so the probe cannot run.
+- `rel.isolation.repeatable_read` now begins its transaction at that level instead of asking inside it, so it is **on for MySQL** too (it was off in 0.6.8); still off on SQLite.
+
 ## 0.6.8
 
 ### Added
