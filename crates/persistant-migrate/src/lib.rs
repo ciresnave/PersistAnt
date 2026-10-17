@@ -127,3 +127,64 @@ pub fn status(migrations: &[Migration], ledger: &[(i64, Vec<u8>)]) -> Vec<Line> 
     out.sort_by_key(|l| l.version);
     out
 }
+
+/// Where a database URL points, as it is safe to print: the password is dropped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Target {
+    /// The URL without its password or query string.
+    pub display: String,
+    /// Whether the host is this machine (loopback, a unix socket, or an SQLite file).
+    pub local: bool,
+}
+
+/// Describe `url`. A URL that cannot be read is reported as **not** local, so the guard errs closed.
+pub fn describe_target(url: &str) -> Target {
+    if url.starts_with("sqlite:") {
+        let path = url.trim_start_matches("sqlite:").trim_start_matches("//");
+        return Target {
+            display: format!("sqlite:{path}"),
+            local: true,
+        };
+    }
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return Target {
+            display: "(unreadable URL)".to_string(),
+            local: false,
+        };
+    };
+    let (rest, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let (authority, db) = rest.split_once('/').unwrap_or((rest, ""));
+    let (user, hostport) = match authority.rsplit_once('@') {
+        Some((cred, hp)) => (cred.split(':').next().unwrap_or(""), hp),
+        None => ("", authority),
+    };
+    let host_from_authority = if let Some(v6) = hostport.strip_prefix('[') {
+        v6.split(']').next().unwrap_or("")
+    } else {
+        hostport.split(':').next().unwrap_or("")
+    };
+    // A `host=` query parameter overrides the authority (PostgreSQL socket and multi-host URLs).
+    let host = query
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("host="))
+        .unwrap_or(host_from_authority);
+    let local = host.is_empty()
+        || host.starts_with('/')
+        || host == "localhost"
+        || host == "::1"
+        || host.starts_with("127.");
+    let at = if user.is_empty() {
+        String::new()
+    } else {
+        format!("{user}@")
+    };
+    let shown_host = if host == host_from_authority {
+        hostport.to_string()
+    } else {
+        format!("{hostport} (host={host})")
+    };
+    Target {
+        display: format!("{scheme}://{at}{shown_host}/{db}"),
+        local,
+    }
+}
