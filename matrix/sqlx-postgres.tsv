@@ -32,3 +32,4 @@ capability	rel.migrate.checksum	postgres	16.15	dialect=postgres	yes		arch=x86_64
 capability	rel.migrate.newer	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.migrate.newer	
 capability	rel.migrate.atomic	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.migrate.atomic	
 capability	rel.migrate.ddl_atomic	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.migrate.ddl_atomic	
+capability	rel.migrate.concurrent	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;test=rel::rel.migrate.concurrent	

@@ -32,3 +32,4 @@ capability	rel.migrate.checksum	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=l
 capability	rel.migrate.newer	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.migrate.newer	
 capability	rel.migrate.atomic	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.migrate.atomic	
 capability	rel.migrate.ddl_atomic	mysql	8.4.11	dialect=mysql	no	missing	arch=x86_64;os=linux;test=rel::rel.migrate.ddl_atomic	database does not support: DDL commits implicitly: a failed migration cannot undo the tables it created
+capability	rel.migrate.concurrent	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=rel::rel.migrate.concurrent	

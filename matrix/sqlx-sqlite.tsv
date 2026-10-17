@@ -32,3 +32,4 @@ capability	rel.migrate.checksum	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os
 capability	rel.migrate.newer	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.migrate.newer	
 capability	rel.migrate.atomic	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.migrate.atomic	
 capability	rel.migrate.ddl_atomic	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.migrate.ddl_atomic	
+capability	rel.migrate.concurrent	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;test=rel::rel.migrate.concurrent	
