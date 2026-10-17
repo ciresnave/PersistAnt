@@ -32,6 +32,13 @@ async fn main() {
             .into_iter()
             .map(|c| c.row),
     );
+    // The migration ledger: this file is the test own, so the ledger is too.
+    rows.extend(
+        persistant_relational::migrate_conformance::certify(&rel_db, &config, &env)
+            .await
+            .into_iter()
+            .map(|c| c.row),
+    );
     print!("{}", Matrix::from_rows(rows).to_tsv());
     for ext in ["", "-wal", "-shm"] {
         let mut p = path.as_os_str().to_owned();

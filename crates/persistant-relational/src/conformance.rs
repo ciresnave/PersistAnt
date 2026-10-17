@@ -137,6 +137,9 @@ pub enum Defect {
     LossyBytes,
     /// Every error comes back as `RelError::Backend`.
     UnclassifiedErrors,
+    /// As a migrator ([`Migrates`](crate::Migrates)): no ledger, no checksum, no transaction; every
+    /// migration runs again each time it is asked. Used by [`migrate_conformance`](crate::migrate_conformance).
+    NoMigrationLedger,
 }
 
 /// A backend with one [`Defect`] injected. The wrapped backend does the work.
@@ -150,6 +153,14 @@ impl<'a, R: RelationalBackend> Defective<'a, R> {
     /// Wrap `inner` so it is wrong in exactly the way `defect` says.
     pub fn new(inner: &'a R, defect: Defect) -> Self {
         Defective { inner, defect }
+    }
+
+    pub(crate) fn inner(&self) -> &'a R {
+        self.inner
+    }
+
+    pub(crate) fn defect(&self) -> Defect {
+        self.defect
     }
 }
 

@@ -201,3 +201,41 @@ impl RelationalTx for SqliteTx {
         self.tx.rollback().await.map_err(classify)
     }
 }
+
+impl persistant_relational::Migrates for SqliteBackend {
+    async fn migrate(
+        &self,
+        migrations: &[persistant_relational::Migration],
+    ) -> Result<persistant_relational::MigrateReport, persistant_relational::MigrateError> {
+        use crate::migrate::run_on_own_connection;
+        let before = persistant_relational::Migrates::applied_versions(self).await?;
+        run_on_own_connection!(self.pool, migrations, classify)?;
+        let after = persistant_relational::Migrates::applied_versions(self).await?;
+        let applied = after
+            .iter()
+            .copied()
+            .filter(|v| !before.contains(v))
+            .collect();
+        Ok(persistant_relational::MigrateReport {
+            applied,
+            already_applied: before,
+        })
+    }
+
+    async fn applied_versions(&self) -> Result<Vec<i64>, persistant_relational::MigrateError> {
+        use crate::migrate::backend_error;
+        let exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sqlx_migrations'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(backend_error)?;
+        if exists == 0 {
+            return Ok(Vec::new());
+        }
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success ORDER BY version")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(backend_error)
+    }
+}

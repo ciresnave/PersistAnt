@@ -213,3 +213,25 @@ async fn the_relational_leaves_certify_on() {
     );
     cleanup(&path);
 }
+
+/// The migration ledger (`persistant_relational::migrate_conformance`) on SQLite, in a fresh file: every
+/// leaf on, with the ledger-less migrator caught.
+#[tokio::test]
+async fn the_migration_leaves_certify_on() {
+    let (db, path) = open("migrations").await;
+    let config = Config::new().with("dialect", "sqlite");
+    let rows =
+        persistant_relational::migrate_conformance::certify(&db, &config, &Config::new()).await;
+    let off: Vec<_> = rows
+        .iter()
+        .filter(|c| !c.row.enabled)
+        .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
+        .collect();
+    assert!(off.is_empty(), "migration leaves off on SQLite: {off:#?}");
+    assert_eq!(
+        rows.len(),
+        persistant_relational::migrate_conformance::MigrateLeaf::ALL.len()
+    );
+    drop(db);
+    cleanup(&path);
+}

@@ -155,6 +155,26 @@ pub const SEED: &[(&str, &str)] = &[
         "concurrent serializable transactions behave as if run one at a time: PostgreSQL refuses one of two write-skew transactions, MySQL locks what a serializable transaction reads; absent on SQLite, whose single write lock is not probed",
     ),
     (
+        "rel.migrate.apply",
+        "migrations are applied in version order, the ledger lists them, and a second run applies nothing and does not run them again",
+    ),
+    (
+        "rel.migrate.checksum",
+        "changing the text of an applied migration is refused as a checksum mismatch, not silently re-run or ignored",
+    ),
+    (
+        "rel.migrate.newer",
+        "a program that knows fewer migrations than the database has applied is refused rather than run against a newer schema",
+    ),
+    (
+        "rel.migrate.atomic",
+        "a migration whose statements fail part-way leaves none of its row changes, keeps the migrations before it, and is reported as a classified failure",
+    ),
+    (
+        "rel.migrate.ddl_atomic",
+        "a migration that fails part-way also leaves none of the tables it created; absent where DDL commits implicitly (MySQL, MariaDB)",
+    ),
+    (
         "rel.savepoint",
         "inside a transaction, rolling back to a savepoint undoes the work after it, keeps the work before it, and the transaction still commits",
     ),
