@@ -82,14 +82,65 @@ fn decode(row: &MySqlRow) -> Result<Row, RelError> {
         }
         let name = raw.type_info().name().to_string();
         let v = match name.as_str() {
-            "BOOLEAN" => Value::Bool(row.try_get::<bool, _>(i).map_err(classify)?),
+            // sqlx names every TINYINT(1) "BOOLEAN", but MySQL keeps any byte there: 0 and 1 are a
+            // boolean, 2..=127 are that integer, and a byte of 128 or more could be signed or
+            // unsigned, which the column's name does not say: refused rather than guessed.
+            "BOOLEAN" => match row.try_get_unchecked::<u8, _>(i).map_err(classify)? {
+                0 => Value::Bool(false),
+                1 => Value::Bool(true),
+                n @ 2..=127 => Value::Int(i64::from(n)),
+                n => {
+                    return Err(RelError::Unsupported(format!(
+                        "column {i} has type TINYINT(1) and holds byte {n}, which is signed or                          unsigned and cannot be told apart here; use MysqlBackend::pool"
+                    )));
+                }
+            },
             "TINYINT" => Value::Int(i64::from(row.try_get::<i8, _>(i).map_err(classify)?)),
+            "TINYINT UNSIGNED" => Value::Int(i64::from(row.try_get::<u8, _>(i).map_err(classify)?)),
+            "SMALLINT UNSIGNED" => {
+                Value::Int(i64::from(row.try_get::<u16, _>(i).map_err(classify)?))
+            }
+            "MEDIUMINT UNSIGNED" | "INT UNSIGNED" => {
+                Value::Int(i64::from(row.try_get::<u32, _>(i).map_err(classify)?))
+            }
+            // Above i64::MAX there is no Value::Int: refused, never wrapped to a negative number.
+            "BIGINT UNSIGNED" => {
+                let v = row.try_get::<u64, _>(i).map_err(classify)?;
+                Value::Int(i64::try_from(v).map_err(|_| {
+                    RelError::Unsupported(format!(
+                        "column {i} has type BIGINT UNSIGNED and holds {v}, which is above i64::MAX;                          use MysqlBackend::pool"
+                    ))
+                })?)
+            }
+            "YEAR" => Value::Int(row.try_get_unchecked::<i64, _>(i).map_err(classify)?),
+            // Types with a canonical text form (`decode.rs`).
+            "DECIMAL" | "ENUM" | "JSON" => {
+                Value::Text(row.try_get_unchecked::<String, _>(i).map_err(classify)?)
+            }
+            "DATE" => Value::Text(crate::decode::date_text(
+                row.try_get::<sqlx::types::time::Date, _>(i)
+                    .map_err(classify)?,
+            )),
+            "DATETIME" => Value::Text(crate::decode::naive_text(
+                row.try_get::<sqlx::types::time::PrimitiveDateTime, _>(i)
+                    .map_err(classify)?,
+            )),
+            "TIMESTAMP" => Value::Text(crate::decode::utc_text(
+                row.try_get::<sqlx::types::time::OffsetDateTime, _>(i)
+                    .map_err(classify)?,
+            )),
+            "TIME" => Value::Text(crate::decode::mysql_time_text(
+                &row.try_get::<sqlx::mysql::types::MySqlTime, _>(i)
+                    .map_err(classify)?,
+            )),
             "SMALLINT" => Value::Int(i64::from(row.try_get::<i16, _>(i).map_err(classify)?)),
             "INT" | "MEDIUMINT" => {
                 Value::Int(i64::from(row.try_get::<i32, _>(i).map_err(classify)?))
             }
             "BIGINT" => Value::Int(row.try_get::<i64, _>(i).map_err(classify)?),
-            "FLOAT" => Value::Float(f64::from(row.try_get::<f32, _>(i).map_err(classify)?)),
+            "FLOAT" => Value::Float(crate::decode::f32_shortest(
+                row.try_get::<f32, _>(i).map_err(classify)?,
+            )),
             "DOUBLE" => Value::Float(row.try_get::<f64, _>(i).map_err(classify)?),
             "CHAR" | "VARCHAR" | "TEXT" | "TINYTEXT" | "MEDIUMTEXT" | "LONGTEXT" => {
                 Value::Text(row.try_get::<String, _>(i).map_err(classify)?)
