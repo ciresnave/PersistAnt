@@ -61,7 +61,7 @@ read 2026-10-17. Ruling it cites (board 196, relayed by the PM): all projects ad
 | Per-migration checksums | Built: ledger is sqlx's own (SHA-384 of the text), a changed applied migration is `ChecksumMismatch`; but `MigrateReport` lists versions only | **C1.** `MigrateReport` carries each applied migration's checksum |
 | Fresh-install check | Not built | **C2.** `verify_fresh(&[Migration])`: apply to an empty schema, return the ledger, no side effects elsewhere |
 | Load Humboldt's 36 `migrations/*.sql` | `Migration { version, description, sql }` built by hand | **C3.** a loader from `sqlx::migrate!` / a directory, so a consumer does not copy files into code |
-| Row expiry sweep over its own tables | `kv.purge_expired` sweeps the kv table only | **C4.** `rel.expire(table, column, now)`: delete rows past a timestamp column; needs a decision (below) |
+| Row expiry sweep over its own tables | `kv.purge_expired` sweeps the kv table only | **C4, built (0.7.13):** `persistant_relational::sweep(db, table, column, cutoff, batch, max_batches)`; the consumer owns the retention policy (PM, 2026-10-17) |
 | 399 `sqlx::query!` calls, 29 transactions | `PgBackend::pool()` hands back the concrete `PgPool`; the relational trait is deliberately small | **none, by design (D1)**: typed queries stay with the consumer |
 | Encrypted dump, per-table digest, restore check | Not built, no consumer outside Humboldt measured | **C5, only if a second consumer wants it** |
 

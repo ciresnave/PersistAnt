@@ -20,10 +20,12 @@ mod migrate;
 pub mod migrate_conformance;
 mod secret;
 pub mod speed;
+mod sweep;
 mod value;
 
 pub use backend::{Isolation, RelationalBackend, RelationalTx};
 pub use error::RelError;
 pub use migrate::{MigrateError, MigrateReport, Migrates, Migration};
 pub use secret::{ConnectionSecret, Redacted};
+pub use sweep::{SweepError, SweepReport, sweep};
 pub use value::{Dialect, Row, Value};
