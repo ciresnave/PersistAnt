@@ -34,6 +34,108 @@ pub(crate) fn migrator(migrations: &[Migration]) -> Migrator {
     Migrator::with_migrations(sqlx_migrations)
 }
 
+/// Why an sqlx [`Migrator`] cannot be run by [`Migrates::migrate`] as it stands.
+///
+/// Each variant is something sqlx would honour and this crate would not: refusing is the point, so
+/// a program never believes it ran `sqlx::migrate!` and got a different run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FromSqlxError {
+    /// The migration asks to run outside a transaction (`-- no-transaction`, or `no_tx` on the
+    /// `Migrator`); [`Migration`] always runs in one.
+    NoTransaction {
+        /// The version.
+        version: i64,
+    },
+    /// The `Migrator` keeps its ledger in another table than `_sqlx_migrations`, so this crate would
+    /// read and write a different ledger than the program asked for.
+    LedgerTable {
+        /// The table the `Migrator` names.
+        table: String,
+    },
+    /// The `Migrator` was set to create a schema or to skip locking; this crate always locks and never
+    /// creates a schema.
+    Setting(&'static str),
+    /// A migration's stored checksum is not the SHA-384 of its text, so a ledger written by this
+    /// crate would differ from the one sqlx writes for the same migration.
+    Checksum {
+        /// The version.
+        version: i64,
+    },
+}
+
+impl std::fmt::Display for FromSqlxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FromSqlxError::NoTransaction { version } => {
+                write!(f, "migration {version} runs outside a transaction")
+            }
+            FromSqlxError::LedgerTable { table } => {
+                write!(
+                    f,
+                    "the migrator keeps its ledger in `{table}`, not `_sqlx_migrations`"
+                )
+            }
+            FromSqlxError::Setting(s) => write!(f, "the migrator sets {s}, which is not supported"),
+            FromSqlxError::Checksum { version } => {
+                write!(
+                    f,
+                    "migration {version}: checksum is not the SHA-384 of its text"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for FromSqlxError {}
+
+/// The migrations of an sqlx [`Migrator`] (`sqlx::migrate!("./migrations")` or `Migrator::new(path)`)
+/// as [`Migration`]s for [`Migrates::migrate`], in the order sqlx would run them.
+///
+/// The ledger is shared, not converted: [`Migrates::migrate`] writes sqlx's own `_sqlx_migrations`
+/// with the same SHA-384 checksum sqlx computes from the same text, so a database migrated by
+/// `sqlx migrate run` is accepted as it is (and the other way round). Down halves of reversible
+/// migrations are dropped (this crate never undoes). Anything sqlx would do differently from this
+/// crate is an error, not a silent difference: see [`FromSqlxError`].
+pub fn migrations_from_sqlx(migrator: &Migrator) -> Result<Vec<Migration>, FromSqlxError> {
+    if migrator.table_name != "_sqlx_migrations" {
+        return Err(FromSqlxError::LedgerTable {
+            table: migrator.table_name.to_string(),
+        });
+    }
+    if migrator.no_tx {
+        return Err(FromSqlxError::Setting("no_tx"));
+    }
+    if !migrator.locking {
+        return Err(FromSqlxError::Setting("locking = false"));
+    }
+    let mut out = Vec::new();
+    for m in migrator
+        .iter()
+        .filter(|m| !m.migration_type.is_down_migration())
+    {
+        if m.no_tx {
+            return Err(FromSqlxError::NoTransaction { version: m.version });
+        }
+        let sql = sqlx::SqlStr::as_str(&m.sql);
+        let ours = Migration::new(m.version, m.description.to_string(), sql);
+        if migrator_checksum(&ours) != m.checksum.as_ref() {
+            return Err(FromSqlxError::Checksum { version: m.version });
+        }
+        out.push(ours);
+    }
+    Ok(out)
+}
+
+/// The checksum this crate's ledger will hold for `m`: computed by sqlx's own constructor.
+fn migrator_checksum(m: &Migration) -> Vec<u8> {
+    migrator(std::slice::from_ref(m))
+        .iter()
+        .next()
+        .map(|x| x.checksum.to_vec())
+        .unwrap_or_default()
+}
+
 /// sqlx's migration error as a typed one; `classify` is the backend's own error classification.
 pub(crate) fn map_error(
     e: sqlx::migrate::MigrateError,
