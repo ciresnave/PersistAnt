@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The checked-in `matrix/sqlx-sqlite.tsv` parses and records every certified leaf on.
+//! The checked-in `matrix/sqlx-sqlite.tsv` parses and records every certified leaf on, except rel.row_lock (SQLite has no row locks).
 
 use persistant_core::{Config, Lookup, Matrix};
 
@@ -13,7 +13,14 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
         "seventeen kv/lock leaves and seven relational leaves are certified"
     );
     for r in m.rows() {
-        assert!(r.enabled, "{}: {}", r.subject, r.note);
+        // SQLite has no row locks, so that one leaf is recorded off.
+        assert_eq!(
+            r.enabled,
+            r.subject.as_str() != "rel.row_lock",
+            "{}: {}",
+            r.subject,
+            r.note
+        );
         // kv rows are keyed by the adapter, relational rows by the server itself.
         let want = if r.subject.as_str().starts_with("rel.") {
             "sqlite"

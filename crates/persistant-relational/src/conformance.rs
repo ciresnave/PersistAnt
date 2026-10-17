@@ -12,6 +12,8 @@
 //! - `rel.check_constraint`: a row violating a `CHECK` is rejected as [`RelError::CheckViolation`].
 //! - `rel.isolation.no_dirty_read`: a write inside an open transaction is invisible to another
 //!   connection until it commits, and visible after (read committed or stronger).
+//! - `rel.row_lock`: a row locked `FOR UPDATE` by an open transaction cannot be locked by another connection
+//!   (probed with `SKIP LOCKED`, which skips it) until the transaction ends. SQLite has no row locks, so it is off there.
 //! - `rel.savepoint`: inside a transaction, `ROLLBACK TO` a savepoint undoes the work after it and keeps the work before it.
 //!
 //! **Controls.** There is no reference relational engine to use as a positive control, so the positive
@@ -47,11 +49,13 @@ pub enum Leaf {
     IsolationNoDirtyRead,
     /// `rel.savepoint`
     Savepoint,
+    /// `rel.row_lock`
+    RowLock,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 7] = [
+    pub const ALL: [Leaf; 8] = [
         Leaf::Values,
         Leaf::Transaction,
         Leaf::UniqueClassified,
@@ -59,6 +63,7 @@ impl Leaf {
         Leaf::CheckConstraint,
         Leaf::IsolationNoDirtyRead,
         Leaf::Savepoint,
+        Leaf::RowLock,
     ];
 
     /// The capability id.
@@ -71,13 +76,14 @@ impl Leaf {
             Leaf::CheckConstraint => "rel.check_constraint",
             Leaf::IsolationNoDirtyRead => "rel.isolation.no_dirty_read",
             Leaf::Savepoint => "rel.savepoint",
+            Leaf::RowLock => "rel.row_lock",
         }
     }
 
     fn defects(self) -> &'static [Defect] {
         match self {
             Leaf::Values => &[Defect::LossyBytes],
-            Leaf::Transaction | Leaf::IsolationNoDirtyRead | Leaf::Savepoint => {
+            Leaf::Transaction | Leaf::IsolationNoDirtyRead | Leaf::Savepoint | Leaf::RowLock => {
                 &[Defect::NoTransactions]
             }
             Leaf::UniqueClassified => &[Defect::UnclassifiedErrors],
@@ -332,6 +338,7 @@ pub async fn run_leaf<R: RelationalBackend>(
         Leaf::CheckConstraint => check(b, &s, constrained).await,
         Leaf::IsolationNoDirtyRead => no_dirty_read(b, &s).await,
         Leaf::Savepoint => savepoint(b, &s).await,
+        Leaf::RowLock => row_lock(b, &s).await,
     }
 }
 
@@ -532,6 +539,59 @@ async fn savepoint<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> 
             return wrong(format!(
                 "after ROLLBACK TO a savepoint and commit, expected only row 1, found {ids:?}"
             ));
+        }
+        Ok(())
+    }
+    .await;
+    drop_tables(b, &[T]).await?;
+    result
+}
+
+async fn row_lock<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
+    const T: &str = "persistant_rel_row_lock";
+    if matches!(s.0, Dialect::Sqlite) {
+        return Err(Failure::Backend(RelError::Unsupported(
+            "SQLite has no row locks: a write locks the whole database".to_string(),
+        )));
+    }
+    drop_tables(b, &[T]).await?;
+    b.execute(
+        &format!(
+            "CREATE TABLE {T} ({}, n BIGINT NOT NULL){}",
+            s.pk("id"),
+            s.tail()
+        ),
+        &[],
+    )
+    .await?;
+    b.execute(
+        &format!("INSERT INTO {T} (id, n) VALUES ({}, {})", s.p(1), s.p(2)),
+        &[Value::Int(1), Value::Int(1)],
+    )
+    .await?;
+    let lock = format!("SELECT id FROM {T} WHERE id = 1 FOR UPDATE");
+    let probe = format!("SELECT id FROM {T} WHERE id = 1 FOR UPDATE SKIP LOCKED");
+    let result = async {
+        let mut tx = b.begin().await?;
+        if tx.query(&lock, &[]).await?.len() != 1 {
+            return wrong("FOR UPDATE did not return the row it locks");
+        }
+        // `b.query` runs on another connection, outside `tx`.
+        let held = b.query(&probe, &[]).await;
+        let held = match held {
+            Ok(rows) => rows.len(),
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e.into());
+            }
+        };
+        if held != 0 {
+            let _ = tx.rollback().await;
+            return wrong("another connection locked a row an open transaction holds FOR UPDATE");
+        }
+        tx.commit().await?;
+        if b.query(&probe, &[]).await?.len() != 1 {
+            return wrong("the row is still locked after the transaction committed");
         }
         Ok(())
     }
