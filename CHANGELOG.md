@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.1
+
+### Added
+- **Relational kind, stages 1, 3 and 4 of backend benchmarking** (`persistant_relational::{contract, speed, choose}`), on the same core types as kv and blob. `contract::check` decides eligibility from a leaf subset (`conformance::certify_leaves`, new; `certify` is now `certify_leaves` over every leaf). `speed` has four workloads (`speed.rel.insert`, `select_by_key`, `update`, `transaction`), each timed only on a backend that passes the leaf it depends on (`rel.values` or `rel.transaction`); the rest are excluded with the reason, never ranked. `choose` ranks by a workload within an environment and excludes by leaf or by declared durability. Relational durability is **declared and not verified** (`verified: None` for SQLite, PostgreSQL and MySQL); no power-loss test exists.
+- `examples/rel_speed` and `bench/sqlx-rel-speed.tsv` (one dated run on a developer machine: Windows, PostgreSQL 16 and MySQL 8.4 in Docker Desktop, so their figures include the VM network). CI times SQLite and uploads the data; nothing compares a figure to a constant.
+
 ## 0.7.0
 
 ### Breaking

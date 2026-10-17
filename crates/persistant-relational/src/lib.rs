@@ -12,9 +12,12 @@
 //! resist it.
 
 mod backend;
+pub mod choose;
 pub mod conformance;
+pub mod contract;
 mod error;
 mod secret;
+pub mod speed;
 mod value;
 
 pub use backend::{Isolation, RelationalBackend, RelationalTx};

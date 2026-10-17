@@ -36,9 +36,11 @@ blob (#45). Not done, in this order (queued by the PM 2026-10-16):
    blob durability is declared and unverified)*, then **the relational kind**. *Its first leaves are
    done (0.6.1: `rel.values`, `rel.transaction`, `rel.error.unique`, `rel.foreign_key`,
    `rel.check_constraint`; on for PostgreSQL, SQLite and MySQL, with a weaker positive control than kv
-   and blob: stated in the code).* Still to build, in order: `rel.isolation`, `rel.savepoint`,
-   `rel.row_lock`, `rel.upsert(where)`, migrations as leaves; then speed and `choose` for it. Owner:
-   the PersistAnt lane.
+   and blob: stated in the code); then `rel.isolation.*` (no_dirty_read, repeatable_read, serializable;
+   0.7.0 made `begin` take an `Isolation`), `rel.savepoint`, `rel.row_lock`, `rel.upsert_where`; then
+   contract, speed and `choose` for it (0.7.1: four workloads, durability declared and unverified).*
+   Still to build: migrations as leaves, and a relational speed workload for each new leaf worth
+   timing. Owner: the PersistAnt lane.
 3. **Synapse `tests/mailbox_suite` as a stage-1 consumer check**: the Synapse lane runs `run_all` on
    each eligible backend (Postgres, SQLite, MySQL) and reports which leaves it adds.
 4. Not covered by any stage yet: concurrency-aware speed, value sizes other than 256 bytes, ranking
