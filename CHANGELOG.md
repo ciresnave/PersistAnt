@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.6
+
+### Added
+- `rel.row_lock` (relational leaf 8): a row locked `FOR UPDATE` by an open transaction cannot be locked by another connection (probed with `SKIP LOCKED`) until the transaction ends. Known-bad control: `NoTransactions`. **Off on SQLite, honestly**: it has no row locks (a write locks the whole database), so the SQLite matrix records the leaf as `missing`. PostgreSQL and MySQL rows come from CI.
+
 ## 0.6.5
 
 ### Added

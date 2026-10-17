@@ -191,7 +191,12 @@ async fn the_relational_leaves_certify_on() {
         .filter(|c| !c.row.enabled)
         .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
         .collect();
-    assert!(off.is_empty(), "relational leaves off on SQLite: {off:#?}");
+    // SQLite has no row locks (a write locks the whole database): that leaf is honestly off.
+    assert_eq!(off.len(), 1, "only rel.row_lock is off on SQLite: {off:#?}");
+    assert!(
+        off[0].starts_with("rel.row_lock: Some(Missing)"),
+        "{off:#?}"
+    );
     assert_eq!(
         rows.len(),
         persistant_relational::conformance::Leaf::ALL.len()
