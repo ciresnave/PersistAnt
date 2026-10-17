@@ -220,7 +220,8 @@ impl persistant_relational::Migrates for SqliteBackend {
             self.pool,
             migrations,
             classify,
-            "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sqlx_migrations'"
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = '_sqlx_migrations'",
+            None
         )
     }
 

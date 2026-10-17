@@ -16,6 +16,15 @@ use persistant_sqlx::MysqlBackend;
 /// two tests certifying at once would delete each other's keys. One at a time.
 static SERVER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// The server under test is MariaDB (`PERSISTANT_TEST_MYSQL_FLAVOR=mariadb`), not MySQL.
+fn mariadb() -> bool {
+    std::env::var("PERSISTANT_TEST_MYSQL_FLAVOR").as_deref() == Ok("mariadb")
+}
+
+fn flavor() -> &'static str {
+    if mariadb() { "mariadb" } else { "mysql" }
+}
+
 async fn backend() -> Option<MysqlBackend> {
     match std::env::var("PERSISTANT_TEST_MYSQL_URL") {
         Ok(url) => Some(MysqlBackend::connect(&url).await.expect("connect")),
@@ -34,8 +43,18 @@ async fn backend() -> Option<MysqlBackend> {
 async fn statements_parameters_and_values_round_trip() {
     let Some(db) = backend().await else { return };
     let _serial = SERVER.lock().await;
-    assert_eq!(db.dialect(), Dialect::MySql);
-    assert!(db.version().starts_with("8."), "version {:?}", db.version());
+    // The same tests run against MariaDB when `PERSISTANT_TEST_MYSQL_URL` names one.
+    if mariadb() {
+        assert_eq!(db.dialect(), Dialect::MariaDb);
+        assert!(
+            db.version().starts_with("11."),
+            "version {:?}",
+            db.version()
+        );
+    } else {
+        assert_eq!(db.dialect(), Dialect::MySql);
+        assert!(db.version().starts_with("8."), "version {:?}", db.version());
+    }
     let rows = db
         .query(
             "SELECT CAST(? AS SIGNED), CAST(? AS CHAR CHARACTER SET utf8mb4), CAST(? AS BINARY), CAST(? AS DOUBLE)",
@@ -107,7 +126,7 @@ async fn kv_on_mysql_certifies_every_leaf_on() {
     let kv = KvOnRelational::open(db).await.expect("open");
     kv.put("a", b"1".to_vec(), None).await.unwrap();
     assert_eq!(kv.get("a").await.unwrap().as_deref(), Some(&b"1"[..]));
-    let config = Config::new().with("dialect", "mysql");
+    let config = Config::new().with("dialect", flavor());
     let rows = certify(&kv, &config, &Config::new()).await;
     let off: Vec<_> = rows
         .iter()
@@ -194,7 +213,7 @@ async fn the_concurrency_leaves_are_exact_on_every_run() {
 async fn the_relational_leaves_certify_on() {
     let Some(db) = backend().await else { return };
     let _serial = SERVER.lock().await;
-    let config = Config::new().with("dialect", "mysql");
+    let config = Config::new().with("dialect", flavor());
     let rows = persistant_relational::conformance::certify(&db, &config, &Config::new()).await;
     let off: Vec<_> = rows
         .iter()
@@ -234,7 +253,7 @@ async fn the_migration_leaves_certify_on() {
     let db = persistant_sqlx::MysqlBackend::connect(&scoped)
         .await
         .unwrap();
-    let config = Config::new().with("dialect", "mysql");
+    let config = Config::new().with("dialect", flavor());
     let rows =
         persistant_relational::migrate_conformance::certify(&db, &config, &Config::new()).await;
     let off: Vec<_> = rows

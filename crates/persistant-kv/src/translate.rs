@@ -21,7 +21,7 @@ pub(crate) fn ddl(d: &Dialect) -> Option<&'static str> {
         // A key is at most 1024 bytes on MySQL (an indexed `VARBINARY`; InnoDB allows 3072). The
         // comparison is bytewise, the trap a text column or a `utf8mb4_0900_ai_ci` key would fall
         // into. A longer key is rejected by the server (strict mode), not truncated.
-        Dialect::MySql => Some(
+        Dialect::MySql | Dialect::MariaDb => Some(
             "CREATE TABLE IF NOT EXISTS persistant_kv (             k VARBINARY(1024) NOT NULL PRIMARY KEY, v LONGBLOB NOT NULL, expires_ms BIGINT)              ENGINE=InnoDB",
         ),
         _ => None,
@@ -48,6 +48,7 @@ impl Translator {
             Dialect::Postgres => None,
             Dialect::Sqlite => Some("sqlite"),
             Dialect::MySql => Some("mysql"),
+            Dialect::MariaDb => Some("mariadb"),
             other => {
                 return Err(RelError::Unsupported(format!(
                     "KvOnRelational has no translation to {other} yet"
@@ -70,7 +71,7 @@ impl Translator {
             .with(Allowance::UpsertAnyUniqueKey)
             .with_schema(schema);
         Ok(Translator {
-            positional: dialect == Dialect::MySql,
+            positional: matches!(dialect, Dialect::MySql | Dialect::MariaDb),
             dialect,
             target,
             opts,

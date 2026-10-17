@@ -203,6 +203,41 @@ jobs:
             generated/sqlx-speed.tsv
             generated/sqlx-rel-speed.tsv
 
+  mariadb:
+    name: MariaDB 11.4 (service container)
+    runs-on: ubuntu-latest
+    # SUP-008 waiver reason as for MySQL below: CI-only container, no credential of ours reaches it.
+    # Pinned by digest, read from the registry on 2026-10-17:
+    #   docker pull mariadb:11.4 && docker image inspect mariadb:11.4   (RepoDigests)
+    services:
+      mariadb:
+        image: mariadb:11.4@sha256:1292844148b311e4ed4300022a996d39083f415a963e970cf47cad1b3b18e3a6
+        env:
+          MARIADB_ROOT_PASSWORD: persistant-test
+          MARIADB_DATABASE: persistant
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PERSISTANT_TEST_MYSQL_URL: mysql://root:persistant-test@127.0.0.1:3306/persistant
+      PERSISTANT_TEST_MYSQL_FLAVOR: mariadb
+      # A missing URL must fail here, not skip.
+      PERSISTANT_REQUIRE_MYSQL: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      - name: cargo test persistant-sqlx --features mysql (against MariaDB)
+        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --no-fail-fast
+
   mysql:
     name: MySQL 8.4 (service container)
     runs-on: ubuntu-latest
