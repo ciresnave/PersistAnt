@@ -5,8 +5,10 @@
 //! Needs `PERSISTANT_TEST_DATABASE_URL`; skipped without it unless `PERSISTANT_REQUIRE_DATABASE=1`.
 
 use persistant_relational::{RelError, RelationalBackend, Value};
-use persistant_sqlx::{MigrateError, Migration, PgBackend};
+use persistant_sqlx::{FromSqlxError, MigrateError, Migration, PgBackend, migrations_from_sqlx};
 use sha2::{Digest, Sha384};
+use sqlx::SqlSafeStr;
+use sqlx::migrate::{Migration as SqlxMigration, MigrationType, Migrator};
 
 async fn isolated(name: &str) -> Option<PgBackend> {
     let Ok(url) = std::env::var("PERSISTANT_TEST_DATABASE_URL") else {
@@ -180,4 +182,98 @@ async fn the_ledger_is_sqlxs_own_shape_with_sha384_checksums() {
             "checksum is SHA-384 of the migration text, as sqlx writes it"
         );
     }
+}
+
+fn sqlx_mig(v: i64, kind: MigrationType, sql: &'static str, no_tx: bool) -> SqlxMigration {
+    SqlxMigration::new(
+        v,
+        format!("m{v}").into(),
+        kind,
+        sqlx::AssertSqlSafe(sql).into_sql_str(),
+        no_tx,
+    )
+}
+
+#[test]
+fn a_migrator_maps_to_migrations_and_down_halves_are_dropped() {
+    let m = Migrator::with_migrations(vec![
+        sqlx_mig(1, MigrationType::Simple, "CREATE TABLE a (id INT);", false),
+        sqlx_mig(
+            2,
+            MigrationType::ReversibleUp,
+            "CREATE TABLE b (id INT);",
+            false,
+        ),
+        sqlx_mig(2, MigrationType::ReversibleDown, "DROP TABLE b;", false),
+    ]);
+    let got = migrations_from_sqlx(&m).unwrap();
+    assert_eq!(
+        got,
+        vec![
+            Migration::new(1, "m1", "CREATE TABLE a (id INT);"),
+            Migration::new(2, "m2", "CREATE TABLE b (id INT);"),
+        ]
+    );
+}
+
+#[test]
+fn what_sqlx_would_do_differently_is_refused() {
+    let mut m =
+        Migrator::with_migrations(vec![sqlx_mig(1, MigrationType::Simple, "SELECT 1;", true)]);
+    assert_eq!(
+        migrations_from_sqlx(&m),
+        Err(FromSqlxError::NoTransaction { version: 1 })
+    );
+    m = Migrator::with_migrations(vec![sqlx_mig(1, MigrationType::Simple, "SELECT 1;", false)]);
+    m.dangerous_set_table_name("other_ledger");
+    assert!(matches!(
+        migrations_from_sqlx(&m),
+        Err(FromSqlxError::LedgerTable { .. })
+    ));
+    let mut m =
+        Migrator::with_migrations(vec![sqlx_mig(1, MigrationType::Simple, "SELECT 1;", false)]);
+    m.set_locking(false);
+    assert_eq!(
+        migrations_from_sqlx(&m),
+        Err(FromSqlxError::Setting("locking = false"))
+    );
+    // Positive control: the same migrator, unchanged, is accepted.
+    let ok =
+        Migrator::with_migrations(vec![sqlx_mig(1, MigrationType::Simple, "SELECT 1;", false)]);
+    assert!(migrations_from_sqlx(&ok).is_ok());
+}
+
+#[tokio::test]
+async fn a_database_migrated_by_sqlx_is_accepted_and_the_other_way_round() {
+    let Some(db) = isolated("from_sqlx").await else {
+        return;
+    };
+    let sqlx_side = Migrator::with_migrations(vec![
+        sqlx_mig(
+            1,
+            MigrationType::Simple,
+            "CREATE TABLE sx (id INT PRIMARY KEY);",
+            false,
+        ),
+        sqlx_mig(
+            2,
+            MigrationType::Simple,
+            "CREATE INDEX sx_id ON sx (id);",
+            false,
+        ),
+    ]);
+    // sqlx's own runner writes the ledger; this crate then sees both as already applied.
+    sqlx_side.run(db.pool()).await.unwrap();
+    let ours = migrations_from_sqlx(&sqlx_side).unwrap();
+    let r = db.migrate(&ours).await.unwrap();
+    assert!(r.applied.is_empty());
+    assert_eq!(r.already_applied, vec![1, 2]);
+    // And the checksum this crate would write is the one sqlx wrote.
+    let stored: Vec<Vec<u8>> =
+        sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
+    let want: Vec<Vec<u8>> = sqlx_side.iter().map(|m| m.checksum.to_vec()).collect();
+    assert_eq!(stored, want);
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.11
+
+### Added
+- `persistant_sqlx::migrations_from_sqlx(&Migrator)`: run `sqlx::migrate!("./migrations")` (or a `Migrator::new(path)`) through `Migrates::migrate`. Same `_sqlx_migrations` ledger and SHA-384 checksums, so a database migrated by `sqlx migrate run` is accepted as it is; down halves are dropped. A `Migrator` that sqlx would run differently (`no_tx`, another ledger table, locking off) is refused with `FromSqlxError`, never run differently.
 ## 0.7.10
 
 ### Added

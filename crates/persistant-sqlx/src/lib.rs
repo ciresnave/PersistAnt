@@ -14,6 +14,7 @@ mod options;
 #[cfg(feature = "sqlite")]
 mod sqlite;
 
+pub use migrate::{FromSqlxError, migrations_from_sqlx};
 #[cfg(feature = "mysql")]
 pub use mysql::{MysqlBackend, MysqlTx};
 pub use options::{ConnectOptions, TlsPolicy};
