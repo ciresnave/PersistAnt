@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.9
+
+### Added
+- docs: `docs/DESIGN-DURABILITY-MACHINE.md`, a design note for verifying `Machine` (power-loss) durability: options on this PC, a recommended Hyper-V harness, what it proves and what stays unverified. No code change.
+
 ## 0.7.8
 
 ### Changed
