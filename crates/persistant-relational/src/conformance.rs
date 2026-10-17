@@ -12,6 +12,7 @@
 //! - `rel.check_constraint`: a row violating a `CHECK` is rejected as [`RelError::CheckViolation`].
 //! - `rel.isolation.no_dirty_read`: a write inside an open transaction is invisible to another
 //!   connection until it commits, and visible after (read committed or stronger).
+//! - `rel.savepoint`: inside a transaction, `ROLLBACK TO` a savepoint undoes the work after it and keeps the work before it.
 //!
 //! **Controls.** There is no reference relational engine to use as a positive control, so the positive
 //! control is weaker than in the kv and blob suites: it is that the leaf's schema could be created on
@@ -44,17 +45,20 @@ pub enum Leaf {
     CheckConstraint,
     /// `rel.isolation.no_dirty_read`
     IsolationNoDirtyRead,
+    /// `rel.savepoint`
+    Savepoint,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 6] = [
+    pub const ALL: [Leaf; 7] = [
         Leaf::Values,
         Leaf::Transaction,
         Leaf::UniqueClassified,
         Leaf::ForeignKey,
         Leaf::CheckConstraint,
         Leaf::IsolationNoDirtyRead,
+        Leaf::Savepoint,
     ];
 
     /// The capability id.
@@ -66,13 +70,16 @@ impl Leaf {
             Leaf::ForeignKey => "rel.foreign_key",
             Leaf::CheckConstraint => "rel.check_constraint",
             Leaf::IsolationNoDirtyRead => "rel.isolation.no_dirty_read",
+            Leaf::Savepoint => "rel.savepoint",
         }
     }
 
     fn defects(self) -> &'static [Defect] {
         match self {
             Leaf::Values => &[Defect::LossyBytes],
-            Leaf::Transaction | Leaf::IsolationNoDirtyRead => &[Defect::NoTransactions],
+            Leaf::Transaction | Leaf::IsolationNoDirtyRead | Leaf::Savepoint => {
+                &[Defect::NoTransactions]
+            }
             Leaf::UniqueClassified => &[Defect::UnclassifiedErrors],
             Leaf::ForeignKey | Leaf::CheckConstraint => &[],
         }
@@ -324,6 +331,7 @@ pub async fn run_leaf<R: RelationalBackend>(
         Leaf::ForeignKey => foreign_key(b, &s, constrained).await,
         Leaf::CheckConstraint => check(b, &s, constrained).await,
         Leaf::IsolationNoDirtyRead => no_dirty_read(b, &s).await,
+        Leaf::Savepoint => savepoint(b, &s).await,
     }
 }
 
@@ -487,6 +495,43 @@ async fn no_dirty_read<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failu
         tx.commit().await?;
         if count(b, T).await? != 1 {
             return wrong("a committed write is not visible to another connection");
+        }
+        Ok(())
+    }
+    .await;
+    drop_tables(b, &[T]).await?;
+    result
+}
+
+async fn savepoint<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
+    const T: &str = "persistant_rel_savepoint";
+    drop_tables(b, &[T]).await?;
+    b.execute(
+        &format!(
+            "CREATE TABLE {T} ({}, n BIGINT NOT NULL){}",
+            s.pk("id"),
+            s.tail()
+        ),
+        &[],
+    )
+    .await?;
+    let ins = format!("INSERT INTO {T} (id, n) VALUES ({}, {})", s.p(1), s.p(2));
+    let result = async {
+        let mut tx = b.begin().await?;
+        tx.execute(&ins, &[Value::Int(1), Value::Int(1)]).await?;
+        tx.execute("SAVEPOINT persistant_sp", &[]).await?;
+        tx.execute(&ins, &[Value::Int(2), Value::Int(2)]).await?;
+        tx.execute("ROLLBACK TO SAVEPOINT persistant_sp", &[])
+            .await?;
+        tx.commit().await?;
+        let rows = b
+            .query(&format!("SELECT id FROM {T} ORDER BY id"), &[])
+            .await?;
+        let ids: Vec<Option<i64>> = rows.iter().map(|r| r.int(0)).collect();
+        if ids != [Some(1)] {
+            return wrong(format!(
+                "after ROLLBACK TO a savepoint and commit, expected only row 1, found {ids:?}"
+            ));
         }
         Ok(())
     }

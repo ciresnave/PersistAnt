@@ -175,6 +175,9 @@ impl RelationalBackend for MysqlBackend {
     }
 
     async fn execute(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        if params.is_empty() {
+            return text_execute(sql, &self.pool).await;
+        }
         let q = bind(sqlx::query(AssertSqlSafe(sql.to_string())), params)?;
         q.execute(&self.pool)
             .await
@@ -203,6 +206,20 @@ impl RelationalBackend for MysqlBackend {
     }
 }
 
+/// Run a statement with no parameters over MySQL's text protocol. The prepared-statement protocol
+/// refuses some statements outright (`SAVEPOINT`, error 1295), and a statement with nothing to bind
+/// gains nothing from being prepared.
+async fn text_execute<'e, E>(sql: &str, executor: E) -> Result<u64, RelError>
+where
+    E: sqlx::Executor<'e, Database = MySql>,
+{
+    sqlx::raw_sql(AssertSqlSafe(sql.to_string()))
+        .execute(executor)
+        .await
+        .map(|r| r.rows_affected())
+        .map_err(classify)
+}
+
 /// A MySQL transaction.
 #[derive(Debug)]
 pub struct MysqlTx {
@@ -211,6 +228,9 @@ pub struct MysqlTx {
 
 impl RelationalTx for MysqlTx {
     async fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        if params.is_empty() {
+            return text_execute(sql, &mut *self.tx).await;
+        }
         let q = bind(sqlx::query(AssertSqlSafe(sql.to_string())), params)?;
         q.execute(&mut *self.tx)
             .await

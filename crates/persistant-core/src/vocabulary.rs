@@ -147,6 +147,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a write inside an open transaction is invisible to every other connection until it commits, and visible after",
     ),
     (
+        "rel.savepoint",
+        "inside a transaction, rolling back to a savepoint undoes the work after it, keeps the work before it, and the transaction still commits",
+    ),
+    (
         "kv.durability.process",
         "a write acknowledged as stored is still there after the writing process is killed hard and the store is opened again; says nothing about power loss or an operating-system crash (that is the Machine class, declared not verified)",
     ),
