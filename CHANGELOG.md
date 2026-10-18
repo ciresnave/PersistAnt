@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.4
+
+### Added
+- `docs/COMPILE-TIME-SQL.md`: design for re-exporting UniSQL's compile-time macros with catalog-based checks (schema snapshots from migrations or a live catalog, the checks that need no server and the ones never claimed, the `persistant::sql!` API and features, `persistant-migrate snapshot`, the road to typed rows). Also records that `sqlx::query!` cannot run on PersistAnt's transaction types today. `ROADMAP.md`: five rows. No code change. `matrix/opendal.tsv` regenerated: OpenDAL floated from 0.59.4 to 0.59.5 (no lockfile), which the matrix check records.
+
 ## 0.8.3
 
 ### Added

@@ -88,6 +88,16 @@ A command-line tool over `Migrates`: apply, status (ledger with checksums, C1) a
 
 Not scheduled until the PM assigns it.
 
+## Compile-time SQL checks (PM [TASK] 2026-10-18)
+
+CireSnave 2026-10-18 (`CIRESNAVE-EXPECTATIONS.md` 6.16): *"have PersistAnt re-export it and the catalog-based checks. ... All of our projects should strive to provide that same 'checks happen at compile time' functionality where applicable."* Design: `docs/COMPILE-TIME-SQL.md` (not built; interface with the UniSQL lane not yet frozen). Rows, in order:
+
+1. **Design agreed with UniSQL** (their `Schema` serde and `Column` detail fields, `Sql` location, schema lookup). *Open.*
+2. **`persistant-macros` (a thin proc-macro over `unisql-macro-core`, UniSQL cannot be extended in place) and `persistant::sql!`** plus `Sql` and `RelationalSqlExt`, feature `sql-macros`, compile-fail tests. *Waits for UniSQL slices 1-2 (unisql#63 `docs/MACROS.md`) on crates.io.*
+3. **Catalog readers** in `persistant-sqlx` (PostgreSQL, MySQL/MariaDB, SQLite) and **`persistant-migrate snapshot` / `--check`** with a CI step. *Waits for 1.*
+4. **`FromRow` derive and `sql!(as T, ..)`** (typed rows over the shared value classes). *Waits for 2 and 3.*
+5. **C6 (optional): `PgTx` / `MysqlTx` / `SqliteTx` `connection()` accessors**, so `sqlx::query!` can run inside a PersistAnt transaction. Verified missing at `4febf59`; additive; built only if a consumer asks (board 230 option A uses the pool, which already works).
+
 ## SQLite and MySQL backends (through UniSQL)
 
 `KvOnRelational` written once in PostgreSQL SQL and translated by UniSQL (`DESIGN-KINDS.md` §5).
