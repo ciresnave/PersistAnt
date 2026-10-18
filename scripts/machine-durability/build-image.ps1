@@ -39,16 +39,18 @@ $got = (Get-FileHash $img -Algorithm SHA256).Hash.ToLower()
 if ($got -ne $ImageSha256) { throw "SHA-256 of $ImageName is $got, pinned ${ImageSha256}: refusing it" }
 Write-Host "image verified: $ImageSha256"
 
-# qcow2 -> dynamic VHDX, grown to the size the databases need, in a container (no host install).
+# qcow2 -> dynamic VHDX, grown (qemu-img cannot resize a dynamic VHDX, so the qcow2 is resized first) to the size the databases need, in a container (no host install).
 $base = Join-Path $StateDir 'base.vhdx'
 Remove-Item -Force -ErrorAction SilentlyContinue $base
 docker run --rm -v "${dl}:/in:ro" -v "${StateDir}:/out" ubuntu:24.04 sh -c `
-    "apt-get update -qq && apt-get install -y -qq qemu-utils >/dev/null && qemu-img convert -f qcow2 -O vhdx -o subformat=dynamic /in/$ImageName /out/base.vhdx && qemu-img resize /out/base.vhdx ${DiskGB}G"
+    "apt-get update -qq && apt-get install -y -qq qemu-utils >/dev/null && cp /in/$ImageName /out/tmp.qcow2 && qemu-img resize /out/tmp.qcow2 ${DiskGB}G && qemu-img convert -f qcow2 -O vhdx -o subformat=dynamic /out/tmp.qcow2 /out/base.vhdx && rm /out/tmp.qcow2"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $base)) { throw 'qemu-img conversion failed' }
 
 # The driver's key. Left in place if it exists, so a rebuilt image keeps working for existing runners.
 $key = Join-Path $StateDir 'id_pa'
 if (-not (Test-Path $key)) { ssh-keygen -q -t ed25519 -N '""' -C persistant-machine-durability -f $key }
+# The runner account only reads the image and the key.
+icacls $StateDir /grant 'gh-runner:(OI)(CI)RX' /T | Out-Null
 $pub = (Get-Content "$key.pub" -Raw).Trim()
 
 # Seed ISO (cloud-init NoCloud: volume label "cidata"), written with the IMAPI2 COM API: no tools to install.
