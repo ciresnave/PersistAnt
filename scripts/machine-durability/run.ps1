@@ -39,12 +39,23 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$Key = Join-Path $StateDir 'id_pa'
+$StateKey = Join-Path $StateDir 'id_pa'
 $Base = Join-Path $StateDir 'base.vhdx'
-foreach ($p in $Binary, $Key, $Base) { if (-not (Test-Path $p)) { throw "missing $p" } }
+foreach ($p in $Binary, $StateKey, $Base) { if (-not (Test-Path $p)) { throw "missing $p" } }
 try { $null = Get-VM -ErrorAction Stop } catch {
     throw "Hyper-V is not usable by $(whoami): add the account to 'Hyper-V Administrators' and start a new session. ($($_.Exception.Message))"
 }
+
+# OpenSSH on Windows refuses a private key whose owner is not the current user (or Administrators/SYSTEM)
+# or that another account can read: "UNPROTECTED PRIVATE KEY FILE" / "Bad owner or permissions", exit
+# 255, which Wait-Guest would retry until its timeout. The state directory's key belongs to whoever
+# built the image and is readable by the runner account, so use a copy owned by this account, with
+# an ACL for this account only.
+New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
+$Key = Join-Path $WorkDir "id_pa_$PID"
+Copy-Item -Force $StateKey $Key
+& icacls $Key /inheritance:r /grant:r "$(whoami):(F)" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "could not restrict the ACL of $Key" }
 
 $VmName = "pa-durability-run-$PID"
 # The guest's address. NOT its DNS name: the Default Switch keeps the name of the provisioning VM (same
@@ -53,6 +64,7 @@ $VmName = "pa-durability-run-$PID"
 $Guest = 'pa-durability.mshome.net'
 $SshOpts = @('-i', $Key, '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=NUL',
     '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'LogLevel=ERROR')
+$script:LastSsh = ''
 $results = [System.Collections.Generic.List[object]]::new()
 $failures = [System.Collections.Generic.List[string]]::new()
 
@@ -85,6 +97,15 @@ function Write-VmDiagnostics {
         Format-Table IPAddress, LinkLayerAddress, State, InterfaceAlias | Out-String | Write-Host
     Write-Host "name $Guest resolves to: $((Resolve-DnsName pa-durability.mshome.net -Type A -ErrorAction SilentlyContinue | ForEach-Object IPAddress) -join ', ')"
     Write-Host "using address: $Guest"
+    Write-Host "last ssh attempt output: $script:LastSsh"
+    Write-Host 'TCP port 22:'
+    Test-NetConnection -ComputerName $Guest -Port 22 -WarningAction SilentlyContinue |
+        Format-List ComputerName, RemoteAddress, TcpTestSucceeded, PingSucceeded, SourceAddress, InterfaceAlias |
+        Out-String | Write-Host
+    Write-Host 'firewall profiles:'
+    Get-NetFirewallProfile | Format-Table Name, Enabled, DefaultOutboundAction | Out-String | Write-Host
+    Write-Host 'ssh -vvv (stderr):'
+    (& ssh @SshOpts '-vvv' "pa@$Guest" true 2>&1 | ForEach-Object { "$_" } | Select-Object -Last 40) -join "`n" | Write-Host
 }
 
 function Invoke-Guest([string]$Command) {
@@ -92,6 +113,7 @@ function Invoke-Guest([string]$Command) {
     # Windows PowerShell 5.1 turns native stderr into terminating errors under 'Stop'; keep it as text.
     $ErrorActionPreference = 'Continue'
     $out = & ssh @SshOpts "pa@$Guest" $Command 2>&1 | ForEach-Object { "$_" }
+    $script:LastSsh = "exit ${LASTEXITCODE}: $($out -join ' | ')"
     @{ Code = $LASTEXITCODE; Out = ($out -join "`n") }
 }
 
@@ -180,7 +202,6 @@ function Add-Result([string]$Test, [string]$Backend, [int]$Cycle, [string]$Verdi
     Write-Host ("{0,-9} {1,-11} cycle {2}: {3}  {4}" -f $Test, $Backend, $Cycle, $Verdict, $Detail)
 }
 
-New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 $disk = Join-Path $WorkDir "$VmName.vhdx"
 Copy-Item $Base $disk
 try {
@@ -250,7 +271,7 @@ try {
         Remove-VM -Name $VmName -Force
     }
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $WorkDir $VmName)
-    Remove-Item -Force -ErrorAction SilentlyContinue $disk
+    Remove-Item -Force -ErrorAction SilentlyContinue $disk, $Key
 }
 
 if ($ResultFile) { $results | ConvertTo-Json -Depth 4 | Set-Content -Path $ResultFile }

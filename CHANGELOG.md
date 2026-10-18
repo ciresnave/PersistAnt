@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.9
+
+### Fixed
+- Machine harness (`run.ps1`): run SSH with a copy of the key owned by the runner account with an ACL for that account only (OpenSSH on Windows refuses a key owned by another account, exit 255, which was retried until the timeout; the guest had an address but no SSH was ever accepted, run 39173418373). On a timeout it now also prints the last ssh output, `Test-NetConnection` to port 22, the firewall profiles and `ssh -vvv`.
+
 ## 0.8.8
 
 ### Fixed
