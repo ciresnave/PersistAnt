@@ -17,6 +17,7 @@ package_update: true
 packages:
   - postgresql
   - mysql-server
+  - linux-cloud-tools-virtual   # hv_kvp_daemon: the host reads the guest's IP from the VM adapter
 write_files:
   # Keep acknowledged-but-unflushed data in the page cache for an hour, so the known-bad control
   # (SQLite synchronous=OFF) really is lost by the power cut. A store that fsyncs is unaffected.
@@ -26,6 +27,23 @@ write_files:
       vm.dirty_writeback_centisecs = 360000
       vm.dirty_background_ratio = 50
       vm.dirty_ratio = 80
+  # The image is cloned into new VMs, each with a new MAC. cloud-init's first-boot netplan matches the
+  # provisioning NIC's MAC, so a clone would get no DHCP and never appear on the network. Match any
+  # ethernet by name instead, and stop cloud-init regenerating the network config.
+  - path: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    content: |
+      network: {config: disabled}
+  - path: /etc/netplan/01-dhcp.yaml
+    permissions: "0600"
+    content: |
+      network:
+        version: 2
+        ethernets:
+          any:
+            match:
+              name: "e*"
+            dhcp4: true
+            dhcp-identifier: mac
   # A small ext4 volume that can be filled, for the "disk full must fail loud" check.
   - path: /usr/local/bin/pa-small
     permissions: "0755"
@@ -50,6 +68,7 @@ write_files:
           ;;
       esac
 runcmd:
+  - rm -f /etc/netplan/50-cloud-init.yaml
   - mkdir -p /var/lib/pa && chown pa /var/lib/pa
   # Database users for the test: loopback only, test-only passwords.
   - sudo -u postgres psql -c "CREATE ROLE pa SUPERUSER LOGIN PASSWORD 'pa-test-only'"

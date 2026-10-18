@@ -47,11 +47,45 @@ try { $null = Get-VM -ErrorAction Stop } catch {
 }
 
 $VmName = "pa-durability-run-$PID"
-$Guest = 'pa-durability.mshome.net'   # the Default Switch registers the guest's hostname in DNS
+# The guest's address. NOT its DNS name: the Default Switch keeps the name of the provisioning VM (same
+# hostname, another address) and answers with that, so port 22 times out. Found from the VM's own
+# adapter instead (Resolve-GuestAddress); the name is the last resort.
+$Guest = 'pa-durability.mshome.net'
 $SshOpts = @('-i', $Key, '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=NUL',
     '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'LogLevel=ERROR')
 $results = [System.Collections.Generic.List[object]]::new()
 $failures = [System.Collections.Generic.List[string]]::new()
+
+function Resolve-GuestAddress {
+    # 1. the address the guest reports over the Hyper-V KVP channel (needs hv_kvp_daemon in the guest);
+    # 2. else the host's neighbor table entry for the VM adapter's MAC (the guest's DHCP and ARP traffic
+    #    put it there). Sets $script:Guest when one is found; returns it, or $null.
+    $nic = Get-VMNetworkAdapter -VMName $VmName -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $nic) { return $null }
+    $ip = @($nic.IPAddresses) | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1
+    if (-not $ip -and $nic.MacAddress) {
+        $mac = ($nic.MacAddress -replace '(..)(?!$)', '$1-')
+        $n = Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.LinkLayerAddress -eq $mac -and $_.State -notin 'Unreachable', 'Incomplete' } |
+            Select-Object -First 1
+        if ($n) { $ip = $n.IPAddress }
+    }
+    if ($ip) { $script:Guest = $ip }
+    $ip
+}
+
+function Write-VmDiagnostics {
+    # What a person needs to see why the guest is not reachable. Never throws.
+    $ErrorActionPreference = 'Continue'
+    Write-Host '--- guest unreachable: diagnostics ---'
+    Get-VM -Name $VmName | Format-List Name, State, Status, Uptime, Heartbeat | Out-String | Write-Host
+    $nic = Get-VMNetworkAdapter -VMName $VmName
+    $nic | Format-List Name, MacAddress, SwitchName, Status, IPAddresses | Out-String | Write-Host
+    Get-NetNeighbor -AddressFamily IPv4 | Where-Object { $_.State -ne 'Unreachable' } |
+        Format-Table IPAddress, LinkLayerAddress, State, InterfaceAlias | Out-String | Write-Host
+    Write-Host "name $Guest resolves to: $((Resolve-DnsName pa-durability.mshome.net -Type A -ErrorAction SilentlyContinue | ForEach-Object IPAddress) -join ', ')"
+    Write-Host "using address: $Guest"
+}
 
 function Invoke-Guest([string]$Command) {
     # Returns @{ Code; Out } of a command run in the guest as user pa.
@@ -64,10 +98,12 @@ function Invoke-Guest([string]$Command) {
 function Wait-Guest([int]$Seconds = 300) {
     $deadline = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $deadline) {
+        $null = Resolve-GuestAddress
         $r = Invoke-Guest 'true'
         if ($r.Code -eq 0) { return }
         Start-Sleep -Seconds 3
     }
+    Write-VmDiagnostics
     throw "the guest did not accept SSH within $Seconds s"
 }
 
