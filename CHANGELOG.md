@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.6
+
+### Fixed
+- Tests only: four SQLite test files (`decode_types`, `kv_on_sqlite`, `rel_speed_choose`, `sweep`) named their database file by clock nanos plus pid, so two tests starting in one clock tick would share a file. Each name now carries a process-wide counter. A candidate cause of one Windows CI failure in `rel_speed_choose` (not reproduced locally).
+
 ## 0.8.5
 
 ### Added
