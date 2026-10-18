@@ -16,7 +16,8 @@
 param(
     [string]$StateDir = 'C:\ProgramData\persistant-machine-durability',
     [int]$DiskGB = 10,
-    [int]$TimeoutMinutes = 25
+    [int]$TimeoutMinutes = 25,
+    [string]$RunnerAccount = 'gh-runner'
 )
 $ErrorActionPreference = 'Stop'
 
@@ -49,8 +50,13 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $base)) { throw 'qemu-img conversion
 # The driver's key. Left in place if it exists, so a rebuilt image keeps working for existing runners.
 $key = Join-Path $StateDir 'id_pa'
 if (-not (Test-Path $key)) { ssh-keygen -q -t ed25519 -N '""' -C persistant-machine-durability -f $key }
-# The runner account only reads the image and the key.
-icacls $StateDir /grant 'gh-runner:(OI)(CI)RX' /T | Out-Null
+# The runner account only reads the image and the key. ssh-keygen gives id_pa an owner-only ACL with
+# inheritance removed, so the grant on the directory never reaches it (run 39176940159: the runner
+# could not even read the key). Grant it on the key itself, and read it back.
+icacls $StateDir /grant "${RunnerAccount}:(OI)(CI)RX" /T | Out-Null
+icacls $key /grant "${RunnerAccount}:(R)" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "could not grant $RunnerAccount read on $key" }
+if (-not ((icacls $key) -match [regex]::Escape($RunnerAccount))) { throw "$RunnerAccount is not in the ACL of $key after the grant" }
 $pub = (Get-Content "$key.pub" -Raw).Trim()
 
 # Seed ISO (cloud-init NoCloud: volume label "cidata"), written with the IMAPI2 COM API: no tools to install.

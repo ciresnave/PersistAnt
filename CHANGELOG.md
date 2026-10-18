@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.10
+
+### Fixed
+- `build-image.ps1`: grant the runner account read on `id_pa` itself and read the ACL back (`ssh-keygen` leaves an owner-only ACL with inheritance removed, so the directory grant never reached the key and the runner's `Copy-Item` was denied; run 39176940159). The account is the `-RunnerAccount` parameter, default `gh-runner`.
+
 ## 0.8.9
 
 ### Fixed
