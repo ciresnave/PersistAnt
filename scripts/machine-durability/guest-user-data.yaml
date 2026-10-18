@@ -17,6 +17,7 @@ package_update: true
 packages:
   - postgresql
   - mysql-server
+  - linux-cloud-tools-virtual   # hv_kvp_daemon: the host reads the guest's IP from the VM adapter
 write_files:
   # Keep acknowledged-but-unflushed data in the page cache for an hour, so the known-bad control
   # (SQLite synchronous=OFF) really is lost by the power cut. A store that fsyncs is unaffected.

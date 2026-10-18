@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.7
+
+### Fixed
+- Machine harness (`run.ps1`): reach the guest by the address found from its VM adapter (KVP, else the host neighbor table by MAC), not by DNS name: the Default Switch kept the provisioning VM's stale record and port 22 timed out (first runner run 39167386852). On failure it prints VM state, adapter, neighbors and DNS. The guest image now installs `linux-cloud-tools-virtual` (hv_kvp_daemon); the image needs a rebuild for KVP, the neighbor-table path works with the current one.
+
 ## 0.8.6
 
 ### Fixed
