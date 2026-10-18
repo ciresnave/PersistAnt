@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.11
+
+### Fixed
+- `build-image.ps1`: create `id_pa` with an empty passphrase under PowerShell 7 too, and replace an existing key that has one. `ssh-keygen -N '""'` from PowerShell 7 sets the passphrase to two quote characters, so the guest accepted the key and the client then could not sign under BatchMode: "Permission denied (publickey)" (run 39177227624). The image must be rebuilt (the guest holds the old public key).
+
 ## 0.8.10
 
 ### Fixed

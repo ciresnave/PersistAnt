@@ -47,9 +47,23 @@ docker run --rm -v "${dl}:/in:ro" -v "${StateDir}:/out" ubuntu:24.04 sh -c `
     "apt-get update -qq && apt-get install -y -qq qemu-utils >/dev/null && cp /in/$ImageName /out/tmp.qcow2 && chmod 644 /out/tmp.qcow2 && qemu-img resize /out/tmp.qcow2 ${DiskGB}G && qemu-img convert -f qcow2 -O vhdx -o subformat=dynamic /out/tmp.qcow2 /out/base.vhdx && rm /out/tmp.qcow2"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $base)) { throw 'qemu-img conversion failed' }
 
-# The driver's key. Left in place if it exists, so a rebuilt image keeps working for existing runners.
+# The driver's key. Left in place if it exists and opens without a passphrase, so a rebuilt image keeps working for existing runners.
 $key = Join-Path $StateDir 'id_pa'
-if (-not (Test-Path $key)) { ssh-keygen -q -t ed25519 -N '""' -C persistant-machine-durability -f $key }
+# The empty passphrase goes through cmd: PowerShell 7 passes '""' to a native program as the two-character
+# passphrase "" (PowerShell 5.1 passes an empty one), and a key with a passphrase cannot sign under
+# BatchMode, so the guest accepted the key and then refused the login (run 39177227624).
+function Test-KeyOpens([string]$Path) {
+    if (-not (Test-Path $Path)) { return $false }
+    cmd /c "ssh-keygen -y -P """" -f ""$Path"" >NUL 2>&1"
+    $LASTEXITCODE -eq 0
+}
+if (-not (Test-KeyOpens $key)) {
+    # A missing key, or one an earlier run made with a passphrase: make a new one (the image is rebuilt
+    # below, so the guest gets the new public half).
+    Remove-Item -Force -ErrorAction SilentlyContinue $key, "$key.pub"
+    cmd /c "ssh-keygen -q -t ed25519 -N """" -C persistant-machine-durability -f ""$key"""
+    if (-not (Test-KeyOpens $key)) { throw "$key still needs a passphrase" }
+}
 # The runner account only reads the image and the key. ssh-keygen gives id_pa an owner-only ACL with
 # inheritance removed, so the grant on the directory never reaches it (run 39176940159: the runner
 # could not even read the key). Grant it on the key itself, and read it back.
