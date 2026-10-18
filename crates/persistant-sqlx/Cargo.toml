@@ -44,6 +44,10 @@ required-features = ["sqlite"]
 name = "rel_speed"
 required-features = ["sqlite"]
 
+[[example]]
+name = "machine_vm"
+required-features = ["sqlite", "mysql"]
+
 [[test]]
 name = "durability_sqlite"
 harness = false

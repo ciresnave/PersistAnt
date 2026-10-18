@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.5
+
+### Added
+- The `Machine` durability harness (PM [TASK], board 229 ruled A): `scripts/machine-durability/` (guest image build from a pinned, checksummed Ubuntu 24.04 cloud image; a PowerShell driver that boots a Hyper-V Gen2 guest, writes over SSH, runs `Stop-VM -TurnOff` after N acknowledgements, boots and checks every acknowledged key; a known-bad control that must lose; a disk-full check that must fail loudly), the guest binary `examples/machine_vm.rs`, and `.github/workflows/machine-durability.yml` for the self-hosted runner (push to main, nightly, dispatch). No library change; no backend is marked `Machine`-verified yet.
+
 ## 0.8.4
 
 ### Added
