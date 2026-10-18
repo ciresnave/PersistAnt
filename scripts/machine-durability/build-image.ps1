@@ -43,7 +43,7 @@ Write-Host "image verified: $ImageSha256"
 $base = Join-Path $StateDir 'base.vhdx'
 Remove-Item -Force -ErrorAction SilentlyContinue $base
 docker run --rm -v "${dl}:/in:ro" -v "${StateDir}:/out" ubuntu:24.04 sh -c `
-    "apt-get update -qq && apt-get install -y -qq qemu-utils >/dev/null && cp /in/$ImageName /out/tmp.qcow2 && qemu-img resize /out/tmp.qcow2 ${DiskGB}G && qemu-img convert -f qcow2 -O vhdx -o subformat=dynamic /out/tmp.qcow2 /out/base.vhdx && rm /out/tmp.qcow2"
+    "apt-get update -qq && apt-get install -y -qq qemu-utils >/dev/null && cp /in/$ImageName /out/tmp.qcow2 && chmod 644 /out/tmp.qcow2 && qemu-img resize /out/tmp.qcow2 ${DiskGB}G && qemu-img convert -f qcow2 -O vhdx -o subformat=dynamic /out/tmp.qcow2 /out/base.vhdx && rm /out/tmp.qcow2"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $base)) { throw 'qemu-img conversion failed' }
 
 # The driver's key. Left in place if it exists, so a rebuilt image keeps working for existing runners.
