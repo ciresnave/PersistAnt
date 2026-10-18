@@ -1,0 +1,63 @@
+#cloud-config
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# The guest for the Machine durability test (docs/DESIGN-DURABILITY-MACHINE.md). Rendered by
+# build-image.ps1, which replaces @@PUBKEY@@ with the driver's public key. Test-only credentials:
+# the guest has no data worth protecting and is reachable only from the host's Hyper-V switch.
+hostname: pa-durability
+manage_etc_hosts: true
+ssh_pwauth: false
+users:
+  - name: pa
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "@@PUBKEY@@"
+package_update: true
+packages:
+  - postgresql
+  - mysql-server
+write_files:
+  # Keep acknowledged-but-unflushed data in the page cache for an hour, so the known-bad control
+  # (SQLite synchronous=OFF) really is lost by the power cut. A store that fsyncs is unaffected.
+  - path: /etc/sysctl.d/99-pa-durability.conf
+    content: |
+      vm.dirty_expire_centisecs = 360000
+      vm.dirty_writeback_centisecs = 360000
+      vm.dirty_background_ratio = 50
+      vm.dirty_ratio = 80
+  # A small ext4 volume that can be filled, for the "disk full must fail loud" check.
+  - path: /usr/local/bin/pa-small
+    permissions: "0755"
+    content: |
+      #!/bin/sh
+      # pa-small make SIZE_MB   create and mount a fresh ext4 loop volume at /mnt/small
+      # pa-small drop           unmount and delete it
+      set -eu
+      case "$1" in
+        make)
+          mkdir -p /mnt/small
+          umount /mnt/small 2>/dev/null || true
+          rm -f /var/lib/pa-small.img
+          dd if=/dev/zero of=/var/lib/pa-small.img bs=1M count="$2" status=none
+          mkfs.ext4 -q -F /var/lib/pa-small.img
+          mount -o loop /var/lib/pa-small.img /mnt/small
+          chmod 777 /mnt/small
+          ;;
+        drop)
+          umount /mnt/small 2>/dev/null || true
+          rm -f /var/lib/pa-small.img
+          ;;
+      esac
+runcmd:
+  - mkdir -p /var/lib/pa && chown pa /var/lib/pa
+  # Database users for the test: loopback only, test-only passwords.
+  - sudo -u postgres psql -c "CREATE ROLE pa SUPERUSER LOGIN PASSWORD 'pa-test-only'"
+  - mysql -e "CREATE USER 'pa'@'127.0.0.1' IDENTIFIED BY 'pa-test-only'; GRANT ALL ON *.* TO 'pa'@'127.0.0.1' WITH GRANT OPTION;"
+  - systemctl enable postgresql mysql
+  - sync
+power_state:
+  mode: poweroff
+  message: "pa-durability image provisioned"
+  timeout: 30
+  condition: true

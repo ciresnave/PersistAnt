@@ -24,7 +24,7 @@ the best backend for a capability. Four stages, each its own PR, in order:
 (#43), `speed` with data files in `bench/` (#46), `choose::choose` (#47). Stage 2 also exists for
 blob (#45). Not done, in this order (queued by the PM 2026-10-16):
 
-1. **Durability verification.** *Done for `Process`* (0.5.8, `kv.durability.process`: a writer killed
+1. **Durability verification.** *`Machine`: approved by CireSnave 2026-10-18 (board 229: A, Hyper-V) and **being built** (`scripts/machine-durability/`, 0.8.5): SQLite `synchronous=FULL`, PostgreSQL, MySQL on an ext4 guest, `Stop-VM -TurnOff` mid-write, plus a disk-full-must-fail-loud check; waits on the Hyper-V Administrators grant (board 233). Host power loss and NTFS stay UNVERIFIED.* *Done for `Process`* (0.5.8, `kv.durability.process`: a writer killed
    after acknowledged writes, the store reopened; SQLite file, OpenDAL fs, PostgreSQL, MySQL; memory
    stores fail it as they must). **`Machine` (power loss, an OS crash) is UNVERIFIED and stays
    declared**: a process kill leaves the OS and its caches intact. The harness for it needs a VM or a

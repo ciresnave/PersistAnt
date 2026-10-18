@@ -5,6 +5,13 @@ decision for the PM and CireSnave. No code accompanies it. Facts about this PC w
 (Windows 11 Pro, 63 GB, `HypervisorPresent=True`, services `vmms` and `vmcompute` running, WSL2
 distros `Alpine`, `lane-spike`, `docker-desktop`); I did not run a VM or elevate.
 
+> **Status 2026-10-18: decided and being built.** CireSnave ruled board 229 for Hyper-V (A) and approved the
+> VM setup. The harness is `scripts/machine-durability/` (README there) with the guest side in
+> `crates/persistant-sqlx/examples/machine_vm.rs`. Deviations from section 3 below: the host reads the
+> acknowledgements over SSH rather than the serial port (no pipe permission to depend on), and each run
+> copies a base disk instead of restoring a checkpoint. Nothing is marked `Machine`-verified until a run
+> on the runner has passed with its known-bad control losing.
+
 ## 1. What is being proved
 
 `kv.durability.process` (0.5.8) kills the writer after acknowledged writes and reopens the store. A
