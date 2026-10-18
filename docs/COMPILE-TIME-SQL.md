@@ -5,18 +5,20 @@ Status: **design, 2026-10-18, not built.** Written against PersistAnt 0.8.3 (`4f
 re-export it and the catalog-based checks. ... All of our projects should strive to provide that same
 'checks happen at compile time' functionality where applicable."*
 
-Nothing here is frozen until the UniSQL lane has agreed the interface in section 3 (they own the macro
-crate, the `Schema` type and the checks; this repo owns producing the schema and the runtime glue).
+UniSQL's own design is `docs/MACROS.md` (unisql#63: `unisql-macro-core`, `unisql-macros`, `unisql-embed`).
+Their answers of 2026-10-18 are folded in below. The `Checker` seam (section 3.5) stays unstable until this
+repo has built against it.
 
 ## 0. The split of work
 
 | | UniSQL | PersistAnt |
 |---|---|---|
-| Macro crate `unisql-macros` (translate per enabled target, syntax, placeholder count, refusal) | **owns** | re-exports |
-| `Schema` type, the checks that read it (table/column existence, arity, ...) | **owns** (UniSQL resolves scopes and aliases; `schema.rs` says so) | supplies the data |
-| Schema snapshot **file format** | **owns** (serialises its own `Schema`) | writes it |
-| Producing a snapshot: from migration files, from a live catalog | `schema_from_ddl` exists | **owns** the catalog readers (UniSQL ROADMAP: "the live catalog reader is PersistAnt's, in its sqlx driver crate") and the `persistant-migrate snapshot` verb |
-| Running a translated statement on a backend | - | **owns** (`Sql` value and `execute_sql`/`query_sql`, section 3.3) |
+| `unisql-macro-core` (parse input, translate per target, `Expansion`, the `Checker` trait), `unisql-macros` (`sql!`, thin), `unisql-embed` (the `Query` value) | **owns** | depends on core and embed |
+| **A PersistAnt proc-macro crate** (`persistant-macros`): a proc-macro crate cannot be extended, only wrapped, so this repo writes its own thin one that calls `unisql-macro-core` with a catalog `Checker` | - | **owns**; the facade re-exports it |
+| `Schema` type, a reference `Checker` over it (names only), `schema_from_ddl` | **owns** | uses; implements the catalog `Checker` on top |
+| Schema snapshot **file format** (serde on `Schema` behind a feature, a `format` integer) | **owns** | writes it |
+| Producing a snapshot: from migration files, from a live catalog | `schema_from_ddl` exists | **owns** the catalog readers (in `persistant-sqlx`) and `persistant-migrate snapshot` |
+| Running an embedded statement on a backend | `Query` (const-constructible, per-target text) | aliases it as `Sql`; **owns** `RelationalSqlExt` (section 3.3) |
 
 ## 1. How a schema snapshot is produced (question a)
 
@@ -83,30 +85,35 @@ A consumer who needs that keeps `query!` on its own pool (section 5, and board 2
 ### 3.1 Macro
 
 ```rust
-use persistant::sql;                          // re-export of unisql_macros::sql
-const FIND: persistant::Sql = sql!("SELECT id, email FROM users WHERE id = $1");
+use persistant::sql;                          // PersistAnt's macro (wraps unisql-macro-core)
+const FIND: persistant::Sql = sql!(
+    source = postgres, targets = [postgres, sqlite, mysql],
+    "SELECT id, email FROM users WHERE id = $1"
+);
 db.query_sql(&FIND, &[Value::Int(7)]).await?;
 ```
 
-The source dialect is PostgreSQL (UniSQL's rule). The macro translates for every enabled target and
-embeds each target's text, so there is no translation at run time and an untranslatable statement does
-not build. `sql!` is usable in `const` position (the expansion is a `static`/`const` table of
-`(target, text)` pairs plus the parameter count).
+The call names `source` and `targets` as UniSQL's macro requires: no hidden target set, because cargo
+features unify across a build. A project that wants a default writes a one-line `macro_rules!` wrapper
+of its own. The macro translates for every named target and embeds each target's text, so there is no
+translation at run time and an untranslatable statement does not build. All of UniSQL's options
+(`allow = [..]`, `requires`, `forbids`) pass through.
 
 ### 3.2 Where the schema comes from
 
-`sql!` finds the schema snapshot, in order: an explicit `sql!(schema = "path", "...")` argument;
-`UNISQL_SCHEMA` (set once in `.cargo/config.toml` `[env]`, so every macro use in the workspace agrees);
-`persistant-schema.json` in the invoking crate's manifest directory. **Absent, only the database-free
-checks run, and the macro says so once per build as a warning** (never silently; a consumer who
-believes they have column checks must be able to tell they do not).
-
-A proc macro cannot register its input file with cargo on stable, so the expansion includes
-`const _: &[u8] = include_bytes!("<absolute path>");`: a changed snapshot rebuilds the crate.
+Resolved by **this** macro before it calls core (UniSQL's macro reads no environment, so that its
+expansion is pure for rust-analyzer and cannot go stale): a `schema = "path"` argument, else
+`persistant-schema.json` in `CARGO_MANIFEST_DIR`. A `.sql` path is DDL in the source dialect (UniSQL's
+own `schema =` form), a `.json` path is the snapshot of section 1. **If neither exists it is a compile
+error**, not a quiet downgrade: the message says to run `persistant-migrate snapshot` or to write
+`schema = none` for database-free checks only. That keeps the rule that a consumer who believes they
+have column checks can tell when they do not, without needing a warning (stable proc macros cannot emit
+one). The expansion embeds the file with `include_bytes!`, so changing it rebuilds the crate.
 
 ### 3.3 Run time: the `Sql` value
 
-`Sql` is a small `Copy` type (static table of target texts, parameter count). A new extension trait on
+`pub type Sql = unisql_embed::Query;`, with the expansion path overridden (`crate = ::persistant::embed`,
+which UniSQL's macro supports) so a consumer depends on neither UniSQL crate. A new extension trait on
 `RelationalBackend` and `RelationalTx`:
 
 ```rust
@@ -116,21 +123,27 @@ trait RelationalSqlExt {
 }
 ```
 
-It picks the text for `self.dialect()`; a dialect with no embedded text is `RelError::Unsupported`
-(it can only happen when the backend's feature was not enabled for the macro). It does **not** change
-the core trait, so no backend and no consumer is broken. `Sql` is defined by UniSQL if the macro's
-expansion can only name types from `unisql`; otherwise by PersistAnt with the macro expanding to a
-path PersistAnt re-exports. **Open with UniSQL**: they decide, we implement the trait either way.
+It picks the rendered text for `self.dialect()` and applies the rendering's `param_order` (a target may
+reorder or repeat placeholders). A dialect with no embedded text is `RelError::Unsupported` naming the
+dialect (the call did not list it in `targets`; UniSQL's open question would make that a compile
+error). The core trait does not change, so no backend and no consumer is broken.
 
 ### 3.4 Cargo features
 
-On the `persistant` facade: `sql-macros` (off by default; pulls `unisql-macros`, a proc-macro crate,
-so a consumer who does not want it pays nothing). Which targets are translated follows the facade's
-backend features: `sqlx-driver` (PostgreSQL) plus the `sqlite` and `mysql` features of `persistant-sqlx`.
-Cargo features unify across a build, so the target set is the union of what any crate asked for; the
-macro accepts `sql!(targets = [postgres, sqlite], "...")` to narrow it deliberately, and a statement is
-never silently translated for fewer targets than the consumer's backends. Pre-1.0, so new features and
-re-exports are minor bumps; the facade's MSRV floor is not raised by this.
+On the `persistant` facade: `sql-macros` (off by default; pulls `persistant-macros` and
+`unisql-macro-core`, so a consumer who does not want a proc-macro build pays nothing). UniSQL's dialect
+features only decide which dialect crates are compiled into the macro, a build-cost knob; naming a
+target whose feature is off is a build error. Pre-1.0, so the new feature, crate and re-exports are
+minor bumps; the facade's MSRV floor is not raised by this.
+
+### 3.5 The `Checker` seam
+
+`unisql-macro-core` calls `Checker::check(&ast::Statement, &CheckContext) -> Vec<Problem>` on the parsed
+source statement before translation; each problem becomes a compile error at the call. PersistAnt's
+checker loads the snapshot into a `unisql::Schema`, runs UniSQL's reference checker (names), and adds the
+checks that need the richer snapshot fields (arity, `NOT NULL` without default, classes, later types).
+The trait is unstable until built against; this repo is its first consumer and settles it in UniSQL's
+slice 4 and step 3 below.
 
 ## 4. With `persistant-migrate` (question d)
 
@@ -176,32 +189,36 @@ translation and the trait's errors. Not built here.
 
 ## 6. Order of work and what each step waits for
 
+UniSQL's slices (`MACROS.md` section 8): 1 core and embed, 2 bare `sql!` with `source`/`targets` and a
+`trybuild` suite, 3 `allow`/`requires`/`forbids` and the argument-count form, 4 `schema =` and the
+reference `Checker`, 5 caching and a measured build cost.
+
 | Step | Owner | Waits for |
 |---|---|---|
 | 0. This document, ROADMAP rows | PersistAnt | nothing (this PR) |
-| 1. `unisql-macros` first slice: `sql!` with translate, syntax, placeholder count, refusal | UniSQL | - |
-| 2. Re-export `persistant::sql!`, `Sql`, `RelationalSqlExt`, feature `sql-macros`, compile-fail tests | PersistAnt | step 1 published to crates.io (portfolio rule: no path or git deps) |
-| 3. `Schema` enumeration + serde + `Column` detail fields; the file format | UniSQL | agreement on section 1 |
+| 1. UniSQL slices 1-2, published (PM claims the three crate names first) | UniSQL | - |
+| 2. `persistant-macros` (bare wrapper over core), `Sql` alias, `RelationalSqlExt`, feature `sql-macros`, compile-fail tests | PersistAnt | step 1 on crates.io (portfolio rule: no path or git deps) |
+| 3. `Schema` serde and enumeration, `Column` `declared_type`/`nullable`/`has_default`; the `Checker` seam | UniSQL (slice 4) | agreement on section 1, this repo as first consumer |
 | 4. Catalog readers in `persistant-sqlx`; `persistant-migrate snapshot` and `--check`; CI job | PersistAnt | step 3 |
-| 5. Schema-reading checks in the macro | UniSQL | step 3 (writes), step 4 (real snapshots to test with) |
-| 6. `FromRow` derive and `sql!(as T, ..)` | PersistAnt (derive) / UniSQL (check) | steps 4-5 |
+| 5. Catalog `Checker` and schema lookup in `persistant-macros` | PersistAnt | steps 3, 4 |
+| 6. `FromRow` derive and `sql!(as T, ..)` | PersistAnt | step 5 |
 | C6. `*Tx::connection()` accessor | PersistAnt | nothing; only if a consumer wants `query!` inside a PersistAnt transaction |
 
-Tests that this works (rules: benchmarks and checks are tests; no `#[ignore]`): compile-fail tests (a
-`trybuild`-style suite) with one failing statement per check in section 2 **and a passing twin for
-each** (the control: the same statement with the fault removed builds); the snapshot of this repo's own
-`rel.*` leaf tables checked against all three servers in the existing CI jobs; and `snapshot --check`
-as a CI step.
+Tests (rules: checks are tests; no `#[ignore]`): a `trybuild` compile-fail suite with one failing
+statement per check in section 2 **and a passing twin for each** (the control: the same statement with
+the fault removed builds). `.stderr` files are rustc-version sensitive, so CI pins the toolchain for
+that test, as UniSQL does. Also: the snapshot of this repo's own `rel.*` leaf tables checked against
+all three servers in the existing CI jobs, and `snapshot --check` as a CI step.
 
-## 7. Questions for the UniSQL lane (to settle before either side freezes)
+## 7. Settled with the UniSQL lane (2026-10-18) and what is still open
 
-1. Is the snapshot format UniSQL's (serde on `Schema`, PersistAnt writes it) or PersistAnt's with a
-   converter? Recommendation: UniSQL's.
-2. `Column` gains `declared_type`, `nullable`, `has_default`; `Schema` gains enumeration. Accepted?
-3. `Sql`: defined in `unisql` or re-exported from here?
-4. Where the macro looks for the schema (section 3.2), and the warning when none is found.
-5. Target set: the macro's own cargo features, or `targets = [...]` only? Recommendation: both, with
-   the argument winning.
+Settled: the snapshot format is UniSQL's and this repo writes it; `Schema` gains enumeration and serde
+(behind a feature) and `Column` gains `declared_type`, `nullable`, `has_default` (additive); `Sql` is
+`unisql_embed::Query`; no environment lookup in UniSQL's macro; `targets = [..]` required at each call.
+
+Open: the exact `Checker`/`CheckContext` shape (settled when built); whether asking for a target that
+was not embedded can be a compile error (UniSQL's open question); a project-wide default `targets` (a
+`macro_rules!` wrapper today).
 
 ## 8. Not decided here
 
