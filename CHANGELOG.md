@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.8
+
+### Fixed
+- `build-image.ps1`: `chmod 644` the qcow2 copy before `qemu-img resize` (the copy kept the read-only mount's mode: "Permission denied").
+
 ## 0.8.7
 
 ### Fixed
