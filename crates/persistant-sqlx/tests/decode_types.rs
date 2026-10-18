@@ -373,11 +373,16 @@ async fn mysql_or_mariadb() {
 #[cfg(feature = "sqlite")]
 #[tokio::test]
 async fn sqlite() {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let n = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("persistant-dec-{}-{n}.db", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "persistant-dec-{}-{n}-{seq}.db",
+        std::process::id()
+    ));
     let db = persistant_sqlx::SqliteBackend::open(&path).await.unwrap();
     // SQLite types the value, not the column: what is stored is what comes back. Pinned so a change
     // is a decision. A uuid, date, timestamp or json is whatever the program stored (text or blob).

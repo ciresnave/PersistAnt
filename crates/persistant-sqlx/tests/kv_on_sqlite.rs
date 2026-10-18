@@ -10,11 +10,16 @@ use persistant_relational::{RelError, RelationalBackend, RelationalTx, Value};
 use persistant_sqlx::SqliteBackend;
 
 fn fresh_path(tag: &str) -> std::path::PathBuf {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let n = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("persistant-{tag}-{}-{n}.db", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "persistant-{tag}-{}-{n}-{seq}.db",
+        std::process::id()
+    ))
 }
 
 async fn open(tag: &str) -> (SqliteBackend, std::path::PathBuf) {
