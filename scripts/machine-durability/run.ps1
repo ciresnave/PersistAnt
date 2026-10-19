@@ -216,6 +216,15 @@ try {
     $scpCode = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     if ($scpCode -ne 0) { throw 'could not copy machine_vm into the guest' }
+    # The disk-full helper for PostgreSQL and MySQL. Copied now, not baked into the image, so the base
+    # disk need not be rebuilt; carriage returns are stripped in case the checkout is CRLF.
+    $ErrorActionPreference = 'Continue'
+    & scp @SshOpts (Join-Path $PSScriptRoot 'pa-small-db.sh') "pa@${Guest}:/tmp/pa-small-db.sh" 2>&1 | Out-Null
+    $scpCode = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($scpCode -ne 0) { throw 'could not copy pa-small-db.sh into the guest' }
+    $r = Invoke-Guest 'tr -d "\r" < /tmp/pa-small-db.sh | sudo tee /usr/local/bin/pa-small-db >/dev/null && sudo chmod 755 /usr/local/bin/pa-small-db'
+    if ($r.Code -ne 0) { throw "could not install pa-small-db: $($r.Out)" }
     $r = Invoke-Guest 'sudo install -m 755 /tmp/machine_vm /usr/local/bin/machine_vm && sync && machine_vm 2>&1 | head -1'
     if ($r.Code -ne 0 -and $r.Out -notmatch 'usage') { throw "machine_vm does not run in the guest: $($r.Out)" }
 
@@ -249,21 +258,40 @@ try {
     }
 
     # --- disk full: must fail loudly, never acknowledge and lose --------------------------------
+    # SQLite: an 8 MB volume holding the database file. PostgreSQL and MySQL: a volume mounted over the
+    # server's own data directory (pa-small-db), sized so the new cluster fits with a little room left;
+    # the room is filled by puts. After the failure the server may be down (PostgreSQL PANICs on a WAL
+    # write that cannot finish), so the way an operator recovers is done: free the ballast file, wait for
+    # the server, and only then check every key acknowledged before the failure.
+    $volumeMb = @{ postgres = 64; mysql = 130 }
     foreach ($b in $Backends) {
-        if ($b -ne 'sqlite') { continue }   # PostgreSQL and MySQL: their data directory on the small volume is a follow-up
-        $r = Invoke-Guest 'sudo pa-small make 8'
-        if ($r.Code -ne 0) { throw "pa-small make: $($r.Out)" }
-        $e = Invoke-Guest "machine_vm enospc $b /mnt/small/full.db"
+        if ($b -eq 'sqlite') {
+            $r = Invoke-Guest 'sudo pa-small make 8'
+            if ($r.Code -ne 0) { throw "pa-small make: $($r.Out)" }
+            $spec = '/mnt/small/full.db'
+        } else {
+            $kind = if ($b -eq 'postgres') { 'pg' } else { 'mysql' }
+            $r = Invoke-Guest "sudo pa-small-db $kind on $($volumeMb[$b])"
+            if ($r.Code -ne 0) { throw "pa-small-db $kind on: $($r.Out)" }
+            Write-Host "  $b volume after setup (df -k): $($r.Out.Trim().Split("`n")[-1])"
+            $spec = Get-Spec $b 'full'
+        }
+        $e = Invoke-Guest "machine_vm enospc $b '$spec'"
         if ($e.Code -ne 3 -or $e.Out -notmatch 'failed (\d+) after acked (\d+)') {
             $failures.Add("enospc $b`: expected a loud failure (exit 3), got exit $($e.Code): $($e.Out)")
             Add-Result 'enospc' $b 1 'FAILED' $e.Out
         } else {
             $acked = [int]$Matches[2]
-            $c = Invoke-Guest "machine_vm check $b /mnt/small/full.db $acked"
+            if ($b -ne 'sqlite') {
+                $null = Invoke-Guest "sudo pa-small-db $kind free"
+                Wait-Database $b
+            }
+            $c = Invoke-Guest "machine_vm check $b '$spec' $acked"
             if ($c.Code -eq 0) { Add-Result 'enospc' $b 1 'FAILED LOUD, ACKED KEPT' "$($e.Out); $($c.Out)" }
             else { $failures.Add("enospc ${b}: $acked acknowledged before the failure, but $($c.Out)"); Add-Result 'enospc' $b 1 'LOST AN ACK' $c.Out }
         }
-        $null = Invoke-Guest 'sudo pa-small drop'
+        if ($b -eq 'sqlite') { $null = Invoke-Guest 'sudo pa-small drop' }
+        else { $null = Invoke-Guest "sudo pa-small-db $kind off" }
     }
 } finally {
     if (Get-VM -Name $VmName -ErrorAction SilentlyContinue) {

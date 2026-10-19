@@ -7,6 +7,7 @@ CireSnave 2026-10-18, board 229: A).
 | File | What it is |
 |---|---|
 | `crates/persistant-sqlx/examples/machine_vm.rs` | runs **in the guest**: `write` (prints `acked N` after each put returns), `check` (keys 0..N present), `enospc` (write until a put fails) |
+| `pa-small-db.sh` | runs **in the guest**: a small volume over the PostgreSQL or MySQL data directory for the disk-full check (`on`, `free`, `off`) |
 | `guest-user-data.yaml` | cloud-init for the guest: PostgreSQL, MySQL, a test user, sysctls that keep unflushed data in cache, a fillable 8 MB ext4 volume |
 | `New-SeedIso.ps1` | writes the cloud-init ISO with the IMAPI2 COM API (nothing to install) |
 | `build-image.ps1` | **once, by a person**: pinned Ubuntu 24.04 cloud image (SHA-256 checked) -> VHDX (qemu-img in Docker) -> provisioned and powered off |
@@ -22,7 +23,12 @@ CireSnave 2026-10-18, board 229: A).
   proves nothing, and no result from it counts.
 * **Disk full must fail loud:** SQLite on an 8 MB volume is written until a put fails (exit 3); then every
   key acknowledged before the failure must still be there. A run in which nothing fails (exit 4) fails.
-  PostgreSQL and MySQL on the small volume are not yet covered (their data directory has to move).
+  PostgreSQL (64 MB) and MySQL (130 MB) get a fresh ext4 volume mounted **over their own data directory**
+  (`pa-small-db.sh`, copied into the guest at run time, so the base image is not rebuilt), a new cluster
+  in it, and puts until one fails. A put that gets no answer in 60 s counts as failed and says
+  "stalled" (InnoDB waits for space instead of returning an error). The server may then be down or
+  waiting, so the operator's step is done before the check: the 2 MB ballast file is deleted, the
+  server is awaited, and every key acknowledged before the failure must be present.
 
 ## What a pass does not show (UNVERIFIED, and must stay so in any matrix row)
 
