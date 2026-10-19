@@ -92,7 +92,7 @@ async fn enospc<K: KvBackend>(kv: &K) -> ExitCode {
             Ok(Ok(())) => {
                 acked = n + 1;
                 // The host reads these to tell a slow fill from a hang, and checks up to the last one.
-                if acked % 500 == 0 {
+                if acked.is_multiple_of(500) {
                     println!("progress {acked}");
                     let _ = std::io::stdout().flush();
                 }
