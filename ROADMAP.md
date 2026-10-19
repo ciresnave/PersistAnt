@@ -24,7 +24,7 @@ the best backend for a capability. Four stages, each its own PR, in order:
 (#43), `speed` with data files in `bench/` (#46), `choose::choose` (#47). Stage 2 also exists for
 blob (#45). Not done, in this order (queued by the PM 2026-10-16):
 
-1. **Durability verification.** *`Machine`: **done for guest power loss on ext4 (Hyper-V)**, run 39178436801 on main 02f86a7 (`scripts/machine-durability/`): kv-on-relational on SQLite `synchronous=FULL`, PostgreSQL and MySQL held every acknowledged key in 5 of 5 power cuts each; the `synchronous=OFF` control lost in 4 of 4; SQLite disk-full failed loud with its acknowledged keys kept. Marked `Declared.verified = Machine` for those three only (0.8.12). UNVERIFIED and stays so: host power loss, NTFS, the disk's own cache, torn sectors, remote object stores. **Not built: PostgreSQL and MySQL disk-full (ENOSPC)**, whose data directory has to move to the small volume (`pa-small`); not scheduled.* Approved by CireSnave 2026-10-18 (board 229: A, Hyper-V). *Done for `Process`* (0.5.8, `kv.durability.process`: a writer killed
+1. **Durability verification.** *`Machine`: **done for guest power loss on ext4 (Hyper-V)**, run 39178436801 on main 02f86a7 (`scripts/machine-durability/`): kv-on-relational on SQLite `synchronous=FULL`, PostgreSQL and MySQL held every acknowledged key in 5 of 5 power cuts each; the `synchronous=OFF` control lost in 4 of 4; SQLite disk-full failed loud with its acknowledged keys kept. Marked `Declared.verified = Machine` for those three only (0.8.12; for SQLite, since 0.8.14, only the `sqlite-full` profile). UNVERIFIED and stays so: host power loss, NTFS, the disk's own cache, torn sectors, remote object stores. **Not built: PostgreSQL and MySQL disk-full (ENOSPC)**, whose data directory has to move to the small volume (`pa-small`); not scheduled.* Approved by CireSnave 2026-10-18 (board 229: A, Hyper-V). *Done for `Process`* (0.5.8, `kv.durability.process`: a writer killed
    after acknowledged writes, the store reopened; SQLite file, OpenDAL fs, PostgreSQL, MySQL; memory
    stores fail it as they must). **`Machine` (power loss, an OS crash) is UNVERIFIED and stays
    declared**: a process kill leaves the OS and its caches intact. The harness for it needs a VM or a
@@ -32,7 +32,7 @@ blob (#45). Not done, in this order (queued by the PM 2026-10-16):
    boot, with the same known-bad control: a store that acknowledges before it flushes). Scope: kv on a
    file (SQLite, OpenDAL fs) and on a server database inside the guest. Not built, not scheduled; it
    needs infrastructure the PM provides. Options and a recommendation: `docs/DESIGN-DURABILITY-MACHINE.md`.
-1a. **SQLite declared class.** An explicit `synchronous=FULL` profile declares `Machine` (what Synapse needs per board 229: A, now backed by run 39178436801); the default stays `Process`. Not scheduled; no work this week unless the PM asks.
+1a. **SQLite declared class.** An explicit `synchronous=FULL` profile declares `Machine` (what Synapse needs per board 229: A, now backed by run 39178436801); the default stays `Process`. **Built (0.8.14):** `SqliteBackend::open_durable`, backend name `sqlite-full`.
 2. **`choose` for the blob kind** *(done, 0.6.0: contract, speed and choose on the shared core types;
    blob durability is declared and unverified)*, then **the relational kind**. *Its first leaves are
    done (0.6.1: `rel.values`, `rel.transaction`, `rel.error.unique`, `rel.foreign_key`,

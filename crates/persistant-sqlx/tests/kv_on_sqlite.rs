@@ -240,3 +240,51 @@ async fn the_migration_leaves_certify_on() {
     drop(db);
     cleanup(&path);
 }
+
+/// The `synchronous=FULL` profile is set on every pooled connection, carries its own name, and is the
+/// only SQLite profile the kv `choose` table declares `Machine` for. The default `open` is not.
+#[tokio::test]
+async fn open_durable_sets_full_sync_and_declares_machine() {
+    use persistant_kv::choose::{Durability, declared_durability};
+    let path = fresh_path("durable");
+    let db = SqliteBackend::open_durable(&path).await.expect("open");
+    // Hold several connections at once so the check covers more than the first one.
+    let mut conns = Vec::new();
+    for _ in 0..4 {
+        conns.push(db.pool().acquire().await.expect("acquire"));
+    }
+    for c in &mut conns {
+        let sync: i64 = sqlx::query_scalar("PRAGMA synchronous")
+            .fetch_one(&mut **c)
+            .await
+            .unwrap();
+        assert_eq!(sync, 2, "PRAGMA synchronous: 2 is FULL");
+        let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&mut **c)
+            .await
+            .unwrap();
+        assert_eq!(mode, "wal");
+    }
+    drop(conns);
+    assert_eq!(RelationalBackend::backend(&db), "sqlite-full");
+    let kv = KvOnRelational::open(db).await.expect("open");
+    assert_eq!(kv.backend(), "kv-on-relational:sqlite-full");
+    let d = declared_durability(kv.backend()).expect("known");
+    assert_eq!(d.class, Durability::Machine);
+    assert_eq!(d.verified, Some(Durability::Machine));
+    let rows = certify(
+        &kv,
+        &Config::new().with("dialect", "sqlite"),
+        &Config::new(),
+    )
+    .await;
+    assert!(rows.iter().all(|c| c.row.reason != Some(Reason::Wrong)));
+
+    // The control: the default open keeps its name and its class.
+    let (plain, plain_path) = open("plain").await;
+    assert_eq!(RelationalBackend::backend(&plain), "sqlite");
+    let d = declared_durability("kv-on-relational:sqlite").expect("known");
+    assert_eq!(d.class, Durability::Process);
+    cleanup(&path);
+    cleanup(&plain_path);
+}

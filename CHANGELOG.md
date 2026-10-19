@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.14
+
+### Added
+- `SqliteBackend::open_durable(path)`: WAL and `synchronous=FULL` set explicitly on every pooled connection. It reports as `sqlite-full`, so `kv-on-relational:sqlite-full` is declared `Machine` in the kv `choose` table (verified: guest power loss on ext4, run 39178436801; same unverified list as before).
+
+### Changed
+- `kv-on-relational:sqlite` (the default `open`) is declared `Process` and no longer carries `verified = Machine`: it does not assert `synchronous`, and the power-cut run covered FULL only. A consumer that needs `Machine` opens with `open_durable`.
+
 ## 0.8.13
 
 ### Changed
