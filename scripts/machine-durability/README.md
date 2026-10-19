@@ -23,11 +23,11 @@ CireSnave 2026-10-18, board 229: A).
   proves nothing, and no result from it counts.
 * **Disk full must fail loud:** SQLite on an 8 MB volume is written until a put fails (exit 3); then every
   key acknowledged before the failure must still be there. A run in which nothing fails (exit 4) fails.
-  PostgreSQL (64 MB) and MySQL (130 MB) get a fresh ext4 volume mounted **over their own data directory**
+  PostgreSQL (80 MB) and MySQL (200 MB) get a fresh ext4 volume mounted **over their own data directory**
   (`pa-small-db.sh`, copied into the guest at run time, so the base image is not rebuilt), a new cluster
   in it, and puts until one fails. A put that gets no answer in 60 s counts as failed and says
   "stalled" (InnoDB waits for space instead of returning an error). The server may then be down or
-  waiting, so the operator's step is done before the check: the 2 MB ballast file is deleted, the
+  waiting, so the operator's step is done before the check: the 8 MB ballast file is deleted, the stopped server is started again, the
   server is awaited, and every key acknowledged before the failure must be present.
 
 ## What a pass does not show (UNVERIFIED, and must stay so in any matrix row)

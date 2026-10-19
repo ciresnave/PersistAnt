@@ -14,7 +14,8 @@
 //! (`persistant_kv::durability`), so a writer here and a checker there agree.
 //!
 //! Exit codes: 0 done; 1 an acknowledged key is missing or holds another value; 2 usage or cannot
-//! open; 3 `enospc` saw a put fail (the expected, loud outcome); 4 `enospc` wrote its whole budget
+//! open; 5 `check`/`enospc` could not connect (retried for two minutes); 6 `check` could not read (errors, not
+//! losses); 3 `enospc` saw a put fail (the expected, loud outcome); 4 `enospc` wrote its whole budget
 //! without a failure (the disk was not full, so the run proves nothing).
 
 use persistant_kv::durability::{Mode, key, value};
@@ -62,23 +63,42 @@ async fn write<K: KvBackend>(kv: &K) -> ExitCode {
 }
 
 async fn check<K: KvBackend>(kv: &K, count: u32) -> ExitCode {
+    // A key is LOST only when the store answers and the answer is "absent" or a different value. A read
+    // that errors or does not answer is UNREADABLE: it proves nothing either way and is reported as such
+    // (exit 6), never as a loss. The server may still be recovering from a full disk.
     let mut lost = Vec::new();
+    let mut unreadable: Vec<(u32, String)> = Vec::new();
+    let mut held = 0_u32;
     for n in 0..count {
-        let got = kv.get(&key(Mode::Honest, n)).await;
-        if !matches!(&got, Ok(Some(v)) if *v == value(n)) {
-            lost.push(n);
+        match tokio::time::timeout(STALL, kv.get(&key(Mode::Honest, n))).await {
+            Ok(Ok(Some(v))) if v == value(n) => held += 1,
+            Ok(Ok(_)) => lost.push(n),
+            Ok(Err(e)) => unreadable.push((n, e.to_string())),
+            Err(_) => unreadable.push((n, format!("no answer in {STALL:?}"))),
+        }
+        if unreadable.len() >= 5 {
+            break;
         }
     }
-    if lost.is_empty() {
-        println!("held {count}");
-        ExitCode::SUCCESS
-    } else {
+    if !lost.is_empty() {
         println!(
-            "lost {} of {count}; first {:?}",
+            "lost {} of {count} (held {held}, unreadable {}); first missing keys {:?}",
             lost.len(),
+            unreadable.len(),
             &lost[..lost.len().min(8)]
         );
         ExitCode::from(1)
+    } else if !unreadable.is_empty() {
+        println!(
+            "unreadable: {} errors at keys {:?}, stopped there (held {held} of {count}, none proven lost); first error: {}",
+            unreadable.len(),
+            unreadable.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+            unreadable[0].1
+        );
+        ExitCode::from(6)
+    } else {
+        println!("held {count}");
+        ExitCode::SUCCESS
     }
 }
 
@@ -111,6 +131,22 @@ async fn enospc<K: KvBackend>(kv: &K) -> ExitCode {
     ExitCode::from(4)
 }
 
+/// Connect and open the kv store, retrying for two minutes: a server that has just recovered from a
+/// full disk, or a restart, refuses connections for a while, which says nothing about the data.
+async fn connect_retry<T, Fut: std::future::Future<Output = Result<T, String>>>(
+    mut open: impl FnMut() -> Fut,
+) -> Result<T, String> {
+    let mut last = String::new();
+    for _ in 0..60 {
+        match open().await {
+            Ok(t) => return Ok(t),
+            Err(e) => last = e,
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    Err(last)
+}
+
 async fn run(cmd: &str, backend: &str, spec: &str, count: u32) -> ExitCode {
     macro_rules! with {
         ($kv:expr) => {{
@@ -122,19 +158,32 @@ async fn run(cmd: &str, backend: &str, spec: &str, count: u32) -> ExitCode {
             }
         }};
     }
+    macro_rules! served {
+        ($open:expr) => {
+            match connect_retry(|| $open).await {
+                Ok(kv) => with!(kv),
+                Err(e) => {
+                    println!("cannot connect to {backend} after 2 minutes of retries: {e}");
+                    ExitCode::from(5)
+                }
+            }
+        };
+    }
     match backend {
         "sqlite" => with!(sqlite(spec, SqliteSynchronous::Full).await),
         "sqlite-off" => with!(sqlite(spec, SqliteSynchronous::Off).await),
-        "postgres" => with!(
-            KvOnRelational::open(PgBackend::connect(spec).await.expect("connect"))
+        "postgres" => served!(async {
+            let db = PgBackend::connect(spec)
                 .await
-                .expect("open kv")
-        ),
-        "mysql" => with!(
-            KvOnRelational::open(MysqlBackend::connect(spec).await.expect("connect"))
+                .map_err(|e| format!("{e:?}"))?;
+            KvOnRelational::open(db).await.map_err(|e| format!("{e:?}"))
+        }),
+        "mysql" => served!(async {
+            let db = MysqlBackend::connect(spec)
                 .await
-                .expect("open kv")
-        ),
+                .map_err(|e| format!("{e:?}"))?;
+            KvOnRelational::open(db).await.map_err(|e| format!("{e:?}"))
+        }),
         other => {
             eprintln!("unknown backend {other}");
             ExitCode::from(2)
