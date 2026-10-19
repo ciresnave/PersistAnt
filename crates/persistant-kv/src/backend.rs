@@ -14,6 +14,9 @@ pub enum KvError {
     Unsupported(String),
     /// A stored record could not be decoded.
     Corrupt(String),
+    /// The call did not finish within the configured per-call bound and was cut off. A batch that
+    /// timed out applied nothing; a single write that timed out may or may not have taken effect.
+    TimedOut(Duration),
 }
 
 impl fmt::Display for KvError {
@@ -22,6 +25,7 @@ impl fmt::Display for KvError {
             KvError::Backend(m) => write!(f, "kv backend: {m}"),
             KvError::Unsupported(m) => write!(f, "kv backend does not support: {m}"),
             KvError::Corrupt(m) => write!(f, "kv record is corrupt: {m}"),
+            KvError::TimedOut(d) => write!(f, "kv call timed out after {d:?}"),
         }
     }
 }
@@ -125,6 +129,23 @@ impl ValuePage {
 
 /// A key-value store.
 ///
+/// What a backend saw when one call was deliberately blocked on a lock, for `kv.bounded_call`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundedProbe {
+    /// The configured per-call bound.
+    pub bound: Duration,
+    /// How long the blocked call took (the test's own limit if it never finished).
+    pub elapsed: Duration,
+    /// Whether the blocked call returned at all.
+    pub finished: bool,
+    /// What it returned: `None` for `Ok`, else the error. It must be [`KvError::TimedOut`].
+    pub error: Option<KvError>,
+    /// Whether the blocked batch's key was visible once the block was gone (it must not be).
+    pub applied_after: bool,
+    /// Whether a normal batch worked once the block was gone.
+    pub recovered: bool,
+}
+
 /// Small on purpose; every method is a primitive a capability's contract is written against.
 /// Optional methods default to [`KvError::Unsupported`].
 pub trait KvBackend: Send + Sync {
@@ -133,6 +154,18 @@ pub trait KvBackend: Send + Sync {
 
     /// The backend's version string as it appears in matrix rows.
     fn version(&self) -> &str;
+
+    /// The per-call timeout this backend enforces, or `None` if none is configured
+    /// (`kv.bounded_call` is declared only for `Some`).
+    fn call_bound(&self) -> Option<Duration> {
+        None
+    }
+
+    /// Block a batch on a lock and report what happened (`kv.bounded_call`). The default is
+    /// [`KvError::Unsupported`].
+    fn bounded_call_probe(&self) -> impl Future<Output = Result<BoundedProbe, KvError>> + Send {
+        async { Err(KvError::Unsupported("bounded_call_probe".to_string())) }
+    }
 
     /// The value at `key`, or `None` if absent or expired (`kv.get`, `kv.ttl`).
     fn get(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>, KvError>> + Send;

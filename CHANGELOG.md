@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.20
+
+### Added
+- **`kv.bounded_call`** and an optional per-call timeout for the relational backends (PM [TASK] 2026-10-19; the MySQL full-disk stall of run 39325665814 is the real-world case). `persistant_sqlx::Bounded::new(backend, bound)` wraps any `RelationalBackend`: a call that takes longer than `bound` returns the new `RelError::Timeout { after }` (`KvError::TimedOut` through `KvOnRelational`) instead of hanging. The default is no bound; `call_bound_from_env(var)` / `parse_bound(text)` read one in milliseconds from a variable the caller names. A transaction that saw a timeout is poisoned (every later call and `commit` return an error) and rolls back on drop, so a batch that timed out applies nothing; a single statement outside a transaction, or a timed-out commit, has an unknown outcome (documented on `RelError::Timeout`).
+- `RelationalBackend::call_bound` and `KvBackend::call_bound` report the bound (`None` by default). The leaf `kv.bounded_call` is declared **only** when one is configured: for an unbounded backend it is off as `missing` ("no call timeout configured"), recorded that way in the checked-in matrices. For a bounded `KvOnRelational` the probe (`KvBackend::bounded_call_probe`, over the new `RelationalBackend::with_lock_held`) holds the batch row's lock in a second transaction, runs a batch against it, and requires: the error is the timeout, it arrives within 3 x bound + 2 s, the key was not applied once the lock was released, and a normal batch works afterwards. Controls: `MemoryKv::bounded()` (correct) passes; `Defect::BoundIgnored` and `Defect::TimeoutLeavesBatchApplied` fail. Proven on SQLite, PostgreSQL 16 and MySQL 8.4.
+- `OpCount::timed_out`, `KvError::TimedOut`.
+- Tests (`persistant-sqlx/tests/bounded.rs`): a fake backend that waits forever on a statement (the timeout, the unbounded control that really hangs, a poisoned transaction that never commits), a real SQLite writer lock, the leaf on and off. Mutation: replacing the `timeout` in `Bounded` with a plain `await` fails 4 of 6 of them ("the call hung: the bound did not fire").
+- `persistant-sqlx` now depends on `tokio` (features `sync`, `time`) without the `sqlite` feature; sqlx already pulled it in.
+
 ## 0.8.19
 
 ### Changed

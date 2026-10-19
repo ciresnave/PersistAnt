@@ -207,7 +207,11 @@ async fn kv_on_postgres_gives_every_certified_leaf() {
         &Config::new(),
     )
     .await;
+    // kv.bounded_call is off here by design: no call timeout is configured on this backend.
     for c in &rows {
+        if c.leaf == persistant_kv::conformance::Leaf::BoundedCall {
+            continue;
+        }
         assert!(c.row.enabled, "{}: {}", c.leaf.id(), summary(&rows));
     }
     assert_eq!(rows[0].row.backend, "kv-on-relational:postgres");
@@ -220,6 +224,29 @@ async fn kv_on_postgres_gives_every_certified_leaf() {
         kv.version(),
         &Config::new().with("dialect", "postgres")
     ));
+}
+
+/// With a call timeout configured, `kv.bounded_call` is on: a batch blocked on the batch row's lock
+/// by another session returns the timeout within the bound and leaves nothing applied.
+#[tokio::test]
+async fn kv_on_postgres_declares_bounded_call_when_a_timeout_is_set() {
+    let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
+    let bound = std::time::Duration::from_millis(500);
+    let kv = KvOnRelational::open(persistant_sqlx::Bounded::new(db, bound))
+        .await
+        .unwrap();
+    let config = Config::new()
+        .with("dialect", "postgres")
+        .with("call_timeout_ms", "500");
+    let rows = persistant_kv::conformance::certify_leaves(
+        &kv,
+        &config,
+        &Config::new(),
+        &[persistant_kv::conformance::Leaf::BoundedCall],
+    )
+    .await;
+    assert!(rows[0].row.enabled, "{}", rows[0].row.note);
 }
 
 #[tokio::test]

@@ -70,11 +70,15 @@ pub enum Leaf {
     /// absent at the start (the Synapse mailbox's first commits); the losers get `Ok(false)`, never
     /// an error (a deadlock victim, say), by sampled concurrency
     AbsentRace,
+    /// `kv.bounded_call`: a batch blocked on a lock returns [`KvError::TimedOut`] within the
+    /// configured bound, leaves nothing applied, and the store works afterwards. Off (missing) for a
+    /// backend with no timeout configured.
+    BoundedCall,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 17] = [
+    pub const ALL: [Leaf; 18] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -92,6 +96,7 @@ impl Leaf {
         Leaf::ScanValues,
         Leaf::OptimisticSequence,
         Leaf::AbsentRace,
+        Leaf::BoundedCall,
     ];
 
     /// The capability id.
@@ -114,6 +119,7 @@ impl Leaf {
             Leaf::ScanValues => "kv.ordered_scan_values",
             Leaf::OptimisticSequence => "kv.batch_atomic.optimistic_sequence",
             Leaf::AbsentRace => "kv.batch_atomic.absent_race",
+            Leaf::BoundedCall => "kv.bounded_call",
         }
     }
 
@@ -155,7 +161,8 @@ impl Leaf {
             | Leaf::BatchRollback
             | Leaf::BatchConcurrentRead
             | Leaf::OptimisticSequence
-            | Leaf::AbsentRace => false,
+            | Leaf::AbsentRace
+            | Leaf::BoundedCall => false,
         }
     }
 
@@ -185,6 +192,7 @@ impl Leaf {
             Leaf::ScanValues => &[Defect::ScanIsDescending, Defect::ListIgnoresPaging],
             Leaf::OptimisticSequence => &[Defect::BatchIgnoresRequire, Defect::BatchNotAtomic],
             Leaf::AbsentRace => &[Defect::BatchIgnoresRequire],
+            Leaf::BoundedCall => &[Defect::BoundIgnored, Defect::TimeoutLeavesBatchApplied],
             Leaf::Lease => &[
                 Defect::PutIfAbsentNotExclusive,
                 Defect::CasIgnoresExpected,
@@ -255,6 +263,7 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::ScanValues => scan_values(b, &base).await,
         Leaf::OptimisticSequence => optimistic_sequence(b, &base).await,
         Leaf::AbsentRace => absent_race(b, &base).await,
+        Leaf::BoundedCall => bounded_call(b).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.prefix_list(&base, None, usize::MAX).await {
@@ -751,6 +760,44 @@ async fn batch_rollback<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> 
     Ok(())
 }
 
+/// `kv.bounded_call`: the backend blocks a batch on a lock (`bounded_call_probe`) and this judges
+/// what it saw. A backend with no timeout configured is `Unsupported`, which is "off, missing".
+async fn bounded_call<K: KvBackend>(b: &K) -> Result<(), Failure> {
+    if b.call_bound().is_none() {
+        return Err(KvError::Unsupported("no call timeout configured".to_string()).into());
+    }
+    let p = b.bounded_call_probe().await?;
+    if !p.finished {
+        return wrong(format!(
+            "a call blocked on a lock never returned (bound {:?}, waited {:?})",
+            p.bound, p.elapsed
+        ));
+    }
+    match &p.error {
+        Some(KvError::TimedOut(_)) => {}
+        Some(other) => {
+            return wrong(format!(
+                "the blocked call failed, but not with the timeout: {other}"
+            ));
+        }
+        None => return wrong("the blocked call succeeded while its lock was held"),
+    }
+    let limit = p.bound * 3 + Duration::from_secs(2);
+    if p.elapsed > limit {
+        return wrong(format!(
+            "the blocked call took {:?} against a bound of {:?}",
+            p.elapsed, p.bound
+        ));
+    }
+    if p.applied_after {
+        return wrong("a batch cut off by the timeout was applied afterwards");
+    }
+    if !p.recovered {
+        return wrong("the store did not work again once the block was gone");
+    }
+    Ok(())
+}
+
 async fn absent_race<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     const CONTENDERS: usize = 8;
     const ROUNDS: usize = 10;
@@ -1129,7 +1176,12 @@ pub async fn certify_leaves<K: KvBackend>(
 ) -> Vec<Certified> {
     let mut out = Vec::new();
     for leaf in leaves.iter().copied() {
-        let positive_passed = run_leaf(leaf, &MemoryKv::new()).await.is_ok();
+        let reference = if leaf == Leaf::BoundedCall {
+            MemoryKv::bounded()
+        } else {
+            MemoryKv::new()
+        };
+        let positive_passed = run_leaf(leaf, &reference).await.is_ok();
         let mut known_bad_failed = true;
         for d in leaf.defects() {
             if run_leaf(leaf, &MemoryKv::with_defect(*d)).await.is_ok() {
@@ -1298,11 +1350,40 @@ mod tests {
 
     #[tokio::test]
     async fn a_correct_backend_is_on_for_every_leaf() {
-        let rows = certify(&MemoryKv::new(), &Config::new(), &Config::new()).await;
+        let rows = certify(&MemoryKv::bounded(), &Config::new(), &Config::new()).await;
         assert_eq!(rows.len(), Leaf::ALL.len());
         for c in &rows {
             assert!(c.row.enabled, "{}: {}", c.leaf.id(), c.row.note);
             assert!(c.row.metadata.get("test").is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn bounded_call_is_declared_only_when_a_timeout_is_configured() {
+        // No timeout configured: the leaf is off as missing, never wrong, never on.
+        let rows = certify_leaves(
+            &MemoryKv::new(),
+            &Config::new(),
+            &Config::new(),
+            &[Leaf::BoundedCall],
+        )
+        .await;
+        assert_eq!(state(&rows, "kv.bounded_call"), Some(Reason::Missing));
+        // A timeout configured and held: on.
+        let rows = certify_leaves(
+            &MemoryKv::bounded(),
+            &Config::new(),
+            &Config::new(),
+            &[Leaf::BoundedCall],
+        )
+        .await;
+        assert_eq!(state(&rows, "kv.bounded_call"), None);
+        // A timeout configured and broken, either way: wrong.
+        for d in [Defect::BoundIgnored, Defect::TimeoutLeavesBatchApplied] {
+            assert!(matches!(
+                run_leaf(Leaf::BoundedCall, &MemoryKv::with_defect(d)).await,
+                Err(Failure::Wrong(_))
+            ));
         }
     }
 
@@ -1355,6 +1436,7 @@ mod tests {
                     | Leaf::ScanValues
                     | Leaf::OptimisticSequence
                     | Leaf::AbsentRace
+                    | Leaf::BoundedCall
             );
             assert_eq!(c.row.enabled, !needs_cad, "{}: {}", c.leaf.id(), c.row.note);
             if needs_cad {

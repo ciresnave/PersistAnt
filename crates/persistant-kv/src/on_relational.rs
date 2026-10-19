@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::translate::{self, Translator};
-use crate::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};
+use crate::{BatchOp, BoundedProbe, KeyPage, KvBackend, KvError, ValuePage};
 use persistant_relational::{
     Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
 };
@@ -52,6 +52,7 @@ const NOW: &str = "CAST(EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS BIGINT)"
 fn err(e: RelError) -> KvError {
     match e {
         RelError::Unsupported(m) => KvError::Unsupported(m),
+        RelError::Timeout { after } => KvError::TimedOut(after),
         other => KvError::Backend(other.to_string()),
     }
 }
@@ -367,6 +368,76 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
 
     fn version(&self) -> &str {
         &self.version
+    }
+
+    fn call_bound(&self) -> Option<Duration> {
+        self.db.call_bound()
+    }
+
+    async fn bounded_call_probe(&self) -> Result<BoundedProbe, KvError> {
+        let bound = self
+            .db
+            .call_bound()
+            .ok_or_else(|| KvError::Unsupported("no call timeout configured".to_string()))?;
+        // The row every batch locks first (SQLite: its one writer lock, taken by a write to the row).
+        let lock = if *self.tr.dialect() == Dialect::Sqlite {
+            "UPDATE persistant_kv_batch SET id = id WHERE id = 1"
+        } else {
+            "SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE"
+        };
+        let key = "persistant-conformance/kv.bounded_call/blocked";
+        let seen: std::sync::Mutex<Option<(Duration, Result<bool, KvError>)>> =
+            std::sync::Mutex::new(None);
+        let during = Box::pin(async {
+            let started = std::time::Instant::now();
+            let r = self
+                .batch(&[BatchOp::Put {
+                    key: key.to_string(),
+                    value: b"blocked".to_vec(),
+                    ttl: None,
+                }])
+                .await;
+            *seen.lock().unwrap_or_else(|e| e.into_inner()) = Some((started.elapsed(), r));
+        });
+        let at_most = bound * 6 + Duration::from_secs(1);
+        self.db
+            .with_lock_held(lock, at_most, during)
+            .await
+            .map_err(err)?;
+        let seen = seen.into_inner().unwrap_or_else(|e| e.into_inner());
+        let (finished, elapsed, error) = match seen {
+            Some((elapsed, Ok(_))) => (true, elapsed, None),
+            Some((elapsed, Err(e))) => (true, elapsed, Some(e)),
+            None => (false, at_most, None),
+        };
+        // The block is gone. The cut-off batch must not have been applied (a dropped transaction
+        // rolls back), and a normal batch must work again; a statement queued behind the lock may
+        // still be draining, so the second is tried a few times.
+        let applied_after = self.get(key).await?.is_some();
+        let mut recovered = false;
+        for _ in 0..10 {
+            let ok = self
+                .batch(&[BatchOp::Put {
+                    key: format!("{key}-after"),
+                    value: b"after".to_vec(),
+                    ttl: None,
+                }])
+                .await;
+            if matches!(ok, Ok(true)) {
+                recovered = true;
+                break;
+            }
+        }
+        let _ = self.delete(key).await;
+        let _ = self.delete(&format!("{key}-after")).await;
+        Ok(BoundedProbe {
+            bound,
+            elapsed,
+            finished,
+            error,
+            applied_after,
+            recovered,
+        })
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {

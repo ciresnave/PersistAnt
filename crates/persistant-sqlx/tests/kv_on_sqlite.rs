@@ -113,9 +113,10 @@ async fn kv_on_sqlite_certifies_every_leaf_on() {
     assert_eq!(kv.get("a").await.unwrap().as_deref(), Some(&b"1"[..]));
     let config = Config::new().with("dialect", "sqlite");
     let rows = certify(&kv, &config, &Config::new()).await;
+    // kv.bounded_call is off here by design: no call timeout is configured on this backend.
     let off: Vec<_> = rows
         .iter()
-        .filter(|c| !c.row.enabled)
+        .filter(|c| !c.row.enabled && c.leaf != persistant_kv::conformance::Leaf::BoundedCall)
         .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
         .collect();
     assert!(off.is_empty(), "leaves off on SQLite: {off:#?}");

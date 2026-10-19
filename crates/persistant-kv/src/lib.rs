@@ -37,7 +37,7 @@ pub mod speed;
 pub mod stats;
 mod translate;
 
-pub use backend::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};
+pub use backend::{BatchOp, BoundedProbe, KeyPage, KvBackend, KvError, ValuePage};
 pub use lease::Lease;
 pub use memory::{Defect, MemoryKv};
 pub use on_blob::KvOnBlob;

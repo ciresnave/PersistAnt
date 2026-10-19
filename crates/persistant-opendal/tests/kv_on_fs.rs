@@ -62,7 +62,7 @@ fn merged(blob: &Config, kv: &Config) -> Config {
 }
 
 /// The leaves a blob store cannot give at all (no compare-and-delete).
-const NEEDS_CAD: [&str; 9] = [
+const NEEDS_CAD: [&str; 10] = [
     "kv.compare_and_swap",
     "kv.compare_and_delete",
     "lock.lease",
@@ -73,6 +73,8 @@ const NEEDS_CAD: [&str; 9] = [
     "kv.batch_atomic.optimistic_sequence",
     "kv.batch_atomic.absent_race",
     "kv.ordered_scan_values",
+    // No call timeout is configured on a blob store.
+    "kv.bounded_call",
 ];
 
 #[tokio::test]

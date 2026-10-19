@@ -47,6 +47,10 @@ pub enum Defect {
     CadIgnoresExpected,
     /// `compare_and_delete` checks, lets others run, then deletes: two callers can both win.
     CadNotAtomic,
+    /// A call blocked past its bound is never cut off: it finishes late, or not at all.
+    BoundIgnored,
+    /// A batch cut off by the timeout is applied anyway once the block is gone.
+    TimeoutLeavesBatchApplied,
 }
 
 type Entry = (Vec<u8>, Option<Instant>);
@@ -56,6 +60,7 @@ type Entry = (Vec<u8>, Option<Instant>);
 pub struct MemoryKv {
     map: Mutex<BTreeMap<String, Entry>>,
     defect: Option<Defect>,
+    bound: Option<Duration>,
 }
 
 fn live(e: &Entry) -> bool {
@@ -73,6 +78,18 @@ impl MemoryKv {
         MemoryKv {
             map: Mutex::default(),
             defect: Some(defect),
+            bound: None,
+        }
+    }
+
+    /// A correct store that reports a per-call bound, as the reference for `kv.bounded_call`. It
+    /// never blocks, so its probe is simulated: it exercises the leaf's judgement of a probe report
+    /// (the controls), not a real timeout. The real thing is `KvOnRelational` over a bounded
+    /// backend.
+    pub fn bounded() -> Self {
+        MemoryKv {
+            bound: Some(Duration::from_millis(50)),
+            ..MemoryKv::default()
         }
     }
 
@@ -125,6 +142,39 @@ impl KvBackend for MemoryKv {
 
     fn version(&self) -> &str {
         env!("CARGO_PKG_VERSION")
+    }
+
+    fn call_bound(&self) -> Option<Duration> {
+        match self.defect {
+            Some(Defect::BoundIgnored | Defect::TimeoutLeavesBatchApplied) => {
+                Some(Duration::from_millis(50))
+            }
+            _ => self.bound,
+        }
+    }
+
+    async fn bounded_call_probe(&self) -> Result<crate::BoundedProbe, KvError> {
+        let bound = self
+            .call_bound()
+            .ok_or_else(|| KvError::Unsupported("no call timeout configured".to_string()))?;
+        let mut p = crate::BoundedProbe {
+            bound,
+            elapsed: bound,
+            finished: true,
+            error: Some(KvError::TimedOut(bound)),
+            applied_after: false,
+            recovered: true,
+        };
+        match self.defect {
+            Some(Defect::BoundIgnored) => {
+                p.elapsed = bound * 100;
+                p.finished = false;
+                p.error = None;
+            }
+            Some(Defect::TimeoutLeavesBatchApplied) => p.applied_after = true,
+            _ => {}
+        }
+        Ok(p)
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {

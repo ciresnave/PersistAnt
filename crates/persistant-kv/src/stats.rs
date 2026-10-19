@@ -33,12 +33,14 @@ pub struct OpCount {
     pub unsupported: u64,
     /// `KvError::Corrupt` results.
     pub corrupt: u64,
+    /// `KvError::TimedOut` results.
+    pub timed_out: u64,
 }
 
 impl OpCount {
     /// Every error, whatever its kind.
     pub fn errors(&self) -> u64 {
-        self.backend + self.unsupported + self.corrupt
+        self.backend + self.unsupported + self.corrupt + self.timed_out
     }
 }
 
@@ -72,6 +74,7 @@ impl<'a, K: KvBackend> Instrumented<'a, K> {
                 Err(KvError::Backend(_)) => e.backend += 1,
                 Err(KvError::Unsupported(_)) => e.unsupported += 1,
                 Err(KvError::Corrupt(_)) => e.corrupt += 1,
+                Err(KvError::TimedOut(_)) => e.timed_out += 1,
             }
         }
         r
@@ -85,6 +88,10 @@ impl<K: KvBackend> KvBackend for Instrumented<'_, K> {
 
     fn version(&self) -> &str {
         self.inner.version()
+    }
+
+    fn call_bound(&self) -> Option<Duration> {
+        self.inner.call_bound()
     }
 
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {

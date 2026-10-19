@@ -128,12 +128,36 @@ async fn kv_on_mysql_certifies_every_leaf_on() {
     assert_eq!(kv.get("a").await.unwrap().as_deref(), Some(&b"1"[..]));
     let config = Config::new().with("dialect", flavor());
     let rows = certify(&kv, &config, &Config::new()).await;
+    // kv.bounded_call is off here by design: no call timeout is configured on this backend.
     let off: Vec<_> = rows
         .iter()
-        .filter(|c| !c.row.enabled)
+        .filter(|c| !c.row.enabled && c.leaf != persistant_kv::conformance::Leaf::BoundedCall)
         .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
         .collect();
     assert!(off.is_empty(), "leaves off on MySQL: {off:#?}");
+}
+
+/// With a call timeout configured, `kv.bounded_call` is on: a batch blocked on the batch row's lock
+/// by another session returns the timeout within the bound and leaves nothing applied.
+#[tokio::test]
+async fn kv_on_mysql_declares_bounded_call_when_a_timeout_is_set() {
+    let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
+    let bound = std::time::Duration::from_millis(500);
+    let kv = KvOnRelational::open(persistant_sqlx::Bounded::new(db, bound))
+        .await
+        .expect("open");
+    let config = Config::new()
+        .with("dialect", flavor())
+        .with("call_timeout_ms", "500");
+    let rows = persistant_kv::conformance::certify_leaves(
+        &kv,
+        &config,
+        &Config::new(),
+        &[persistant_kv::conformance::Leaf::BoundedCall],
+    )
+    .await;
+    assert!(rows[0].row.enabled, "{}", rows[0].row.note);
 }
 
 /// The fact `KvOnRelational::claim_two_step` is written around. If sqlx ever stops setting
