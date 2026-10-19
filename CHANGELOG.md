@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.17
+
+### Fixed
+- Machine durability harness: the PostgreSQL disk-full step ran 83 minutes with no output until the job timeout (run 39288280654) because the host waited on the writer with no limit. `machine_vm enospc` now prints `progress N` every 500 acknowledgements; `run.ps1` reads them as they arrive and ends the step as **STALLED** after 120 s without one (or 25 min in all), dumps guest state (pg_isready, ps, df, database logs, dmesg), frees the ballast and checks every key up to the last progress line. STALLED is its own verdict, never "failed loud": a client that waits on a full disk is worse than one that is told. Job timeout 90 -> 45 minutes. The reader was tested against a fake writer for the loud, stalled, MySQL-stalled and never-failed outcomes. Cause of the PostgreSQL hang is not yet known (a slow fill and a real hang look alike without the progress lines).
+
 ## 0.8.16
 
 ### Fixed
