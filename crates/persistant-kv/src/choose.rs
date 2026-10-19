@@ -49,7 +49,12 @@ pub fn declared_durability(backend: &str) -> Option<Declared> {
         ),
         "kv-on-relational:sqlite" => d(
             Durability::Process,
-            "SQLite WAL file, synchronous=FULL; verified: guest power loss on ext4 (Hyper-V), run 39178436801; UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, PG/MySQL ENOSPC, remote stores; still declared Process until that is decided",
+            "SQLite WAL file opened with SqliteBackend::open; synchronous is not asserted, so the class is Process. Open with open_durable (kv-on-relational:sqlite-full) to declare Machine",
+            p,
+        ),
+        "kv-on-relational:sqlite-full" => d(
+            Durability::Machine,
+            "SQLite WAL file, synchronous=FULL set explicitly (SqliteBackend::open_durable); verified: guest power loss on ext4 (Hyper-V), run 39178436801; UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, PG/MySQL ENOSPC, remote stores",
             m,
         ),
         "kv-on-relational:postgres" => d(
@@ -125,7 +130,7 @@ mod tests {
     #[test]
     fn machine_is_verified_only_where_the_power_cut_harness_ran() {
         let machine = [
-            "kv-on-relational:sqlite",
+            "kv-on-relational:sqlite-full",
             "kv-on-relational:postgres",
             "kv-on-relational:mysql",
         ];
@@ -141,12 +146,15 @@ mod tests {
             "memory",
             "kv-on-blob:opendal-memory",
             "kv-on-blob:opendal-fs",
+            // The default open does not assert synchronous=FULL, so it is not Machine.
+            "kv-on-relational:sqlite",
         ] {
             let d = declared_durability(b).expect(b);
             assert!(
                 d.verified.is_none_or(|v| v <= Durability::Process),
                 "{b}: the harness did not exercise it"
             );
+            assert!(d.class <= Durability::Process, "{b}: declared too high");
         }
     }
 

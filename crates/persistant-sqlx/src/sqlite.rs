@@ -9,7 +9,10 @@ use persistant_relational::{
     Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
 };
 use sqlx::query::Query;
-use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
+use sqlx::sqlite::{
+    SqliteArguments, SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow,
+    SqliteSynchronous,
+};
 use sqlx::{AssertSqlSafe, Row as SqlxRow, Sqlite, TypeInfo, ValueRef};
 use std::path::Path;
 use std::time::Duration;
@@ -98,6 +101,7 @@ pub struct SqliteBackend {
     pool: sqlx::SqlitePool,
     version: String,
     migrating: std::sync::Arc<tokio::sync::Mutex<()>>,
+    full_sync: bool,
 }
 
 impl SqliteBackend {
@@ -116,6 +120,28 @@ impl SqliteBackend {
         Self::from_pool(pool).await
     }
 
+    /// As [`open`](Self::open), with `journal_mode=WAL` and `synchronous=FULL` set explicitly rather
+    /// than left to a default. This profile reports itself as `sqlite-full`, which is the name the
+    /// key-value `choose` table declares `Machine` for (guest power loss on ext4, run 39178436801);
+    /// [`open`](Self::open) stays `sqlite` and declared `Process`. A pool built elsewhere and handed
+    /// to [`from_pool`](Self::from_pool) is never assumed to have this setting.
+    pub async fn open_durable(path: impl AsRef<Path>) -> Result<Self, RelError> {
+        let opts = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Full)
+            .busy_timeout(Duration::from_secs(30));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(8)
+            .connect_with(opts)
+            .await
+            .map_err(classify)?;
+        let mut me = Self::from_pool(pool).await?;
+        me.full_sync = true;
+        Ok(me)
+    }
+
     /// Wrap an existing pool. The pool must reach one database: an in-memory database is a
     /// separate database per connection, so give it `max_connections(1)`.
     pub async fn from_pool(pool: sqlx::SqlitePool) -> Result<Self, RelError> {
@@ -127,6 +153,7 @@ impl SqliteBackend {
             pool,
             version,
             migrating: Default::default(),
+            full_sync: false,
         })
     }
 
@@ -158,7 +185,11 @@ impl RelationalBackend for SqliteBackend {
     type Tx<'a> = SqliteTx;
 
     fn backend(&self) -> &str {
-        "sqlite"
+        if self.full_sync {
+            "sqlite-full"
+        } else {
+            "sqlite"
+        }
     }
 
     fn version(&self) -> &str {
