@@ -202,6 +202,8 @@ function Add-Result([string]$Test, [string]$Backend, [int]$Cycle, [string]$Verdi
     Write-Host ("{0,-9} {1,-11} cycle {2}: {3}  {4}" -f $Test, $Backend, $Cycle, $Verdict, $Detail)
 }
 
+function Format-Guest($r) { "exit $($r.Code), output: [$($r.Out)]" }
+
 function Write-GuestState {
     # What a person needs to see why a disk-full writer made no progress. Never throws.
     $ErrorActionPreference = 'Continue'
@@ -224,6 +226,7 @@ function Invoke-Enospc([string]$Backend, [string]$Spec, [int]$NoProgressSeconds 
     $psi.UseShellExecute = $false
     $proc = [System.Diagnostics.Process]::Start($psi)
     $acked = 0
+    $progressLines = 0
     $final = ''
     $started = Get-Date
     $outcome = 'error'
@@ -239,7 +242,7 @@ function Invoke-Enospc([string]$Backend, [string]$Spec, [int]$NoProgressSeconds 
             }
             $line = $task.Result
             if ($null -eq $line) { break }
-            if ($line -match '^progress (\d+)$') { $acked = [int]$Matches[1]; continue }
+            if ($line -match '^progress (\d+)$') { $acked = [int]$Matches[1]; $progressLines++; continue }
             $final = $line
         }
     } finally {
@@ -254,7 +257,7 @@ function Invoke-Enospc([string]$Backend, [string]$Spec, [int]$NoProgressSeconds 
         $outcome = 'never'; $acked = [int]$Matches[1]
     }
     $proc.Dispose()
-    @{ Outcome = $outcome; Acked = $acked; Text = $final }
+    @{ Outcome = $outcome; Acked = $acked; Text = $final; ProgressLines = $progressLines; Seconds = [int]((Get-Date) - $started).TotalSeconds }
 }
 
 $disk = Join-Path $WorkDir "$VmName.vhdx"
@@ -324,20 +327,23 @@ try {
     # the room is filled by puts. After the failure the server may be down (PostgreSQL PANICs on a WAL
     # write that cannot finish), so the way an operator recovers is done: free the ballast file, wait for
     # the server, and only then check every key acknowledged before the failure.
-    $volumeMb = @{ postgres = 64; mysql = 130 }
+    $volumeMb = @{ postgres = 80; mysql = 200 }
+    $roomMb = 12
     foreach ($b in $Backends) {
+        try {
         if ($b -eq 'sqlite') {
             $r = Invoke-Guest 'sudo pa-small make 8'
-            if ($r.Code -ne 0) { throw "pa-small make: $($r.Out)" }
+            if ($r.Code -ne 0) { throw "pa-small make: $(Format-Guest $r)" }
             $spec = '/mnt/small/full.db'
         } else {
             $kind = if ($b -eq 'postgres') { 'pg' } else { 'mysql' }
-            $r = Invoke-Guest "sudo pa-small-db $kind on $($volumeMb[$b])"
-            if ($r.Code -ne 0) { throw "pa-small-db $kind on: $($r.Out)" }
+            $r = Invoke-Guest "sudo pa-small-db $kind on $($volumeMb[$b]) $roomMb"
+            if ($r.Code -ne 0) { Write-GuestState; throw "pa-small-db $kind on: $(Format-Guest $r)" }
             Write-Host "  $b volume after setup (df -k): $($r.Out.Trim().Split("`n")[-1])"
             $spec = Get-Spec $b 'full'
         }
         $e = Invoke-Enospc $b $spec
+        Write-Host "  $b writer: $($e.Outcome) after $($e.Seconds) s, acknowledged >= $($e.Acked), $($e.ProgressLines) progress lines; final line: [$($e.Text)]"
         if ($e.Outcome -notin 'failed', 'stalled') {
             $failures.Add("enospc $b`: expected the full disk to stop the writer, got $($e.Outcome): $($e.Text)")
             Add-Result 'enospc' $b 1 'FAILED' $e.Text
@@ -349,11 +355,37 @@ try {
             $acked = $e.Acked
             if ($b -ne 'sqlite') {
                 $null = Invoke-Guest "sudo pa-small-db $kind free"
-                Wait-Database $b
+                try { Wait-Database $b } catch { Write-Host "  $b did not come back: $($_.Exception.Message)" }
+                Write-GuestState
             }
-            $c = Invoke-Guest "timeout 300 machine_vm check $b '$spec' $acked"
-            if ($c.Code -eq 0) { Add-Result 'enospc' $b 1 "$verdict, ACKED KEPT" "$($e.Text); $($c.Out)" }
-            else { $failures.Add("enospc ${b}: $acked acknowledged before the stop, but $($c.Out)"); Add-Result 'enospc' $b 1 'LOST AN ACK' $c.Out }
+            # A read that errors is not a lost key: the server may still be recovering. Retry a bounded
+            # number of times (exit 5 = could not connect, 6 = reads failed, 124 = the step timed out);
+            # only a store that ANSWERS "absent" for an acknowledged key is a loss, and its output names
+            # the keys.
+            $c = $null
+            foreach ($attempt in 1..4) {
+                $c = Invoke-Guest "timeout 300 machine_vm check $b '$spec' $acked"
+                Write-Host "  $b check attempt ${attempt}: $(Format-Guest $c)"
+                if ($c.Code -notin 5, 6, 124, 255) { break }
+                Start-Sleep -Seconds 30
+            }
+            if ($c.Code -eq 0) {
+                Add-Result 'enospc' $b 1 "$verdict, ACKED KEPT" "$($e.Text); $($c.Out)"
+            } elseif ($c.Code -eq 1 -and $c.Out -match 'first missing keys') {
+                $failures.Add("enospc ${b}: $acked acknowledged before the stop, and the store answered without them: $($c.Out)")
+                Add-Result 'enospc' $b 1 'LOST AN ACK' $c.Out
+            } else {
+                $failures.Add("enospc ${b}: could not verify the $acked acknowledged keys (not proven lost): $(Format-Guest $c)")
+                Add-Result 'enospc' $b 1 'UNVERIFIED' (Format-Guest $c)
+                Write-GuestState
+            }
+        }
+        } catch {
+            # One backend's step failing must not take the others' results with it (no result file would
+            # be written): record it, keep the evidence, go on.
+            $failures.Add("enospc ${b}: the step itself failed: $($_.Exception.Message)")
+            Add-Result 'enospc' $b 1 'ERROR' $_.Exception.Message
+            Write-GuestState
         }
         if ($b -eq 'sqlite') { $null = Invoke-Guest 'sudo pa-small drop' }
         else { $null = Invoke-Guest "sudo pa-small-db $kind off" }

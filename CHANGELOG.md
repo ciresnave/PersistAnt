@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.18
+
+### Fixed
+- Machine durability harness, disk-full step for PostgreSQL and MySQL (run 39306449594 gave "LOST AN ACK" with no evidence, then a MySQL setup failure with no output). Reproduced in an Ubuntu 24.04 container:
+  - MySQL setup failed because the 130 MB volume was too small for the new cluster (~110 MB; "The table 'help_topic' is full"). Volumes are now 80 MB (PostgreSQL) and 200 MB (MySQL), made without reserved blocks, with a FILLER file that leaves exactly 12 MB for the puts (a 56 MB fill took 20 minutes). `pa-small-db` now names its step on stderr and reports the step and exit code it failed at, keeps one image per server, and unmounts lazily.
+  - PostgreSQL PANICs when a WAL write fails, and on a full volume crash recovery needs room too: with 2 MB freed it stayed down ("could not write file base/16385/pg_filenode.map.tmp"), with ~10 MB freed it recovered. The ballast is now 8 MB and `pa-small-db ... free` starts the server again, as an operator would.
+  - `machine_vm check` no longer reports an unreadable store as lost: it retries the connection for two minutes (exit 5 = cannot connect), puts a 60 s limit on each read, and reports read errors as `unreadable` (exit 6). Exit 1 (lost) names the first missing keys, held and unreadable counts. `run.ps1` retries 5/6/124 up to 4 times, only prints LOST AN ACK when the output names missing keys, otherwise UNVERIFIED, prints the writer's outcome, progress-line count and exit code of every guest step, dumps guest state after each PostgreSQL/MySQL step, and records a failing backend step as ERROR instead of aborting the run without a result file.
+  - Container run of the full sequence: PostgreSQL failed loud (ENOSPC on pg_wal) after 21399 acknowledged, 1000 of them re-read and held; MySQL stalled (60 s, binlog) after 7108 acknowledged, held after the ballast was freed; a check past the acknowledged range printed `lost 191 of 7300 ... first missing keys [7109, ...]` (exit 1); an unreachable server printed exit 5. Not yet run under Hyper-V.
+
 ## 0.8.17
 
 ### Fixed
