@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.13
+
+### Changed
+- ROADMAP: row 1a, an explicit `synchronous=FULL` SQLite profile that declares `Machine` (the default stays `Process`). Docs only.
+
 ## 0.8.12
 
 ### Added
