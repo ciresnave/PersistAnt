@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.15
+
+### Added
+- Machine durability harness: disk-full (ENOSPC) check for PostgreSQL and MySQL. `scripts/machine-durability/pa-small-db.sh` mounts a fresh small ext4 volume over the server's data directory in the guest; `run.ps1` fills it with puts, frees a ballast file, waits for the server and checks every acknowledged key. `machine_vm enospc` now treats a put with no answer in 60 s as a failure ("stalled"). Guest script and binary were exercised in an Ubuntu 24.04 container first (PostgreSQL 16: failed loud with ENOSPC after 31158 acknowledged, all present; MySQL 8.0: stalled on a full binlog after 84325 acknowledged, all present after the ballast was freed). Not run on Hyper-V yet; no declaration changes.
+
 ## 0.8.14
 
 ### Added

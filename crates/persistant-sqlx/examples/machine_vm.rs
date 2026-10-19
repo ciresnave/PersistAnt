@@ -27,6 +27,9 @@ use std::process::ExitCode;
 /// How many keys `write` and `enospc` try before giving up (the host cuts power long before).
 const BUDGET: u32 = 1_000_000;
 
+/// How long `enospc` waits for one put before calling it failed.
+const STALL: std::time::Duration = std::time::Duration::from_secs(60);
+
 async fn sqlite(path: &str, sync: SqliteSynchronous) -> KvOnRelational<SqliteBackend> {
     let opts = SqliteConnectOptions::new()
         .filename(path)
@@ -82,10 +85,17 @@ async fn check<K: KvBackend>(kv: &K, count: u32) -> ExitCode {
 async fn enospc<K: KvBackend>(kv: &K) -> ExitCode {
     let mut acked = 0_u32;
     for n in 0..BUDGET {
-        match kv.put(&key(Mode::Honest, n), value(n), None).await {
-            Ok(()) => acked = n + 1,
-            Err(e) => {
+        // A server that cannot write may wait for space instead of returning an error (InnoDB does).
+        // A put that never returns was never acknowledged, so it is reported as a failure, by name.
+        let put = tokio::time::timeout(STALL, kv.put(&key(Mode::Honest, n), value(n), None)).await;
+        match put {
+            Ok(Ok(())) => acked = n + 1,
+            Ok(Err(e)) => {
                 println!("failed {n} after acked {acked}: {e}");
+                return ExitCode::from(3);
+            }
+            Err(_) => {
+                println!("failed {n} after acked {acked}: stalled, no answer in {STALL:?}");
                 return ExitCode::from(3);
             }
         }
