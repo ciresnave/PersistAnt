@@ -32,6 +32,7 @@ blob (#45). Not done, in this order (queued by the PM 2026-10-16):
    boot, with the same known-bad control: a store that acknowledges before it flushes). Scope: kv on a
    file (SQLite, OpenDAL fs) and on a server database inside the guest. Not built, not scheduled; it
    needs infrastructure the PM provides. Options and a recommendation: `docs/DESIGN-DURABILITY-MACHINE.md`.
+1a. **SQLite declared class.** An explicit `synchronous=FULL` profile declares `Machine` (what Synapse needs per board 229: A, now backed by run 39178436801); the default stays `Process`. Not scheduled; no work this week unless the PM asks.
 2. **`choose` for the blob kind** *(done, 0.6.0: contract, speed and choose on the shared core types;
    blob durability is declared and unverified)*, then **the relational kind**. *Its first leaves are
    done (0.6.1: `rel.values`, `rel.transaction`, `rel.error.unique`, `rel.foreign_key`,
