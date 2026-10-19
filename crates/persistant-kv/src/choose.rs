@@ -54,17 +54,17 @@ pub fn declared_durability(backend: &str) -> Option<Declared> {
         ),
         "kv-on-relational:sqlite-full" => d(
             Durability::Machine,
-            "SQLite WAL file, synchronous=FULL set explicitly (SqliteBackend::open_durable); verified: guest power loss on ext4 (Hyper-V), run 39178436801; UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, PG/MySQL ENOSPC, remote stores",
+            "SQLite WAL file, synchronous=FULL set explicitly (SqliteBackend::open_durable); verified: guest power loss on ext4 (Hyper-V), run 39178436801; disk full on an 8 MB ext4 volume FAILS LOUD with the acknowledged keys kept (run 39325665814); UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, remote stores",
             m,
         ),
         "kv-on-relational:postgres" => d(
             Durability::Machine,
-            "PostgreSQL defaults (fsync=on, synchronous_commit=on); verified: guest power loss on ext4 (Hyper-V), run 39178436801; UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, PG/MySQL ENOSPC, remote stores",
+            "PostgreSQL defaults (fsync=on, synchronous_commit=on); verified: guest power loss on ext4 (Hyper-V), run 39178436801; disk full FAILS LOUD (a put returns 'No space left on device' from pg_wal; the server may PANIC and stay down until about 10 MB is freed and it is restarted; every acknowledged key kept, 21496 of them) (run 39325665814); UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, remote stores",
             m,
         ),
         "kv-on-relational:mysql" => d(
             Durability::Machine,
-            "InnoDB defaults (innodb_flush_log_at_trx_commit=1); verified: guest power loss on ext4 (Hyper-V), run 39178436801; UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, PG/MySQL ENOSPC, remote stores",
+            "InnoDB defaults (innodb_flush_log_at_trx_commit=1); verified: guest power loss on ext4 (Hyper-V), run 39178436801; disk full STALLS, it does NOT fail loud: the client gets no answer and no error while the server logs 'Disk is full ... Waiting for someone to free space' (a caller needs its own timeout); the 7118 keys acknowledged before kept once space was freed (run 39325665814); UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, remote stores",
             m,
         ),
         _ => None,

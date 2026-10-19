@@ -30,6 +30,19 @@ CireSnave 2026-10-18, board 229: A).
   waiting, so the operator's step is done before the check: the 8 MB ballast file is deleted, the stopped server is started again, the
   server is awaited, and every key acknowledged before the failure must be present.
 
+## What the disk-full runs found (run 39325665814, main 9a9fad2)
+
+| Backend | Behaviour on a full volume | Acknowledged keys |
+|---|---|---|
+| SQLite (8 MB) | **fails loud** | 330 kept |
+| PostgreSQL (80 MB) | **fails loud**: `could not write to file pg_wal/...: No space left on device`; the server can PANIC and stays down until about 10 MB is freed and it is started again | 21,496, all kept |
+| MySQL (200 MB) | **STALLS**: no error, no answer; the binlog write waits (`Disk is full ... Waiting for someone to free space`) | 7,118, all kept once space was freed |
+
+The PostgreSQL log shows `duplicate key value violates unique constraint "persistant_kv_batch_pkey"` each
+time a store is opened: `KvOnRelational::open` inserts the batch-lock row `(1)` on every open and treats a
+unique violation as "already there" (`crates/persistant-kv/src/on_relational.rs`). Every `machine_vm`
+invocation (write, enospc, check) opens the store, so one such line per invocation is expected and harmless.
+
 ## What a pass does not show (UNVERIFIED, and must stay so in any matrix row)
 
 The physical disk's volatile cache and host power loss (the host stays up); NTFS and Windows flush
