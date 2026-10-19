@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.19
+
+### Changed
+- Recorded the disk-full result of run 39325665814 (main 9a9fad2, guest ext4): SQLite and PostgreSQL FAIL LOUD with every acknowledged key kept; **MySQL STALLS** (no error, no answer, InnoDB waits for space) with every acknowledged key kept once space was freed. The kv `choose` declarations for `sqlite-full`, `postgres` and `mysql` say so, and "PG/MySQL ENOSPC" is no longer in their unverified lists. The PostgreSQL log line `duplicate key ... persistant_kv_batch_pkey` is the batch-lock row insert in `KvOnRelational::open`, tolerated on purpose, once per store open. Docs and declaration strings only.
+
 ## 0.8.18
 
 ### Fixed
