@@ -195,6 +195,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a write acknowledged as stored is still there after the writing process is killed hard and the store is opened again; says nothing about power loss or an operating-system crash (that is the Machine class, declared not verified)",
     ),
     (
+        "kv.durability.machine",
+        "a write acknowledged as stored is still there after the guest operating system loses power (a Hyper-V guest turned off with no shutdown) and boots again; the known-bad control (SQLite synchronous=OFF) loses its writes in the same run. Says nothing about host power loss, NTFS or Windows flush behaviour, the physical disk's own cache, torn sector writes, or remote object stores",
+    ),
+    (
         "kv.ordered_scan_values",
         "an ordered scan returns each key's value with it, in ascending bytewise key order, in pages, from one consistent snapshot",
     ),

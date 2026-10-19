@@ -18,9 +18,10 @@
 //! an error ([`NoneEligible`]) that carries the exclusions: no silent fallback, no "closest match".
 //! Every decision is written as lines ([`Choice::log_lines`]) the caller logs.
 //!
-//! **Durability is declared; only `Process` is verified** (by the kind's durability test, where one
-//! exists). A backend with no declaration is excluded as unknown once the need asks for more than
-//! `Volatile`. `Machine` (power loss) has no test and is never marked verified.
+//! **Durability is declared; `Process` and `Machine` are verified only where a test ran** (the kind's
+//! process-kill test; the guest power-cut harness in `scripts/machine-durability`). A backend with no
+//! declaration is excluded as unknown once the need asks for more than `Volatile`. `Machine` is marked
+//! verified only for what that harness exercised, and never for host power loss or NTFS.
 
 use crate::bench::{Outcome, SpeedTable, Stats};
 use crate::{Config, Reason};
@@ -79,8 +80,9 @@ pub struct Declared {
     pub basis: &'static str,
     /// The highest class a test has actually verified, if any. `Process` is verified by
     /// [`durability`](crate::durability) (`kv.durability.process`: a writer killed after
-    /// acknowledged writes, the store opened again). `Machine` has no test yet, so nothing is
-    /// verified up to it.
+    /// acknowledged writes, the store opened again). `Machine` is verified by `kv.durability.machine`
+    /// (`scripts/machine-durability`: a Hyper-V guest powered off after acknowledged writes, booted, every
+    /// acknowledged key checked), which says nothing about host power loss, NTFS or the disk's own cache.
     pub verified: Option<Durability>,
 }
 
@@ -347,7 +349,15 @@ impl Choice {
                         d.basis,
                         d.verified.map_or_else(
                             || "no".to_string(),
-                            |v| format!("up to {} by kv.durability.process", v.as_str())
+                            |v| format!(
+                                "up to {} by {}",
+                                v.as_str(),
+                                if v >= Durability::Machine {
+                                    "kv.durability.machine"
+                                } else {
+                                    "kv.durability.process"
+                                }
+                            )
                         )
                     )
                 ),
@@ -460,6 +470,41 @@ mod tests {
             basis: "test table",
             verified: (class >= Durability::Process).then_some(Durability::Process),
         })
+    }
+
+    #[test]
+    fn a_machine_verified_backend_names_the_machine_test_in_the_log() {
+        fn machine(b: &str) -> Option<Declared> {
+            let mut d = table(b)?;
+            d.verified = Some(Durability::Machine);
+            Some(d)
+        }
+        let speed = SpeedTable::from_rows(vec![row("server", "laptop", 2000)]);
+        let c = choose(
+            &[cand("server", true)],
+            &need(Durability::Machine),
+            &speed,
+            &machine,
+        )
+        .unwrap();
+        let log = c.log_lines().join("\n");
+        assert!(
+            log.contains("verified: up to machine by kv.durability.machine"),
+            "{log}"
+        );
+        // The control: a Process verification still names the process test.
+        let c = choose(
+            &[cand("file", true)],
+            &need(Durability::Process),
+            &SpeedTable::from_rows(vec![row("file", "laptop", 300)]),
+            &table,
+        )
+        .unwrap();
+        assert!(
+            c.log_lines()
+                .join("\n")
+                .contains("by kv.durability.process")
+        );
     }
 
     #[test]

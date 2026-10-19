@@ -8,9 +8,10 @@
 //! fails a needed leaf or declares too little durability is excluded with the reason, nothing eligible
 //! is an error with the reasons, and every decision can be logged ([`Choice::log_lines`]).
 //!
-//! **Durability is declared; only `Process` is verified**, by [`durability`](crate::durability)
-//! (`kv.durability.process`). No power-loss test exists (`blob.durable` is not built), so `Machine` is
-//! never marked verified.
+//! **Durability is declared; `Process` is verified** by [`durability`](crate::durability)
+//! (`kv.durability.process`), and `Machine` by the guest power-cut harness (`kv.durability.machine`,
+//! `scripts/machine-durability`) for `kv-on-relational` on SQLite, PostgreSQL and MySQL only. Host power
+//! loss, NTFS and remote object stores stay unverified.
 
 use crate::KvBackend;
 use crate::conformance::Leaf;
@@ -34,6 +35,9 @@ pub fn declared_durability(backend: &str) -> Option<Declared> {
         })
     };
     let p = Some(Durability::Process);
+    // Run 39178436801 (main 02f86a7): a Hyper-V guest powered off after 300 acknowledged writes, five
+    // cycles each, nothing lost; the synchronous=OFF control lost every key in all four cycles.
+    let m = Some(Durability::Machine);
     match backend {
         "memory" | "kv-on-blob:opendal-memory" => {
             d(Durability::Volatile, "in-process memory", None)
@@ -45,18 +49,18 @@ pub fn declared_durability(backend: &str) -> Option<Declared> {
         ),
         "kv-on-relational:sqlite" => d(
             Durability::Process,
-            "SQLite WAL file; sqlx's default synchronous=FULL is documented but not asserted or tested here",
-            p,
+            "SQLite WAL file, synchronous=FULL; verified: guest power loss on ext4 (Hyper-V), run 39178436801; UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, PG/MySQL ENOSPC, remote stores; still declared Process until that is decided",
+            m,
         ),
         "kv-on-relational:postgres" => d(
             Durability::Machine,
-            "PostgreSQL defaults (fsync=on, synchronous_commit=on); documented, no power-loss test",
-            p,
+            "PostgreSQL defaults (fsync=on, synchronous_commit=on); verified: guest power loss on ext4 (Hyper-V), run 39178436801; UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, PG/MySQL ENOSPC, remote stores",
+            m,
         ),
         "kv-on-relational:mysql" => d(
             Durability::Machine,
-            "InnoDB defaults (innodb_flush_log_at_trx_commit=1); documented, no power-loss test",
-            p,
+            "InnoDB defaults (innodb_flush_log_at_trx_commit=1); verified: guest power loss on ext4 (Hyper-V), run 39178436801; UNVERIFIED: host power loss, NTFS, disk cache, torn sectors, PG/MySQL ENOSPC, remote stores",
+            m,
         ),
         _ => None,
     }
@@ -119,19 +123,29 @@ mod tests {
     use persistant_core::Reason;
 
     #[test]
-    fn nothing_is_verified_above_process() {
+    fn machine_is_verified_only_where_the_power_cut_harness_ran() {
+        let machine = [
+            "kv-on-relational:sqlite",
+            "kv-on-relational:postgres",
+            "kv-on-relational:mysql",
+        ];
+        for b in machine {
+            assert_eq!(
+                declared_durability(b).expect(b).verified,
+                Some(Durability::Machine),
+                "{b}"
+            );
+        }
+        // The control: every other backend the table knows stays at or below Process.
         for b in [
             "memory",
             "kv-on-blob:opendal-memory",
             "kv-on-blob:opendal-fs",
-            "kv-on-relational:sqlite",
-            "kv-on-relational:postgres",
-            "kv-on-relational:mysql",
         ] {
             let d = declared_durability(b).expect(b);
             assert!(
                 d.verified.is_none_or(|v| v <= Durability::Process),
-                "{b}: Machine has no test, it cannot be verified"
+                "{b}: the harness did not exercise it"
             );
         }
     }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.12
+
+### Added
+- `kv.durability.machine` in the vocabulary, and `Declared.verified = Machine` for `kv-on-relational` on SQLite (`synchronous=FULL`), PostgreSQL and MySQL: run 39178436801 (main 02f86a7) cut a Hyper-V guest's power after 300 acknowledged writes, 5 cycles each, and every acknowledged key was present; the `synchronous=OFF` control lost every key in 4 of 4 cycles; SQLite disk-full failed loud with its acknowledged keys kept. The `choose` log names the test that verified a class. Declared classes are unchanged (SQLite stays `Process`). Not verified, and said so in the declaration: host power loss, NTFS, disk cache, torn sectors, PostgreSQL/MySQL disk-full, remote object stores. The relational and blob tables are unchanged (no relational-level or blob-level test).
+
 ## 0.8.11
 
 ### Fixed
