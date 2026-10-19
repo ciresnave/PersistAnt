@@ -202,6 +202,61 @@ function Add-Result([string]$Test, [string]$Backend, [int]$Cycle, [string]$Verdi
     Write-Host ("{0,-9} {1,-11} cycle {2}: {3}  {4}" -f $Test, $Backend, $Cycle, $Verdict, $Detail)
 }
 
+function Write-GuestState {
+    # What a person needs to see why a disk-full writer made no progress. Never throws.
+    $ErrorActionPreference = 'Continue'
+    Write-Host '--- guest state after a stalled disk-full writer ---'
+    $cmd = 'pg_isready -h 127.0.0.1; ps aux --sort=-%cpu | head -12; df -k | tail -6; ' +
+        'sudo tail -25 /var/log/postgresql/postgresql-*-main.log; sudo tail -25 /var/log/mysql/error.log; sudo dmesg | tail -15'
+    (Invoke-Guest $cmd).Out | Write-Host
+    Write-Host '--- end guest state ---'
+}
+
+function Invoke-Enospc([string]$Backend, [string]$Spec, [int]$NoProgressSeconds = 120, [int]$TotalSeconds = 1500) {
+    # Run `machine_vm enospc` over SSH and read its output as it arrives. The writer prints `progress N`
+    # every 500 acknowledgements, so a slow fill (each commit waits for a disk flush) is told apart from
+    # a hang: no line for $NoProgressSeconds, or $TotalSeconds in all, ends the step as STALLED.
+    # Returns @{ Outcome = failed|stalled|never|error; Acked; Text }. `Acked` is a lower bound on what
+    # the server acknowledged (the last progress line, or the count in the final line).
+    $psi = [System.Diagnostics.ProcessStartInfo]::new('ssh')
+    $psi.Arguments = (($SshOpts + @("pa@$Guest", "machine_vm enospc $Backend '$Spec'")) | ForEach-Object { '"' + $_ + '"' }) -join ' '
+    $psi.RedirectStandardOutput = $true
+    $psi.UseShellExecute = $false
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $acked = 0
+    $final = ''
+    $started = Get-Date
+    $outcome = 'error'
+    try {
+        while ($true) {
+            $task = $proc.StandardOutput.ReadLineAsync()
+            $left = $TotalSeconds - ((Get-Date) - $started).TotalSeconds
+            $wait = [Math]::Min($NoProgressSeconds, [Math]::Max(1, $left))
+            if (-not $task.Wait([int]($wait * 1000))) {
+                $outcome = 'stalled'
+                $final = "no output for $([int]$wait) s after $acked acknowledged (total $([int]((Get-Date) - $started).TotalSeconds) s)"
+                break
+            }
+            $line = $task.Result
+            if ($null -eq $line) { break }
+            if ($line -match '^progress (\d+)$') { $acked = [int]$Matches[1]; continue }
+            $final = $line
+        }
+    } finally {
+        if (-not $proc.HasExited) { $proc.Kill() }
+    }
+    if ($outcome -eq 'stalled') {
+        Write-GuestState
+        $null = Invoke-Guest 'sudo pkill -x machine_vm; true'
+    } elseif ($final -match '^failed (\d+) after acked (\d+)') {
+        $outcome = 'failed'; $acked = [int]$Matches[2]
+    } elseif ($final -match '^never failed; acked (\d+)') {
+        $outcome = 'never'; $acked = [int]$Matches[1]
+    }
+    $proc.Dispose()
+    @{ Outcome = $outcome; Acked = $acked; Text = $final }
+}
+
 $disk = Join-Path $WorkDir "$VmName.vhdx"
 Copy-Item $Base $disk
 try {
@@ -282,19 +337,23 @@ try {
             Write-Host "  $b volume after setup (df -k): $($r.Out.Trim().Split("`n")[-1])"
             $spec = Get-Spec $b 'full'
         }
-        $e = Invoke-Guest "machine_vm enospc $b '$spec'"
-        if ($e.Code -ne 3 -or $e.Out -notmatch 'failed (\d+) after acked (\d+)') {
-            $failures.Add("enospc $b`: expected a loud failure (exit 3), got exit $($e.Code): $($e.Out)")
-            Add-Result 'enospc' $b 1 'FAILED' $e.Out
+        $e = Invoke-Enospc $b $spec
+        if ($e.Outcome -notin 'failed', 'stalled') {
+            $failures.Add("enospc $b`: expected the full disk to stop the writer, got $($e.Outcome): $($e.Text)")
+            Add-Result 'enospc' $b 1 'FAILED' $e.Text
         } else {
-            $acked = [int]$Matches[2]
+            # Loud: the server returned an error. STALLED: it gave no answer (a hang, or InnoDB waiting for
+            # space). A client that waits forever on a full disk is worse than one that is told; it is
+            # recorded as its own verdict and never as "failed loud".
+            $verdict = if ($e.Outcome -eq 'stalled' -or $e.Text -match 'stalled') { 'STALLED' } else { 'FAILED LOUD' }
+            $acked = $e.Acked
             if ($b -ne 'sqlite') {
                 $null = Invoke-Guest "sudo pa-small-db $kind free"
                 Wait-Database $b
             }
-            $c = Invoke-Guest "machine_vm check $b '$spec' $acked"
-            if ($c.Code -eq 0) { Add-Result 'enospc' $b 1 'FAILED LOUD, ACKED KEPT' "$($e.Out); $($c.Out)" }
-            else { $failures.Add("enospc ${b}: $acked acknowledged before the failure, but $($c.Out)"); Add-Result 'enospc' $b 1 'LOST AN ACK' $c.Out }
+            $c = Invoke-Guest "timeout 300 machine_vm check $b '$spec' $acked"
+            if ($c.Code -eq 0) { Add-Result 'enospc' $b 1 "$verdict, ACKED KEPT" "$($e.Text); $($c.Out)" }
+            else { $failures.Add("enospc ${b}: $acked acknowledged before the stop, but $($c.Out)"); Add-Result 'enospc' $b 1 'LOST AN ACK' $c.Out }
         }
         if ($b -eq 'sqlite') { $null = Invoke-Guest 'sudo pa-small drop' }
         else { $null = Invoke-Guest "sudo pa-small-db $kind off" }

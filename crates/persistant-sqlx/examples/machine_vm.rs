@@ -89,7 +89,14 @@ async fn enospc<K: KvBackend>(kv: &K) -> ExitCode {
         // A put that never returns was never acknowledged, so it is reported as a failure, by name.
         let put = tokio::time::timeout(STALL, kv.put(&key(Mode::Honest, n), value(n), None)).await;
         match put {
-            Ok(Ok(())) => acked = n + 1,
+            Ok(Ok(())) => {
+                acked = n + 1;
+                // The host reads these to tell a slow fill from a hang, and checks up to the last one.
+                if acked.is_multiple_of(500) {
+                    println!("progress {acked}");
+                    let _ = std::io::stdout().flush();
+                }
+            }
             Ok(Err(e)) => {
                 println!("failed {n} after acked {acked}: {e}");
                 return ExitCode::from(3);
