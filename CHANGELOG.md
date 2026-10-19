@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.16
+
+### Fixed
+- Machine durability harness: the guest copy of `pa-small-db.sh` had every letter `r` deleted (run 39282354886): the CR-stripping `tr -d ''` lost its backslash between PowerShell and ssh. Carriage returns are now stripped on the host, and the guest's copy must match the host file's SHA-256 or the run stops. 0.8.15's container pre-test ran the script directly, so it never exercised this path. PostgreSQL/MySQL ENOSPC still has no verdict.
+
 ## 0.8.15
 
 ### Added

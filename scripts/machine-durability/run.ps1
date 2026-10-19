@@ -217,14 +217,20 @@ try {
     $ErrorActionPreference = 'Stop'
     if ($scpCode -ne 0) { throw 'could not copy machine_vm into the guest' }
     # The disk-full helper for PostgreSQL and MySQL. Copied now, not baked into the image, so the base
-    # disk need not be rebuilt; carriage returns are stripped in case the checkout is CRLF.
+    # disk need not be rebuilt. Carriage returns are stripped HERE, on the host: a `tr -d '\r'` sent
+    # through PowerShell and ssh loses its backslash and deletes every letter r (run 39282354886).
+    # The guest's copy is then proven byte-identical by SHA-256.
+    $helper = Join-Path $WorkDir 'pa-small-db.sh'
+    $text = (Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'pa-small-db.sh')) -replace "`r", ''
+    [System.IO.File]::WriteAllText($helper, $text, [System.Text.UTF8Encoding]::new($false))
+    $want = (Get-FileHash -Algorithm SHA256 -LiteralPath $helper).Hash.ToLower()
     $ErrorActionPreference = 'Continue'
-    & scp @SshOpts (Join-Path $PSScriptRoot 'pa-small-db.sh') "pa@${Guest}:/tmp/pa-small-db.sh" 2>&1 | Out-Null
+    & scp @SshOpts $helper "pa@${Guest}:/tmp/pa-small-db.sh" 2>&1 | Out-Null
     $scpCode = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     if ($scpCode -ne 0) { throw 'could not copy pa-small-db.sh into the guest' }
-    $r = Invoke-Guest 'tr -d "\r" < /tmp/pa-small-db.sh | sudo tee /usr/local/bin/pa-small-db >/dev/null && sudo chmod 755 /usr/local/bin/pa-small-db'
-    if ($r.Code -ne 0) { throw "could not install pa-small-db: $($r.Out)" }
+    $r = Invoke-Guest 'sudo install -m 755 /tmp/pa-small-db.sh /usr/local/bin/pa-small-db && sha256sum /usr/local/bin/pa-small-db'
+    if ($r.Code -ne 0 -or $r.Out -notmatch "^$want ") { throw "pa-small-db in the guest is not the file sent (want sha256 $want): $($r.Out)" }
     $r = Invoke-Guest 'sudo install -m 755 /tmp/machine_vm /usr/local/bin/machine_vm && sync && machine_vm 2>&1 | head -1'
     if ($r.Code -ne 0 -and $r.Out -notmatch 'usage') { throw "machine_vm does not run in the guest: $($r.Out)" }
 
