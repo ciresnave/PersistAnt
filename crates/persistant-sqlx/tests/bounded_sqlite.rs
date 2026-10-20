@@ -22,6 +22,21 @@ async fn guard<T>(call: impl std::future::Future<Output = T>) -> T {
         .expect("the call hung: the bound did not fire")
 }
 
+/// A bounded store over `path`. The tables are created first through an unbounded backend: the DDL
+/// of a first open can take longer than any bound that is short enough to test, on a slow CI disk
+/// (the 2 s bound timed out opening on a hosted Windows runner), and what is under test is the
+/// bound on a blocked call, not on setup. The second open only finds the tables there.
+async fn open_bounded(path: &std::path::Path) -> KvOnRelational<Bounded<SqliteBackend>> {
+    let first = SqliteBackend::open(path).await.unwrap();
+    drop(KvOnRelational::open(first).await.unwrap());
+    KvOnRelational::open(Bounded::new(
+        SqliteBackend::open(path).await.unwrap(),
+        BOUND,
+    ))
+    .await
+    .unwrap()
+}
+
 fn temp_db(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
         "persistant-bounded-{tag}-{}-{}.db",
@@ -52,12 +67,7 @@ fn put(key: &str) -> Vec<BatchOp> {
 #[tokio::test]
 async fn a_batch_blocked_on_a_real_lock_times_out_and_applies_nothing() {
     let path = temp_db("lock");
-    let kv = KvOnRelational::open(Bounded::new(
-        SqliteBackend::open(&path).await.unwrap(),
-        BOUND,
-    ))
-    .await
-    .unwrap();
+    let kv = open_bounded(&path).await;
 
     // Another transaction holds SQLite's writer lock.
     let blocker_db = SqliteBackend::open(&path).await.unwrap();
@@ -111,12 +121,7 @@ async fn bounded_call_is_on_with_a_timeout_and_off_without() {
     let none = Config::new();
 
     let path = temp_db("on");
-    let kv = KvOnRelational::open(Bounded::new(
-        SqliteBackend::open(&path).await.unwrap(),
-        BOUND,
-    ))
-    .await
-    .unwrap();
+    let kv = open_bounded(&path).await;
     let rows = certify_leaves(&kv, &none, &none, &leaves).await;
     assert!(rows[0].row.enabled, "{}", rows[0].row.note);
     cleanup(&path);

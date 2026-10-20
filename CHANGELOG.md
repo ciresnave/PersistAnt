@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0
+
+### Breaking
+- **`persistant::sql!` now needs a schema decision** (`docs/COMPILE-TIME-SQL.md` section 3.2). A call states `schema = "path"` (relative to the crate's `Cargo.toml`; a `.json` snapshot from `persistant-migrate snapshot`, or a `.sql` DDL file) or `schema = none` (database-free checks only, said in words). With neither, the crate's `persistant-schema.json` is used, and if it does not exist **the build fails** naming the file and both ways out: a missing schema is never a quiet downgrade. Calls written against 0.8.21 and 0.8.22 add `schema = none` to keep their meaning. Reason: with no schema a comparison on an unknown column is taken for text and needs `allow = [text_collation]`; a stated schema removes that and enables the checks below.
+
+### Added
+- **Compile-time SQL, stage 5: the catalog checks** (PM [TASK] 2026-10-20, on UniSQL 0.24.17's `Checker` seam). With a schema, `sql!` runs UniSQL's name checks (an unknown column of a table whose column list is complete, `INSERT` row width, a column listed twice, `UPDATE .. SET` of an unknown column) and PersistAnt's own, both as build errors: an `INSERT` that leaves out a `NOT NULL` column with no default; an `ON CONFLICT (cols)` that is not, as a set, one of the table's stated unique keys. Every check errors **only when certain**: a table or column the snapshot does not state, a column list not marked complete, a key list marked unreliable (a partial or expression unique index exists), a flag the reader could not tell: all pass. Not checked, said plainly: operand classes in comparisons, the types of bound arguments and selected columns (stage 6), views, CTEs, other schemas.
+- The schema file is tracked: the expansion `include_bytes!`s it, so cargo rebuilds when it changes. The one environment read is `CARGO_MANIFEST_DIR`.
+- Tests: 23 macro unit tests (each check has a failing statement and its passing twin; a key list marked unreliable is not reported; a newer snapshot is refused; every `schema =` mistake is named), doc-tests with a `compile_fail` and its twin against `tests/doctest-schema.sql`, and `persistant-sqlx/tests/sql_macro.rs` now checking its statements against a committed snapshot (`sql_macro_schema.json`, produced by `persistant-migrate snapshot --scratch`) on real SQLite, PostgreSQL 16 and MySQL 8.4, with a test that the file is what the real SQLite catalog says. `FIND`'s `allow = [text_collation]` is gone: the snapshot says `id` is a number.
+
 ## 0.8.23
 
 ### Added

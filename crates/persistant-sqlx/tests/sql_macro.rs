@@ -8,21 +8,24 @@ use persistant_relational::{
     Isolation, RelationalBackend, RelationalSqlExt, RelationalTx, RelationalTxSqlExt, Sql, Value,
 };
 
+// The schema is a committed snapshot (`persistant-migrate snapshot --scratch`), relative to this crate.
+// The statements are checked against it at build time.
 const INSERT: Sql = sql!(
     crate = ::persistant_relational::embed,
     source = postgres,
     targets = [postgres, sqlite, mysql, mariadb],
+    schema = "tests/sql_macro_schema.json",
     "INSERT INTO persistant_sqlmacro (id, name) VALUES ($1, $2)"
 );
 
-// $1 is used twice: SQLite numbers its placeholders, MySQL repeats positional ones. With no schema
-// the macro cannot know `id` is a number, so ordering and comparing it needs the allowance named
-// (the build refuses without it: that is the point of the check).
+// $1 is used twice: SQLite numbers its placeholders, MySQL repeats positional ones. The snapshot says
+// `id` is a number, so ordering and comparing it needs no `text_collation` allowance (without a schema
+// the build refuses without it).
 const FIND: Sql = sql!(
     crate = ::persistant_relational::embed,
     source = postgres,
     targets = [postgres, sqlite, mysql, mariadb],
-    allow = [text_collation],
+    schema = "tests/sql_macro_schema.json",
     "SELECT name FROM persistant_sqlmacro WHERE id = $1 OR id = $1 + 1 ORDER BY id"
 );
 
@@ -78,6 +81,44 @@ async fn run<B: RelationalBackend>(db: &B) {
     db.execute("DROP TABLE persistant_sqlmacro", &[])
         .await
         .unwrap();
+}
+
+/// The committed snapshot the macros were checked against is what the real SQLite catalog says about
+/// the table this test creates: if the table and the file drift apart, this fails, not production.
+#[cfg(feature = "sqlite")]
+#[tokio::test]
+async fn the_committed_snapshot_is_what_the_catalog_says() {
+    use persistant_relational::catalog::{differences, parse, read_catalog};
+    let path = std::env::temp_dir().join(format!(
+        "persistant-sqlmacro-snap-{}.db",
+        std::process::id()
+    ));
+    let db = persistant_sqlx::SqliteBackend::open(&path).await.unwrap();
+    db.execute(
+        "CREATE TABLE persistant_sqlmacro (id BIGINT PRIMARY KEY, name VARCHAR(40) NOT NULL)",
+        &[],
+    )
+    .await
+    .unwrap();
+    let committed = parse(include_str!("sql_macro_schema.json")).unwrap();
+    // The committed file also records the migration it was derived from; the live table has no ledger.
+    let real = read_catalog(&db, committed.meta.clone()).await.unwrap();
+    assert_eq!(differences(&committed, &real), Vec::<String>::new());
+    // The control: a column the file does not know is seen.
+    db.execute(
+        "ALTER TABLE persistant_sqlmacro ADD COLUMN extra INTEGER",
+        &[],
+    )
+    .await
+    .unwrap();
+    let drifted = read_catalog(&db, committed.meta.clone()).await.unwrap();
+    assert!(!differences(&committed, &drifted).is_empty());
+    drop(db);
+    for ext in ["", "-wal", "-shm"] {
+        let mut p = path.as_os_str().to_owned();
+        p.push(ext);
+        let _ = std::fs::remove_file(p);
+    }
 }
 
 #[cfg(feature = "sqlite")]

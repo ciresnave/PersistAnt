@@ -47,10 +47,18 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// build errors, not run-time ones; no database is consulted and no schema is read yet (the
 /// catalog-based checks are a later stage, `docs/COMPILE-TIME-SQL.md`).
 ///
+/// `schema` is required: `schema = none` for database-free checks only, or a path (relative to your
+/// `Cargo.toml`) to a `.json` snapshot written by `persistant-migrate snapshot`, or a `.sql` DDL file.
+/// With none stated the crate looks for `persistant-schema.json` and fails to build without it: a
+/// missing schema is never a quiet downgrade. With one, UniSQL checks the names and the `INSERT`
+/// arity, and PersistAnt checks that an `INSERT` does not leave out a `NOT NULL` column that has no
+/// default and that an `ON CONFLICT (..)` names a unique key. It errors only when certain: what the
+/// schema does not state is unknown and passes.
+///
 /// ```
 /// use persistant::{Sql, sql};
 /// const FIND: Sql = sql!(
-///     source = postgres, targets = [postgres, sqlite],
+///     source = postgres, targets = [postgres, sqlite], schema = none,
 ///     "SELECT id FROM users WHERE id = $1"
 /// );
 /// assert_eq!(FIND.params, 1);
@@ -61,12 +69,31 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// ```
 /// use persistant::{Sql, sql};
-/// const OK: Sql = sql!(source = postgres, targets = [postgres], "SELECT md5($1)");
+/// const OK: Sql = sql!(source = postgres, targets = [postgres], schema = none, "SELECT md5($1)");
 /// ```
 ///
 /// ```compile_fail
 /// use persistant::{Sql, sql};
-/// const BAD: Sql = sql!(source = postgres, targets = [postgres, sqlite], "SELECT md5($1)");
+/// const BAD: Sql = sql!(source = postgres, targets = [postgres, sqlite], schema = none, "SELECT md5($1)");
+/// ```
+///
+/// Against a schema (`tests/doctest-schema.sql`: `users` has `id` and `email`, both `NOT NULL` with no
+/// default), an `INSERT` that leaves `email` out does not build; the twin that supplies it does:
+///
+/// ```
+/// use persistant::{Sql, sql};
+/// const OK: Sql = sql!(
+///     source = postgres, targets = [sqlite], schema = "tests/doctest-schema.sql",
+///     "INSERT INTO users (id, email) VALUES ($1, $2)"
+/// );
+/// ```
+///
+/// ```compile_fail
+/// use persistant::{Sql, sql};
+/// const BAD: Sql = sql!(
+///     source = postgres, targets = [sqlite], schema = "tests/doctest-schema.sql",
+///     "INSERT INTO users (id) VALUES ($1)"
+/// );
 /// ```
 #[cfg(feature = "sql-macros")]
 pub use persistant_macros::sql;
@@ -81,6 +108,6 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
-        assert_eq!(VERSION, "0.8.23");
+        assert_eq!(VERSION, "0.9.0");
     }
 }

@@ -16,3 +16,8 @@ proc-macro = true
 proc-macro2 = "1"
 # Published version only (portfolio rule 2026-10-07: no path or git dependencies across repos).
 unisql-macro-core = "0.24.17"
+# `schema = "x.sql"`: DDL read by UniSQL; the schema type is UniSQL's.
+unisql = "0.24.17"
+
+[dev-dependencies]
+tempfile = "3.27.0"

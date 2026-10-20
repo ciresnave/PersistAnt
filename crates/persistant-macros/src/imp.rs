@@ -3,8 +3,11 @@
 //! exists only inside a macro call). A failing call yields `compile_error!` tokens, never a panic, so
 //! rust-analyzer keeps the rest of the file.
 
+use crate::checker::PersistantChecker;
 use proc_macro2::{Delimiter, Group, Literal, Span, TokenStream, TokenTree};
-use unisql_macro_core::{Input, Kind, expand};
+use std::path::{Path, PathBuf};
+use unisql::Schema;
+use unisql_macro_core::{Input, Kind, Snapshot, expand_with};
 
 /// The path the expansion names `Query`, `Rendered`, `Target` and `Binding` through.
 const DEFAULT_CRATE: &str = "::persistant::embed";
@@ -30,11 +33,30 @@ struct Args {
     requires: Option<(Vec<String>, Span)>,
     forbids: Option<(Vec<String>, Span)>,
     krate: Option<String>,
+    schema: Option<(SchemaSpec, Span)>,
     sql: Option<(String, Span)>,
 }
 
+/// Where the macro's schema comes from.
+enum SchemaSpec {
+    /// `schema = none`: database-free checks only, stated.
+    None,
+    /// `schema = "path"`, relative to the crate's manifest directory.
+    Path(String),
+}
+
+/// The snapshot the committed `persistant-migrate snapshot` writes, beside `Cargo.toml`.
+const DEFAULT_SCHEMA: &str = "persistant-schema.json";
+
 pub(crate) fn sql(input: TokenStream) -> TokenStream {
-    match build(input) {
+    // The one environment read, as UniSQL's design allows: the crate being compiled.
+    let dir = std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from);
+    sql_in(input, dir.as_deref())
+}
+
+/// As [`sql`], with the manifest directory given (so tests need not touch the environment).
+pub(crate) fn sql_in(input: TokenStream, manifest_dir: Option<&Path>) -> TokenStream {
+    match build(input, manifest_dir) {
         Ok(tokens) => tokens,
         Err(errors) => compile_errors(errors),
     }
@@ -79,7 +101,64 @@ fn respan(ts: TokenStream, span: Span) -> TokenStream {
         .collect()
 }
 
-fn build(input: TokenStream) -> Result<TokenStream, Vec<Error>> {
+/// The schema the call asked for, and the file it came from (to be tracked by `include_bytes!`).
+fn load_schema(
+    spec: Option<&(SchemaSpec, Span)>,
+    manifest_dir: Option<&Path>,
+    source: &str,
+) -> Result<(Option<Schema>, Option<PathBuf>), Error> {
+    let (rel, span) = match spec {
+        Some((SchemaSpec::None, _)) => return Ok((None, None)),
+        Some((SchemaSpec::Path(p), span)) => (p.as_str(), *span),
+        None => (DEFAULT_SCHEMA, Span::call_site()),
+    };
+    let Some(dir) = manifest_dir else {
+        return Err(err(
+            span,
+            "CARGO_MANIFEST_DIR is not set, so the schema file cannot be found: write `schema = none` for database-free checks only",
+        ));
+    };
+    let file = dir.join(rel);
+    if spec.is_none() && !file.exists() {
+        return Err(err(
+            span,
+            format!(
+                "no schema: {DEFAULT_SCHEMA} is not in {}. Run `persistant-migrate snapshot` and commit the file, name another with `schema = \"path\"`, or write `schema = none` for database-free checks only",
+                dir.display()
+            ),
+        ));
+    }
+    let text = std::fs::read_to_string(&file).map_err(|e| {
+        err(
+            span,
+            format!("cannot read the schema {}: {e}", file.display()),
+        )
+    })?;
+    let schema = match file.extension().and_then(|e| e.to_str()) {
+        Some("json") => {
+            Snapshot::from_json(&text)
+                .map_err(|e| err(span, format!("{}: {e}", file.display())))?
+                .schema
+        }
+        Some("sql") => {
+            unisql::schema_from_ddl(&text, source)
+                .map_err(|e| err(span, format!("{}: {e}", file.display())))?
+                .schema
+        }
+        _ => {
+            return Err(err(
+                span,
+                format!(
+                    "the schema {} must be a .json snapshot or a .sql DDL file",
+                    file.display()
+                ),
+            ));
+        }
+    };
+    Ok((Some(schema), Some(file)))
+}
+
+fn build(input: TokenStream, manifest_dir: Option<&Path>) -> Result<TokenStream, Vec<Error>> {
     let args = parse_args(input)?;
     let mut missing = Vec::new();
     let sql_span = args.sql.as_ref().map_or_else(Span::call_site, |s| s.1);
@@ -102,6 +181,8 @@ fn build(input: TokenStream) -> Result<TokenStream, Vec<Error>> {
             "no statement given: the last argument must be the SQL as a string literal",
         )]);
     };
+    let (schema, schema_file) =
+        load_schema(args.schema.as_ref(), manifest_dir, &source).map_err(|e| vec![e])?;
     let input = Input {
         source,
         targets,
@@ -117,19 +198,26 @@ fn build(input: TokenStream) -> Result<TokenStream, Vec<Error>> {
             .map(|a| a.0.clone())
             .unwrap_or_default(),
         sql,
-        schema: None,
+        schema,
     };
-    match expand(&input) {
+    match expand_with(&input, &[&PersistantChecker]) {
         Ok(expansion) => {
             let path = args.krate.as_deref().unwrap_or(DEFAULT_CRATE);
-            render(path, &expansion)
-                .parse::<TokenStream>()
-                .map_err(|e| {
-                    vec![err(
-                        sql_span,
-                        format!("internal error building the expansion: {e}"),
-                    )]
-                })
+            let mut text = render(path, &expansion);
+            if let Some(file) = schema_file {
+                // Reading the file is not tracked by cargo; including its bytes is, so the crate is
+                // rebuilt when the snapshot changes. A block, so it fits an expression position.
+                text = format!(
+                    "{{ const _: &[u8] = ::core::include_bytes!({:?}); {text} }}",
+                    file.to_string_lossy()
+                );
+            }
+            text.parse::<TokenStream>().map_err(|e| {
+                vec![err(
+                    sql_span,
+                    format!("internal error building the expansion: {e}"),
+                )]
+            })
         }
         Err(problems) => Err(problems
             .into_iter()
@@ -249,7 +337,7 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
         let Some(name) = named else {
             errors.push(err(
                 span,
-                "expected `name = value` (source, targets, allow, requires, forbids, crate) or the statement as a string literal",
+                "expected `name = value` (source, targets, allow, requires, forbids, schema, crate) or the statement as a string literal",
             ));
             continue;
         };
@@ -284,6 +372,20 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
                 }
                 Err(e) => errors.push(e),
             },
+            "schema" => {
+                let spec = match &value[..] {
+                    [TokenTree::Ident(i)] if i == "none" => Ok(SchemaSpec::None),
+                    [TokenTree::Literal(l)] => string_value(l).map(SchemaSpec::Path).ok_or_else(|| {
+                        err(l.span(), "expected `none` or a path in a string literal")
+                    }),
+                    _ => Err(err(vspan, "expected `none` or a path in a string literal")),
+                };
+                match spec {
+                    Ok(_) if args.schema.is_some() => dup(&mut errors),
+                    Ok(spec) => args.schema = Some((spec, vspan)),
+                    Err(e) => errors.push(e),
+                }
+            }
             "crate" => {
                 if args.krate.is_some() {
                     dup(&mut errors);
@@ -294,7 +396,7 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
             other => errors.push(err(
                 span,
                 format!(
-                    "unknown argument `{other}` (known: source, targets, allow, requires, forbids, crate)"
+                    "unknown argument `{other}` (known: source, targets, allow, requires, forbids, schema, crate)"
                 ),
             )),
         }
@@ -410,7 +512,17 @@ mod tests {
     use super::*;
 
     fn run(src: &str) -> String {
-        sql(src.parse().expect("test tokens parse")).to_string()
+        // These tests are about syntax and translation, not schemas: they state `schema = none`.
+        let src = if src.contains("schema") {
+            src.to_string()
+        } else {
+            format!("schema = none, {src}")
+        };
+        sql_in(src.parse().expect("test tokens parse"), None).to_string()
+    }
+
+    fn run_in(src: &str, dir: &Path) -> String {
+        sql_in(src.parse().expect("test tokens parse"), Some(dir)).to_string()
     }
 
     fn ok(src: &str) -> String {
@@ -637,5 +749,212 @@ mod tests {
         let out = ok("source = postgres, targets = [sqlite], \"SELECT 1\n  FROM t\"");
         // the translator normalises whitespace and quoting; the newline in the source is not a problem
         assert!(out.replace(' ', "").contains(r#"FROM\"t\""#), "{out}");
+    }
+
+    // ---- schemas -------------------------------------------------------------------------
+
+    const DDL: &str = "CREATE TABLE users (id BIGINT NOT NULL PRIMARY KEY, email TEXT NOT NULL, \
+                       note TEXT, age INTEGER DEFAULT 7, UNIQUE (email));";
+
+    fn dir_with(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        for (name, text) in files {
+            std::fs::write(d.path().join(name), text).unwrap();
+        }
+        d
+    }
+
+    fn call(schema: &str, sql: &str) -> String {
+        format!("source = postgres, targets = [sqlite], {schema}, \"{sql}\"")
+    }
+
+    fn ok_in(src: &str, dir: &Path) -> String {
+        let out = run_in(src, dir);
+        assert!(
+            !out.contains("compile_error"),
+            "expected a clean expansion: {out}"
+        );
+        out
+    }
+
+    fn fails_in(src: &str, dir: &Path, needle: &str) {
+        let out = run_in(src, dir);
+        assert!(
+            out.contains("compile_error"),
+            "expected a compile error: {out}"
+        );
+        assert!(out.contains(needle), "expected {needle:?} in {out}");
+    }
+
+    #[test]
+    fn no_schema_is_an_error_not_a_quiet_downgrade() {
+        let empty = dir_with(&[]);
+        let plain = r#"source = postgres, targets = [sqlite], "SELECT 1""#;
+        fails_in(
+            plain,
+            empty.path(),
+            "no schema: persistant-schema.json is not in",
+        );
+        // The controls: opting out in words, or having the file, builds.
+        ok_in(
+            r#"source = postgres, targets = [sqlite], schema = none, "SELECT 1""#,
+            empty.path(),
+        );
+        let with_default = dir_with(&[("persistant-schema.json", &snapshot_json())]);
+        let out = ok_in(plain, with_default.path());
+        assert!(
+            out.contains("include_bytes"),
+            "the file is tracked by cargo: {out}"
+        );
+        // No manifest directory at all (a tool that sets no environment) is named, not a panic.
+        assert!(
+            sql_in(plain.parse().unwrap(), None)
+                .to_string()
+                .contains("CARGO_MANIFEST_DIR")
+        );
+    }
+
+    fn snapshot_json() -> String {
+        let schema = unisql::schema_from_ddl(DDL, "postgres").unwrap().schema;
+        Snapshot::new(schema).to_json()
+    }
+
+    #[test]
+    fn a_not_null_column_left_out_of_an_insert_is_caught() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        let bad = call(r#"schema = "s.sql""#, "INSERT INTO users (id) VALUES ($1)");
+        fails_in(
+            &bad,
+            d.path(),
+            "column `email` of `users` is NOT NULL with no default",
+        );
+        // The twin: the same statement with the fault removed. `note` (nullable) and `age` (has a
+        // default) are left out in both and are fine.
+        let good = call(
+            r#"schema = "s.sql""#,
+            "INSERT INTO users (id, email) VALUES ($1, $2)",
+        );
+        let out = ok_in(&good, d.path());
+        assert!(
+            out.contains("Target :: Sqlite") || out.contains("Target::Sqlite"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn on_conflict_must_name_a_stated_unique_key() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        let stmt = |target: &str| {
+            call(
+                r#"schema = "s.sql""#,
+                &format!(
+                    "INSERT INTO users (id, email) VALUES ($1, $2) ON CONFLICT ({target}) DO NOTHING"
+                ),
+            )
+        };
+        fails_in(
+            &stmt("note"),
+            d.path(),
+            "ON CONFLICT (note) is not a unique key of `users`",
+        );
+        // The twins: each stated key is accepted (the primary key and the unique constraint).
+        ok_in(&stmt("id"), d.path());
+        ok_in(&stmt("email"), d.path());
+        // A key list marked unreliable (a partial or expression unique index exists) is unknown, so a
+        // conflict target the list does not show is NOT reported.
+        let mut schema = unisql::schema_from_ddl(DDL, "postgres").unwrap().schema;
+        schema.mark_keys_unreliable(vec!["users".to_string()]);
+        std::fs::write(d.path().join("u.json"), Snapshot::new(schema).to_json()).unwrap();
+        let unreliable = call(
+            r#"schema = "u.json""#,
+            "INSERT INTO users (id, email) VALUES ($1, $2) ON CONFLICT (note) DO NOTHING",
+        );
+        ok_in(&unreliable, d.path());
+    }
+
+    #[test]
+    fn unisqls_own_name_checks_run_through_the_macro() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        fails_in(
+            &call(
+                r#"schema = "s.sql""#,
+                "INSERT INTO users (id, email, nope) VALUES ($1, $2, $3)",
+            ),
+            d.path(),
+            "has no column `nope`",
+        );
+        fails_in(
+            &call(
+                r#"schema = "s.sql""#,
+                "INSERT INTO users (id, email) VALUES ($1)",
+            ),
+            d.path(),
+            "VALUES row 1 has 1 value(s)",
+        );
+        ok_in(
+            &call(
+                r#"schema = "s.sql""#,
+                "INSERT INTO users (id, email) VALUES ($1, $2)",
+            ),
+            d.path(),
+        );
+    }
+
+    #[test]
+    fn a_known_numeric_column_needs_no_text_collation_allowance() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        let sql = "SELECT email FROM users WHERE id < $1";
+        let with =
+            |schema: &str| format!(r#"source = postgres, targets = [mysql], {schema}, "{sql}""#);
+        // Without a schema the comparison is taken for text and MySQL's collation is a risk.
+        fails_in(&with("schema = none"), d.path(), "text_collation");
+        // With one, `id` is known to be a number.
+        ok_in(&with(r#"schema = "s.sql""#), d.path());
+    }
+
+    #[test]
+    fn a_json_snapshot_is_read_and_a_newer_one_refused() {
+        let d = dir_with(&[("snap.json", &snapshot_json())]);
+        fails_in(
+            &call(
+                r#"schema = "snap.json""#,
+                "INSERT INTO users (id) VALUES ($1)",
+            ),
+            d.path(),
+            "NOT NULL with no default",
+        );
+        let newer = snapshot_json().replace("\"format\": 1", "\"format\": 99");
+        std::fs::write(d.path().join("new.json"), newer).unwrap();
+        fails_in(
+            &call(r#"schema = "new.json""#, "SELECT 1"),
+            d.path(),
+            "newer",
+        );
+    }
+
+    #[test]
+    fn schema_argument_mistakes_are_named() {
+        let d = dir_with(&[("s.sql", DDL), ("s.txt", "x")]);
+        fails_in(
+            &call(r#"schema = "gone.json""#, "SELECT 1"),
+            d.path(),
+            "cannot read the schema",
+        );
+        fails_in(
+            &call(r#"schema = "s.txt""#, "SELECT 1"),
+            d.path(),
+            "must be a .json snapshot or a .sql DDL file",
+        );
+        fails_in(
+            &call("schema = 5", "SELECT 1"),
+            d.path(),
+            "expected `none` or a path",
+        );
+        fails_in(
+            &call(r#"schema = "s.sql", schema = none"#, "SELECT 1"),
+            d.path(),
+            "`schema` is given twice",
+        );
+        ok_in(&call(r#"schema = "s.sql""#, "SELECT 1"), d.path());
     }
 }
