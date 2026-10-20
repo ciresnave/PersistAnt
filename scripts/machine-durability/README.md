@@ -12,6 +12,7 @@ CireSnave 2026-10-18, board 229: A).
 | `New-SeedIso.ps1` | writes the cloud-init ISO with the IMAPI2 COM API (nothing to install) |
 | `build-image.ps1` | **once, by a person**: pinned Ubuntu 24.04 cloud image (SHA-256 checked) -> VHDX (qemu-img in Docker) -> provisioned and powered off |
 | `run.ps1` | the test: copy the base disk, boot a Gen2 VM, per cycle write over SSH, `Stop-VM -TurnOff` the moment N acknowledgements have been seen, boot, check |
+| `.github/workflows/synapse-power-cut.yml` | the same `run.ps1` driven with Synapse's `mailbox_vm` (dispatch only, a Synapse commit that is on its main) |
 | `.github/workflows/machine-durability.yml` | builds the guest binary on a hosted runner, runs `run.ps1` on the self-hosted runner (push to main, nightly, dispatch; never on a pull request) |
 
 ## What is checked, and the control
