@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.23
+
+### Added
+- `.github/workflows/synapse-power-cut.yml` (PM [TASK] 2026-10-20): Synapse's own power-loss test for its mailbox, `workflow_dispatch` only. Input `synapse_sha`: a full commit of `ThinkersJournal/synapse`; the workflow runs only from this repository's main branch, refuses a commit that is not an ancestor of Synapse's `origin/main` (proved with `git merge-base --is-ancestor`, not assumed), builds `mailbox_vm` (`synapse-mailbox-persistant`'s example) on a hosted `ubuntu-24.04` runner, and runs `scripts/machine-durability/run.ps1 -Binary <it> -Backends sqlite` on the self-hosted runner (conditions of 5.1g/5.1h: no pull_request trigger, no secrets). `run.ps1` is unchanged. **`-Backends sqlite`, not `sqlite,sqlite-off`** as `mailbox_vm.rs`'s header says: run.ps1 adds the known-bad control (`sqlite-off`, 4 cycles) by itself, and naming it in `-Backends` would make the control cycles "must hold" and send it to the PostgreSQL/MySQL disk-full volume.
+
 ## 0.8.22
 
 ### Added
