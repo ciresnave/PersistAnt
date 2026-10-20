@@ -1,0 +1,18 @@
+[package]
+name = "persistant-macros"
+version.workspace = true
+edition = "2024"
+rust-version = "1.94"
+description = "PersistAnt's compile-time SQL macro: a thin wrapper over unisql-macro-core. Use it through the `persistant` crate (feature `sql-macros`), not directly."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ciresnave/PersistAnt"
+keywords = ["sql", "macro", "database", "persistence", "compile-time"]
+categories = ["database", "development-tools::procedural-macro-helpers"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+# Published version only (portfolio rule 2026-10-07: no path or git dependencies across repos).
+unisql-macro-core = "0.24.13"

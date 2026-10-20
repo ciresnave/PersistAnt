@@ -26,6 +26,9 @@ sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio
 [dev-dependencies]
 sha2 = "0.10"
 persistant-kv = { workspace = true }
+# `persistant::sql!` end to end: the macro, and the `sql` feature of persistant-relational for its traits.
+persistant-macros = { workspace = true }
+persistant-relational = { workspace = true, features = ["sql"] }
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
 
 [[example]]

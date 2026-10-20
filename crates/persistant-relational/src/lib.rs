@@ -20,6 +20,8 @@ mod migrate;
 pub mod migrate_conformance;
 mod secret;
 pub mod speed;
+#[cfg(feature = "sql")]
+mod sql_ext;
 mod sweep;
 mod value;
 
@@ -29,3 +31,10 @@ pub use migrate::{MigrateError, MigrateReport, Migrates, Migration};
 pub use secret::{ConnectionSecret, Redacted};
 pub use sweep::{SweepError, SweepReport, sweep};
 pub use value::{Dialect, Row, Value};
+
+#[cfg(feature = "sql")]
+pub use sql_ext::{RelationalSqlExt, RelationalTxSqlExt, Sql};
+/// `Query`, `Rendered`, `Target` and `Binding`: what `persistant::sql!` expands to (UniSQL's
+/// `unisql-embed`, re-exported so a consumer depends on neither).
+#[cfg(feature = "sql")]
+pub use unisql_embed as embed;
