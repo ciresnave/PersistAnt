@@ -16,4 +16,4 @@ sql = ["dep:unisql-embed"]
 [dependencies]
 persistant-core = { workspace = true }
 # Published version only (portfolio rule 2026-10-07). No dependencies of its own, `no_std`.
-unisql-embed = { version = "0.24.13", optional = true }
+unisql-embed = { version = "0.24.14", optional = true }
