@@ -9,5 +9,11 @@ repository = "https://github.com/ciresnave/PersistAnt"
 keywords = ["sql", "database", "persistence", "capabilities"]
 categories = ["database-implementations"]
 
+[features]
+# `persistant::sql!` support: the `Sql` value the macro expands to, and `execute_sql` / `query_sql`.
+sql = ["dep:unisql-embed"]
+
 [dependencies]
 persistant-core = { workspace = true }
+# Published version only (portfolio rule 2026-10-07). No dependencies of its own, `no_std`.
+unisql-embed = { version = "0.24.14", optional = true }

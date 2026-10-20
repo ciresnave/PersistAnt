@@ -1,17 +1,18 @@
 [workspace]
-members = [".", "crates/persistant-core", "crates/persistant-blob", "crates/persistant-opendal", "crates/persistant-kv", "crates/persistant-relational", "crates/persistant-sqlx", "crates/persistant-migrate"]
+members = [".", "crates/persistant-core", "crates/persistant-blob", "crates/persistant-opendal", "crates/persistant-kv", "crates/persistant-relational", "crates/persistant-sqlx", "crates/persistant-migrate", "crates/persistant-macros"]
 
 [workspace.package]
-version = "0.8.20"
+version = "0.8.21"
 
 [workspace.dependencies]
-persistant-core = { version = "0.8.20", path = "crates/persistant-core" }
-persistant-blob = { version = "0.8.20", path = "crates/persistant-blob" }
-persistant-kv = { version = "0.8.20", path = "crates/persistant-kv" }
-persistant-opendal = { version = "0.8.20", path = "crates/persistant-opendal" }
-persistant-relational = { version = "0.8.20", path = "crates/persistant-relational" }
-persistant-sqlx = { version = "0.8.20", path = "crates/persistant-sqlx" }
-persistant-migrate = { version = "0.8.20", path = "crates/persistant-migrate" }
+persistant-core = { version = "0.8.21", path = "crates/persistant-core" }
+persistant-blob = { version = "0.8.21", path = "crates/persistant-blob" }
+persistant-kv = { version = "0.8.21", path = "crates/persistant-kv" }
+persistant-opendal = { version = "0.8.21", path = "crates/persistant-opendal" }
+persistant-relational = { version = "0.8.21", path = "crates/persistant-relational" }
+persistant-sqlx = { version = "0.8.21", path = "crates/persistant-sqlx" }
+persistant-migrate = { version = "0.8.21", path = "crates/persistant-migrate" }
+persistant-macros = { version = "0.8.21", path = "crates/persistant-macros" }
 
 [package]
 name = "persistant"
@@ -55,6 +56,8 @@ persistant-relational = { workspace = true, optional = true }
 persistant-opendal = { workspace = true, optional = true }
 # `sqlx-driver` needs a Rust 1.94 compiler (sqlx 0.9); the rest of this crate builds on 1.94 too (UniSQL, which `persistant-kv` translates through).
 persistant-sqlx = { workspace = true, optional = true }
+# The compile-time SQL macro (a proc-macro crate): opt in with `sql-macros`.
+persistant-macros = { workspace = true, optional = true }
 
 [features]
 # Each feature re-exports one crate under the module named in `src/lib.rs`. None changes `Store`.
@@ -64,6 +67,8 @@ relational = ["dep:persistant-relational"]
 kv = ["dep:persistant-kv", "blob", "relational", "core"]
 opendal-driver = ["dep:persistant-opendal", "blob"]
 sqlx-driver = ["dep:persistant-sqlx", "relational"]
+# `persistant::sql!`: build-time checked and translated SQL, run with `execute_sql` / `query_sql`.
+sql-macros = ["dep:persistant-macros", "relational", "persistant-relational/sql"]
 
 [dev-dependencies]
 tempfile = "3.27.0"

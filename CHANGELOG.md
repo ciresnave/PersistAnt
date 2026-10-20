@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.21
+
+### Added
+- **Compile-time SQL, stage 2** (`docs/COMPILE-TIME-SQL.md` section 6, step 2; PM [TASK] 2026-10-20 after UniSQL published `unisql-macro-core` and `unisql-embed` 0.24.13). New crate `persistant-macros` (a proc-macro, a thin wrapper over `unisql-macro-core`, since a proc-macro crate cannot be extended) and, behind the `persistant` feature `sql-macros`, `persistant::sql!`: it parses the statement in its `source` dialect, translates it for every named `targets` entry and embeds each target's text as a constant, so a syntax error, a skipped placeholder (`$1, $3`), an untranslatable construct or a missing allowance is a **build error** naming the target and the reason. Arguments: `source`, `targets` (both required: no hidden defaults), `allow`, `requires`, `forbids`, `crate = path` (default `::persistant::embed`); the statement is the last argument. Errors point at the argument that is wrong; several are all reported; the macro returns `compile_error!` tokens, never panics.
+- `persistant::Sql` (UniSQL's `Query`), `persistant::embed` (UniSQL's `unisql-embed`, so a consumer depends on neither UniSQL crate) and `RelationalSqlExt::{execute_sql, query_sql}` on every `RelationalBackend` (feature `sql` of `persistant-relational`): the backend's own `Dialect` picks the embedded text and the target's parameter order is applied (a target may repeat or reorder placeholders). `RelationalTxSqlExt` does the same inside a transaction, with the dialect passed in (a transaction does not know it). A dialect the call did not name is `RelError::Unsupported`, a wrong parameter count is an error before anything runs, and an array-bound parameter is refused until `Value` carries one. The core traits are unchanged.
+- Tests: 16 unit tests of the macro on `proc_macro2` tokens (one failing call per check, each with a passing twin; the refusal messages are asserted, not just "an error"), 5 of the extension traits on a fake backend, doc-tests including a `compile_fail` with its passing twin, and `persistant-sqlx/tests/sql_macro.rs` running the same checked statements, with a placeholder used twice and in a transaction, on real SQLite, PostgreSQL 16 and MySQL 8.4 (the CI MariaDB and MySQL jobs run it too).
+- **Not done, said plainly:** no schema is read yet, so no table or column check and no knowledge that a column is numeric (comparing or ordering one needs `allow = [text_collation]` named at the call, as the end-to-end test shows); that is stages 3-5. Typed rows (`FromRow`) are stage 6.
+
 ## 0.8.20
 
 ### Added

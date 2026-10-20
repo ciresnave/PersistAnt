@@ -42,12 +42,45 @@ pub use persistant_sqlx as sqlx_driver;
 /// The crate version, as declared in `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Compile-time SQL (feature `sql-macros`): `sql!` checks a literal statement and translates it for
+/// every target named, at build time. The syntax, the placeholders and every target's translation are
+/// build errors, not run-time ones; no database is consulted and no schema is read yet (the
+/// catalog-based checks are a later stage, `docs/COMPILE-TIME-SQL.md`).
+///
+/// ```
+/// use persistant::{Sql, sql};
+/// const FIND: Sql = sql!(
+///     source = postgres, targets = [postgres, sqlite],
+///     "SELECT id FROM users WHERE id = $1"
+/// );
+/// assert_eq!(FIND.params, 1);
+/// ```
+///
+/// A statement that cannot be translated for a named target does not build. The twin above is the same
+/// call with the fault (`md5` has no SQLite form) removed:
+///
+/// ```
+/// use persistant::{Sql, sql};
+/// const OK: Sql = sql!(source = postgres, targets = [postgres], "SELECT md5($1)");
+/// ```
+///
+/// ```compile_fail
+/// use persistant::{Sql, sql};
+/// const BAD: Sql = sql!(source = postgres, targets = [postgres, sqlite], "SELECT md5($1)");
+/// ```
+#[cfg(feature = "sql-macros")]
+pub use persistant_macros::sql;
+
+/// What `sql!` expands to, and the extension traits that run it (feature `sql-macros`).
+#[cfg(feature = "sql-macros")]
+pub use persistant_relational::{RelationalSqlExt, RelationalTxSqlExt, Sql, embed};
+
 #[cfg(test)]
 mod tests {
     use super::VERSION;
 
     #[test]
     fn version_is_the_manifest_version() {
-        assert_eq!(VERSION, "0.8.20");
+        assert_eq!(VERSION, "0.8.21");
     }
 }
