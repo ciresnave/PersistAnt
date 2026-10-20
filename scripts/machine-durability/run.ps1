@@ -334,6 +334,12 @@ try {
         if ($b -eq 'sqlite') {
             $r = Invoke-Guest 'sudo pa-small make 8'
             if ($r.Code -ne 0) { throw "pa-small make: $(Format-Guest $r)" }
+            # A 1 MB ballast, as the PostgreSQL and MySQL volumes have: the writer fills the rest, and the
+            # operator's step (delete the ballast) runs before the check. A store that must WRITE to be
+            # opened (Synapse's mailbox does) cannot even be read back on a volume with no free block;
+            # that says nothing about the acknowledged data, which the check must still find whole.
+            $r = Invoke-Guest 'dd if=/dev/zero of=/mnt/small/ballast bs=1k count=1024 status=none && sync'
+            if ($r.Code -ne 0) { throw "sqlite ballast: $(Format-Guest $r)" }
             $spec = '/mnt/small/full.db'
         } else {
             $kind = if ($b -eq 'postgres') { 'pg' } else { 'mysql' }
@@ -357,6 +363,8 @@ try {
                 $null = Invoke-Guest "sudo pa-small-db $kind free"
                 try { Wait-Database $b } catch { Write-Host "  $b did not come back: $($_.Exception.Message)" }
                 Write-GuestState
+            } else {
+                $null = Invoke-Guest 'rm -f /mnt/small/ballast && sync'
             }
             # A read that errors is not a lost key: the server may still be recovering. Retry a bounded
             # number of times (exit 5 = could not connect, 6 = reads failed, 124 = the step timed out);

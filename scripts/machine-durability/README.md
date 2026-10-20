@@ -22,8 +22,9 @@ CireSnave 2026-10-18, board 229: A).
 * **Known-bad control must LOSE:** SQLite `synchronous=OFF` with the guest's dirty-page timers raised to
   an hour. If it loses nothing in any of its cycles the run fails: a harness that cannot show a loss
   proves nothing, and no result from it counts.
-* **Disk full must fail loud:** SQLite on an 8 MB volume is written until a put fails (exit 3); then every
-  key acknowledged before the failure must still be there. A run in which nothing fails (exit 4) fails.
+* **Disk full must fail loud:** SQLite on an 8 MB volume (1 MB of it a ballast file, deleted before the
+  check, as for PostgreSQL and MySQL) is written until a put fails (exit 3); then every key acknowledged
+  before the failure must still be there. A run in which nothing fails (exit 4) fails.
   PostgreSQL (80 MB) and MySQL (200 MB) get a fresh ext4 volume mounted **over their own data directory**
   (`pa-small-db.sh`, copied into the guest at run time, so the base image is not rebuilt), a new cluster
   in it, and puts until one fails. A put that gets no answer in 60 s counts as failed and says

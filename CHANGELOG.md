@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1
+
+### Fixed
+- Machine durability harness, SQLite disk-full step: a 1 MB ballast file is left on the 8 MB volume and deleted before the check, as the PostgreSQL and MySQL volumes already do. Found by the first run of `synapse-power-cut` (run 39365280240): Synapse's `Mailbox::open` writes a batch, a volume with no free block refuses it ("database or disk is full"), so the 131 acknowledged messages could not be read back (UNVERIFIED, not lost). The pass criteria are unchanged: the sqlite-off control must still LOST, a SQLite/mailbox put must FAIL LOUD on the full volume, and every acknowledged key or message must be read back whole.
+
 ## 0.9.0
 
 ### Breaking
