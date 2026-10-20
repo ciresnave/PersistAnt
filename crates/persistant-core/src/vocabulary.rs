@@ -199,6 +199,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a write acknowledged as stored is still there after the guest operating system loses power (a Hyper-V guest turned off with no shutdown) and boots again; the known-bad control (SQLite synchronous=OFF) loses its writes in the same run. Says nothing about host power loss, NTFS or Windows flush behaviour, the physical disk's own cache, torn sector writes, or remote object stores",
     ),
     (
+        "kv.bounded_call",
+        "a per-call timeout is configured and holds: a call blocked on a lock returns an error naming the timeout within the bound (never a hang), a batch that timed out left nothing applied, and the next call works once the block is gone. Declared only when a timeout is configured; says nothing about a call that was already past the point of no return on the server (the outcome of a timed-out commit is unknown)",
+    ),
+    (
         "kv.ordered_scan_values",
         "an ordered scan returns each key's value with it, in ascending bytewise key order, in pages, from one consistent snapshot",
     ),

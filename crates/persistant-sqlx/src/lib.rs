@@ -7,6 +7,7 @@
 //!
 //! Failures are classified from the server's SQLSTATE into [`persistant_relational::RelError`].
 
+mod bounded;
 mod decode;
 mod migrate;
 #[cfg(feature = "mysql")]
@@ -15,6 +16,7 @@ mod options;
 #[cfg(feature = "sqlite")]
 mod sqlite;
 
+pub use bounded::{Bounded, BoundedTx, call_bound_from_env, parse_bound};
 pub use migrate::{FromSqlxError, migrations_from_sqlx};
 #[cfg(feature = "mysql")]
 pub use mysql::{MysqlBackend, MysqlTx};

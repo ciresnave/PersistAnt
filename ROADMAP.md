@@ -33,6 +33,7 @@ blob (#45). Not done, in this order (queued by the PM 2026-10-16):
    file (SQLite, OpenDAL fs) and on a server database inside the guest. Not built, not scheduled; it
    needs infrastructure the PM provides. Options and a recommendation: `docs/DESIGN-DURABILITY-MACHINE.md`.
 1a. **SQLite declared class.** An explicit `synchronous=FULL` profile declares `Machine` (what Synapse needs per board 229: A, now backed by run 39178436801); the default stays `Process`. **Built (0.8.14):** `SqliteBackend::open_durable`, backend name `sqlite-full`.
+1b. **`kv.bounded_call` (built, 0.8.20).** An optional per-call timeout (`persistant_sqlx::Bounded`, default none); the leaf is declared only when one is configured. Why: MySQL stalls on a full disk and a caller that waits forever is worse than one that is told (Synapse requires a bound).
 2. **`choose` for the blob kind** *(done, 0.6.0: contract, speed and choose on the shared core types;
    blob durability is declared and unverified)*, then **the relational kind**. *Its first leaves are
    done (0.6.1: `rel.values`, `rel.transaction`, `rel.error.unique`, `rel.foreign_key`,

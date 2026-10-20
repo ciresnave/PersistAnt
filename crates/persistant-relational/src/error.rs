@@ -29,6 +29,13 @@ pub enum RelError {
     Unavailable(String),
     /// The backend cannot do this, and says so rather than approximating.
     Unsupported(String),
+    /// A call did not finish within the configured per-call bound and was cut off. For a statement
+    /// outside a transaction, whether it took effect is unknown; a transaction that saw one is
+    /// rolled back and refuses to commit.
+    Timeout {
+        /// The bound that expired.
+        after: std::time::Duration,
+    },
     /// Any other failure; the text is the driver's.
     Backend(String),
 }
@@ -50,6 +57,7 @@ impl fmt::Display for RelError {
             RelError::Deadlock => f.write_str("deadlock detected"),
             RelError::Unavailable(m) => write!(f, "database unavailable: {m}"),
             RelError::Unsupported(m) => write!(f, "database does not support: {m}"),
+            RelError::Timeout { after } => write!(f, "database call timed out after {after:?}"),
             RelError::Backend(m) => write!(f, "database: {m}"),
         }
     }
