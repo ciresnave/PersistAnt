@@ -19,9 +19,19 @@
 
 mod checker;
 mod imp;
+mod rows;
 
 /// Check and translate a literal statement at build time. See the crate documentation.
 #[proc_macro]
 pub fn sql(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     imp::sql(input.into()).into()
+}
+
+/// Derive `FromRow` for a struct with named fields, each of a type the crate can read from a cell
+/// (`i64`, `i32`, `f64`, `bool`, `String`, `Vec<u8>`, or `Option` of those). The struct is then read from
+/// a result row by position, and `sql!(as T, ..)` can check a `SELECT` against it at build time.
+/// `#[persistant(crate = path)]` names the crate the impl refers to (default `::persistant::relational`).
+#[proc_macro_derive(FromRow, attributes(persistant))]
+pub fn derive_from_row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    imp::derive_from_row(input.into()).into()
 }

@@ -20,6 +20,8 @@ pub mod contract;
 mod error;
 mod migrate;
 pub mod migrate_conformance;
+#[cfg(feature = "sql")]
+pub mod row;
 mod secret;
 pub mod speed;
 #[cfg(feature = "sql")]
@@ -35,7 +37,11 @@ pub use sweep::{SweepError, SweepReport, sweep};
 pub use value::{Dialect, Row, Value};
 
 #[cfg(feature = "sql")]
-pub use sql_ext::{RelationalSqlExt, RelationalTxSqlExt, Sql};
+pub use row::{Field, FieldKind, FromRow, FromValue, TypedSql};
+#[cfg(feature = "sql")]
+pub use sql_ext::{
+    RelationalRowsExt, RelationalSqlExt, RelationalTxRowsExt, RelationalTxSqlExt, Sql,
+};
 /// `Query`, `Rendered`, `Target` and `Binding`: what `persistant::sql!` expands to (UniSQL's
 /// `unisql-embed`, re-exported so a consumer depends on neither).
 #[cfg(feature = "sql")]

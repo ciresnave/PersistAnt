@@ -100,7 +100,66 @@ pub use persistant_macros::sql;
 
 /// What `sql!` expands to, and the extension traits that run it (feature `sql-macros`).
 #[cfg(feature = "sql-macros")]
-pub use persistant_relational::{RelationalSqlExt, RelationalTxSqlExt, Sql, embed};
+pub use persistant_relational::{
+    RelationalRowsExt, RelationalSqlExt, RelationalTxRowsExt, RelationalTxSqlExt, Sql, TypedSql,
+    embed,
+};
+
+/// Typed rows (feature `sql-macros`): `#[derive(FromRow)]` reads a struct from a result row by
+/// position, and `sql!(as T, ..)` checks a `SELECT` against it **at build time**, using the schema: the
+/// number of columns, each column's name (the alias, if any), its class (a numeric column into an
+/// integer or float field, text into `String`, a boolean into `bool`) and its nullability (a column
+/// that can be NULL needs an `Option` field). A mismatch is a build error naming the column. Run the
+/// result with `query_as`.
+///
+/// ```
+/// use persistant::{FromRow, TypedSql, sql};
+/// #[derive(FromRow)]
+/// struct User { id: i64, email: String, note: Option<String> }
+/// const FIND: TypedSql<User> = sql!(
+///     as User, source = postgres, targets = [sqlite], schema = "tests/doctest-schema.sql",
+///     "SELECT id, email, note FROM users WHERE id = $1"
+/// );
+/// ```
+///
+/// An expression column is named and typed: `count(*) AS "n: i64"` (or `Option<i64>`). The twins of
+/// the failing cases below are the example above:
+///
+/// ```compile_fail
+/// use persistant::{FromRow, TypedSql, sql};
+/// #[derive(FromRow)]
+/// struct User { id: i64, email: i64, note: Option<String> }   // `email` is text
+/// const FIND: TypedSql<User> = sql!(
+///     as User, source = postgres, targets = [sqlite], schema = "tests/doctest-schema.sql",
+///     "SELECT id, email, note FROM users WHERE id = $1"
+/// );
+/// ```
+///
+/// ```compile_fail
+/// use persistant::{FromRow, TypedSql, sql};
+/// #[derive(FromRow)]
+/// struct User { id: i64, email: String, note: String }   // `note` can be NULL
+/// const FIND: TypedSql<User> = sql!(
+///     as User, source = postgres, targets = [sqlite], schema = "tests/doctest-schema.sql",
+///     "SELECT id, email, note FROM users WHERE id = $1"
+/// );
+/// ```
+///
+/// ```compile_fail
+/// use persistant::{FromRow, TypedSql, sql};
+/// #[derive(FromRow)]
+/// struct User { id: i64, mail: String, note: Option<String> }   // the column is `email`
+/// const FIND: TypedSql<User> = sql!(
+///     as User, source = postgres, targets = [sqlite], schema = "tests/doctest-schema.sql",
+///     "SELECT id, email, note FROM users WHERE id = $1"
+/// );
+/// ```
+#[cfg(feature = "sql-macros")]
+pub use persistant_macros::FromRow;
+
+/// The trait `#[derive(FromRow)]` implements (feature `sql-macros`).
+#[cfg(feature = "sql-macros")]
+pub use persistant_relational::FromRow;
 
 #[cfg(test)]
 mod tests {
@@ -108,6 +167,6 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
-        assert_eq!(VERSION, "0.9.1");
+        assert_eq!(VERSION, "0.9.2");
     }
 }

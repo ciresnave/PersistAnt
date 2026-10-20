@@ -3,10 +3,46 @@
 //! engine's own text. SQLite always; PostgreSQL and MySQL when their server variables are set (the
 //! same rule as the other server tests).
 
-use persistant_macros::sql;
+use persistant_macros::{FromRow, sql};
 use persistant_relational::{
-    Isolation, RelationalBackend, RelationalSqlExt, RelationalTx, RelationalTxSqlExt, Sql, Value,
+    Isolation, RelationalBackend, RelationalRowsExt, RelationalSqlExt, RelationalTx,
+    RelationalTxRowsExt, RelationalTxSqlExt, Sql, TypedSql, Value,
 };
+
+/// Typed rows: the struct names the crate its impl refers to (the facade is not a dependency here).
+#[derive(Debug, PartialEq, FromRow)]
+#[persistant(crate = ::persistant_relational)]
+struct Item {
+    id: i64,
+    name: String,
+}
+
+#[derive(Debug, PartialEq, FromRow)]
+#[persistant(crate = ::persistant_relational)]
+struct Count {
+    n: i64,
+}
+
+// Checked at build time against the committed snapshot: two columns, `id` numeric and NOT NULL, `name`
+// text and NOT NULL.
+const ITEMS: TypedSql<Item> = sql!(
+    as Item,
+    crate = ::persistant_relational::embed,
+    source = postgres,
+    targets = [postgres, sqlite, mysql, mariadb],
+    schema = "tests/sql_macro_schema.json",
+    "SELECT id, name FROM persistant_sqlmacro WHERE id >= $1 ORDER BY id"
+);
+
+// An expression is named and typed by its alias.
+const COUNT: TypedSql<Count> = sql!(
+    as Count,
+    crate = ::persistant_relational::embed,
+    source = postgres,
+    targets = [postgres, sqlite, mysql, mariadb],
+    schema = "tests/sql_macro_schema.json",
+    r#"SELECT count(*) AS "n: i64" FROM persistant_sqlmacro"#
+);
 
 // The schema is a committed snapshot (`persistant-migrate snapshot --scratch`), relative to this crate.
 // The statements are checked against it at build time.
@@ -75,6 +111,38 @@ async fn run<B: RelationalBackend>(db: &B) {
             .unwrap()
             .is_empty()
     );
+
+    // Typed rows, on every engine: read by position into the checked struct.
+    let items = db.query_as(&ITEMS, &[Value::Int(2)]).await.unwrap();
+    assert_eq!(
+        items,
+        [
+            Item {
+                id: 2,
+                name: "two".into()
+            },
+            Item {
+                id: 5,
+                name: "five".into()
+            }
+        ],
+        "on {}",
+        db.backend()
+    );
+    assert_eq!(db.query_as(&COUNT, &[]).await.unwrap(), [Count { n: 3 }]);
+    let mut tx = db.begin(Isolation::ReadCommitted).await.unwrap();
+    let inside = tx
+        .query_as(&dialect, &ITEMS, &[Value::Int(5)])
+        .await
+        .unwrap();
+    assert_eq!(
+        inside,
+        [Item {
+            id: 5,
+            name: "five".into()
+        }]
+    );
+    tx.rollback().await.unwrap();
 
     // The wrong number of parameters never reaches the server.
     assert!(db.query_sql(&FIND, &[]).await.is_err());

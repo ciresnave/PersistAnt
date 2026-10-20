@@ -10,7 +10,7 @@ use unisql::Schema;
 use unisql_macro_core::{Input, Kind, Snapshot, expand_with};
 
 /// The path the expansion names `Query`, `Rendered`, `Target` and `Binding` through.
-const DEFAULT_CRATE: &str = "::persistant::embed";
+const DEFAULT_CRATE: &str = "::persistant::relational::embed";
 
 struct Error {
     span: Span,
@@ -34,6 +34,8 @@ struct Args {
     forbids: Option<(Vec<String>, Span)>,
     krate: Option<String>,
     schema: Option<(SchemaSpec, Span)>,
+    /// `as T`: the struct the statement's columns are checked against.
+    row: Option<(String, Span)>,
     sql: Option<(String, Span)>,
 }
 
@@ -59,6 +61,25 @@ pub(crate) fn sql_in(input: TokenStream, manifest_dir: Option<&Path>) -> TokenSt
     match build(input, manifest_dir) {
         Ok(tokens) => tokens,
         Err(errors) => compile_errors(errors),
+    }
+}
+
+/// The expansion of `#[derive(FromRow)]`: an impl, or a `compile_error!` item at the offending token.
+pub(crate) fn derive_from_row(input: TokenStream) -> TokenStream {
+    match crate::rows::derive_from_row(input) {
+        Ok(code) => code.parse().expect("the derive builds valid tokens"),
+        Err(e) => {
+            let mut call: TokenStream = "::core::compile_error!".parse().expect("fixed tokens");
+            call.extend([TokenTree::Group(Group::new(
+                Delimiter::Brace,
+                TokenStream::from(TokenTree::Literal(Literal::string(&format!(
+                    "persistant::FromRow: {}",
+                    e.message
+                )))),
+            ))]);
+            call.extend(";".parse::<TokenStream>().expect("fixed tokens"));
+            respan(call, e.span)
+        }
     }
 }
 
@@ -183,6 +204,34 @@ fn build(input: TokenStream, manifest_dir: Option<&Path>) -> Result<TokenStream,
     };
     let (schema, schema_file) =
         load_schema(args.schema.as_ref(), manifest_dir, &source).map_err(|e| vec![e])?;
+    // `as T`: read the SELECT list against the schema, before the schema moves into the input.
+    let rows = match (&args.row, &schema) {
+        (None, _) => None,
+        (Some((ty, span)), None) => {
+            return Err(vec![err(
+                *span,
+                format!(
+                    "`as {ty}` needs a schema: the columns are checked against it (`schema = none` has nothing to check them with)"
+                ),
+            )]);
+        }
+        (Some((ty, _)), Some(schema)) => {
+            let krate = args.krate.as_deref().unwrap_or(DEFAULT_CRATE);
+            let Some(rel) = krate.strip_suffix("::embed") else {
+                return Err(vec![err(
+                    sql_span,
+                    "with `as T`, `crate = ..` must name the `embed` module of the relational crate (so the checks can be found beside it)",
+                )]);
+            };
+            let cols =
+                crate::rows::columns(&sql, &source, schema).map_err(|m| vec![err(sql_span, m)])?;
+            Some((
+                rel.to_string(),
+                ty.clone(),
+                crate::rows::assertions(rel, ty, &cols),
+            ))
+        }
+    };
     let input = Input {
         source,
         targets,
@@ -204,6 +253,9 @@ fn build(input: TokenStream, manifest_dir: Option<&Path>) -> Result<TokenStream,
         Ok(expansion) => {
             let path = args.krate.as_deref().unwrap_or(DEFAULT_CRATE);
             let mut text = render(path, &expansion);
+            if let Some((rel, ty, checks)) = &rows {
+                text = format!("{{ {checks} {rel}::TypedSql::<{ty}>::new({text}) }}");
+            }
             if let Some(file) = schema_file {
                 // Reading the file is not tracked by cargo; including its bytes is, so the crate is
                 // rebuilt when the snapshot changes. A block, so it fits an expression position.
@@ -327,6 +379,19 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
             }
             continue;
         }
+        // `as T`: the struct the columns are checked against
+        if let TokenTree::Ident(kw) = first
+            && kw == "as"
+            && seg.len() >= 2
+        {
+            let ty: TokenStream = seg[1..].iter().cloned().collect();
+            if args.row.is_some() {
+                errors.push(err(span, "`as` is given twice"));
+            } else {
+                args.row = Some((ty.to_string(), span));
+            }
+            continue;
+        }
         // `name = value`
         let named = match (&seg[..], seg.get(1)) {
             ([TokenTree::Ident(name), ..], Some(TokenTree::Punct(eq))) if eq.as_char() == '=' => {
@@ -337,7 +402,7 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
         let Some(name) = named else {
             errors.push(err(
                 span,
-                "expected `name = value` (source, targets, allow, requires, forbids, schema, crate) or the statement as a string literal",
+                "expected `name = value` (source, targets, allow, requires, forbids, schema, crate), `as Type`, or the statement as a string literal",
             ));
             continue;
         };
@@ -390,7 +455,13 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
                 if args.krate.is_some() {
                     dup(&mut errors);
                 } else {
-                    args.krate = Some(value.into_iter().collect::<TokenStream>().to_string());
+                    args.krate = Some(
+                        value
+                            .into_iter()
+                            .collect::<TokenStream>()
+                            .to_string()
+                            .replace(' ', ""),
+                    );
                 }
             }
             other => errors.push(err(
@@ -549,15 +620,15 @@ mod tests {
         // `TokenStream::to_string` puts spaces between tokens; compare without them.
         let flat = out.replace(' ', "");
         assert!(
-            flat.starts_with("::persistant::embed::Query{params:1,"),
+            flat.starts_with("::persistant::relational::embed::Query{params:1,"),
             "{out}"
         );
         assert!(
-            flat.contains("target:::persistant::embed::Target::Sqlite"),
+            flat.contains("target:::persistant::relational::embed::Target::Sqlite"),
             "{out}"
         );
         assert!(
-            flat.contains("target:::persistant::embed::Target::Mysql"),
+            flat.contains("target:::persistant::relational::embed::Target::Mysql"),
             "{out}"
         );
         assert!(
@@ -956,5 +1027,83 @@ mod tests {
             "`schema` is given twice",
         );
         ok_in(&call(r#"schema = "s.sql""#, "SELECT 1"), d.path());
+    }
+
+    // ---- typed rows (`as T`) --------------------------------------------------------------
+
+    fn typed(schema: &str, sql: &str) -> String {
+        format!("as User, source = postgres, targets = [sqlite], {schema}, \"{sql}\"")
+    }
+
+    #[test]
+    fn as_t_builds_a_typed_statement_with_assertions_for_each_column() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        let out = ok_in(
+            &typed(
+                r#"schema = "s.sql""#,
+                "SELECT id, email, note FROM users WHERE id = $1",
+            ),
+            d.path(),
+        );
+        let flat = out.replace(' ', "");
+        assert!(
+            flat.contains("::persistant::relational::TypedSql::<User>::new("),
+            "{out}"
+        );
+        assert!(flat.contains("fields_are::<User>(3)"), "{out}");
+        assert!(flat.contains(r#"named::<User>(2,"note")"#), "{out}");
+        assert!(
+            flat.contains("null_fits::<User>(2,true)"),
+            "the nullable column asks for an Option: {out}"
+        );
+        assert!(flat.contains("null_fits::<User>(0,false)"), "{out}");
+    }
+
+    #[test]
+    fn as_t_needs_a_schema_and_a_plain_select() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        fails_in(
+            &typed("schema = none", "SELECT id FROM users"),
+            d.path(),
+            "`as User` needs a schema",
+        );
+        fails_in(
+            &typed(r#"schema = "s.sql""#, "SELECT * FROM users"),
+            d.path(),
+            "list the columns",
+        );
+        fails_in(
+            &typed(r#"schema = "s.sql""#, "SELECT id + 1 FROM users"),
+            d.path(),
+            "column 1 is an expression",
+        );
+        fails_in(
+            &typed(r#"schema = "s.sql""#, "SELECT nope FROM users"),
+            d.path(),
+            "has no column `nope`",
+        );
+        // The twin: naming and typing the expression, or listing the columns, builds.
+        ok_in(
+            &typed(
+                r#"schema = "s.sql""#,
+                r#"SELECT id + 1 AS \"next: i64\" FROM users"#,
+            ),
+            d.path(),
+        );
+        // `crate = ..` has to name the embed module so the checks can be found beside it.
+        fails_in(
+            "as User, crate = ::elsewhere, source = postgres, targets = [sqlite], schema = \"s.sql\", \"SELECT id FROM users\"",
+            d.path(),
+            "must name the `embed` module",
+        );
+        ok_in(
+            "as User, crate = ::mine::embed, source = postgres, targets = [sqlite], schema = \"s.sql\", \"SELECT id FROM users\"",
+            d.path(),
+        );
+        fails_in(
+            "as User, as Other, source = postgres, targets = [sqlite], schema = \"s.sql\", \"SELECT id FROM users\"",
+            d.path(),
+            "`as` is given twice",
+        );
     }
 }
