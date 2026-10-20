@@ -9,6 +9,7 @@
 //! own schema (PostgreSQL) or database (MySQL), dropped afterwards.
 
 use persistant_relational::RelationalBackend;
+use persistant_relational::catalog::Catalog;
 use persistant_sqlx::{MysqlBackend, PgBackend};
 use std::path::Path;
 use std::process::{Command, Output};
@@ -92,6 +93,71 @@ where
         2
     );
 
+    // snapshot --scratch: the schema the migrations produce, read from a scratch schema or database,
+    // with the target untouched and nothing left behind.
+    let file = t.path().join("schema.json");
+    let f = file.to_str().unwrap();
+    let before = leftovers().await;
+    let snap = run(&["snapshot", "--scratch", "--dir", dir, "--out", f], url);
+    assert_eq!(snap.status.code(), Some(0), "{snap:?}");
+    assert!(
+        out(&snap).contains("1 tables, 2 migrations"),
+        "{}",
+        out(&snap)
+    );
+    assert_eq!(leftovers().await, before, "snapshot left a scratch object");
+    assert!(!has_things().await, "snapshot --scratch touched the target");
+    let cat = Catalog::from_json(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let things = &cat.tables["things"];
+    let cols: Vec<_> = things.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(cols, ["id", "n"], "{cat:?}");
+    assert_eq!(things.primary_key, ["id"]);
+    assert!(things.columns[1].nullable);
+    assert_eq!(cat.migrations.len(), 2);
+    assert!(!cat.tables.contains_key("_sqlx_migrations"));
+    assert_eq!(
+        run(
+            &["snapshot", "--scratch", "--check", "--dir", dir, "--out", f],
+            url
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+    // The committed file goes stale when a migration changes, and says which one.
+    write(
+        &m,
+        "2_more.up.sql",
+        "ALTER TABLE things ADD COLUMN other TEXT;",
+    );
+    let stale = run(
+        &["snapshot", "--scratch", "--check", "--dir", dir, "--out", f],
+        url,
+    );
+    assert_eq!(stale.status.code(), Some(8), "{stale:?}");
+    let err = String::from_utf8_lossy(&stale.stderr);
+    assert!(err.contains("stale: migration 2 changed"), "{err}");
+    assert!(
+        err.contains("column things.other: not in the snapshot"),
+        "{err}"
+    );
+    write(&m, "2_more.up.sql", "ALTER TABLE things ADD COLUMN n TEXT;");
+    // A missing file is a failed check too, not a pass.
+    let none = t.path().join("absent.json");
+    let missing = run(
+        &[
+            "snapshot",
+            "--scratch",
+            "--check",
+            "--dir",
+            dir,
+            "--out",
+            none.to_str().unwrap(),
+        ],
+        url,
+    );
+    assert_eq!(missing.status.code(), Some(8), "{missing:?}");
+
     // up applies, a second up is a no-op, status agrees.
     let up = run(&["up", "--dir", dir], url);
     assert_eq!(up.status.code(), Some(0), "{up:?}");
@@ -102,6 +168,11 @@ where
     let after = run(&["status", "--dir", dir], url);
     assert_eq!(after.status.code(), Some(0));
     assert_eq!(out(&after).matches("applied").count(), 2);
+
+    // The target's own catalog is the same snapshot as the scratch one: same tables, same
+    // migrations. This is the check that the migrations and the server agree.
+    let live = run(&["snapshot", "--check", "--out", f], url);
+    assert_eq!(live.status.code(), Some(0), "{live:?}");
 
     // A changed migration is exit 3, for status and for up.
     write(

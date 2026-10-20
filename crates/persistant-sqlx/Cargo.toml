@@ -19,7 +19,7 @@ mysql = ["sqlx/mysql"]
 
 [dependencies]
 persistant-core = { workspace = true }
-persistant-relational = { workspace = true }
+persistant-relational = { workspace = true, features = ["catalog"] }
 tokio = { version = "1.53.2", default-features = false, features = ["sync", "time"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "time"] }
 

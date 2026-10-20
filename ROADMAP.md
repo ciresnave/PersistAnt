@@ -96,7 +96,7 @@ CireSnave 2026-10-18 (`CIRESNAVE-EXPECTATIONS.md` 6.16): *"have PersistAnt re-ex
 
 1. **Design agreed with UniSQL** (their `Schema` serde and `Column` detail fields, `Sql` location, schema lookup). *Open.*
 2. **`persistant-macros` (a thin proc-macro over `unisql-macro-core`, UniSQL cannot be extended in place) and `persistant::sql!`** plus `Sql` and `RelationalSqlExt`, feature `sql-macros`, compile-fail tests. *Built, 0.8.21 (UniSQL 0.24.13 is on crates.io). No schema yet: see rows 3-5.*
-3. **Catalog readers** in `persistant-sqlx` (PostgreSQL, MySQL/MariaDB, SQLite) and **`persistant-migrate snapshot` / `--check`** with a CI step. *Waits for 1.*
+3. **Catalog readers** (`persistant_relational::catalog`, over the `RelationalBackend` trait: PostgreSQL, MySQL/MariaDB, SQLite) and **`persistant-migrate snapshot` / `--check`**. *Built, 0.8.22, from a live catalog or a scratch apply; the snapshot is PersistAnt's own type until UniSQL's `Schema` can be enumerated and serialised (their slice 4), and there is no database-free source from the migration files yet. A CI step in a consumer's repo is theirs to add.*
 4. **`FromRow` derive and `sql!(as T, ..)`** (typed rows over the shared value classes). *Waits for 2 and 3.*
 5. **C6 (optional): `PgTx` / `MysqlTx` / `SqliteTx` `connection()` accessors**, so `sqlx::query!` can run inside a PersistAnt transaction. Verified missing at `4febf59`; additive; built only if a consumer asks (board 230 option A uses the pool, which already works).
 

@@ -344,6 +344,31 @@ impl PgBackend {
         &self,
         migrations: &[Migration],
     ) -> Result<MigrateReport, MigrateError> {
+        self.fresh_run(migrations, false).await.map(|(r, _)| r)
+    }
+
+    /// As [`verify_fresh`](Self::verify_fresh), and read the scratch schema's catalog before it is
+    /// dropped: the schema `migrations` produce, from migrations and a server, without touching the
+    /// target. The snapshot is stamped with the versions and checksums it was derived from.
+    pub async fn fresh_catalog(
+        &self,
+        migrations: &[Migration],
+    ) -> Result<persistant_relational::catalog::Catalog, MigrateError> {
+        let (_, catalog) = self.fresh_run(migrations, true).await?;
+        Ok(catalog.expect("a catalog was asked for"))
+    }
+
+    async fn fresh_run(
+        &self,
+        migrations: &[Migration],
+        want_catalog: bool,
+    ) -> Result<
+        (
+            MigrateReport,
+            Option<persistant_relational::catalog::Catalog>,
+        ),
+        MigrateError,
+    > {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
         let nanos = std::time::SystemTime::now()
@@ -376,7 +401,7 @@ impl PgBackend {
         let result = match scratch {
             Ok(pool) => {
                 let r = match PgBackend::from_pool(pool.clone()).await {
-                    Ok(b) => Migrates::migrate(&b, migrations).await,
+                    Ok(b) => scratch_run(&b, migrations, want_catalog, b.applied_checksums()).await,
                     Err(e) => Err(MigrateError::Backend(e.to_string())),
                 };
                 pool.close().await;
@@ -409,4 +434,33 @@ impl PgBackend {
         )
         .await
     }
+}
+
+/// Run `migrations` on the scratch backend `b` and, if asked, read its catalog stamped with what was
+/// applied. `ledger` reads the scratch backend's own ledger (it needs the backend's concrete type).
+pub(crate) async fn scratch_run<B, L>(
+    b: &B,
+    migrations: &[Migration],
+    want_catalog: bool,
+    ledger: L,
+) -> Result<
+    (
+        MigrateReport,
+        Option<persistant_relational::catalog::Catalog>,
+    ),
+    MigrateError,
+>
+where
+    B: persistant_relational::RelationalBackend + Migrates,
+    L: std::future::Future<Output = Result<Vec<(i64, Vec<u8>)>, MigrateError>>,
+{
+    let report = Migrates::migrate(b, migrations).await?;
+    if !want_catalog {
+        return Ok((report, None));
+    }
+    let stamps = persistant_relational::catalog::stamps(&ledger.await?);
+    let catalog = persistant_relational::catalog::read_catalog(b, stamps)
+        .await
+        .map_err(|e| MigrateError::Backend(e.to_string()))?;
+    Ok((report, Some(catalog)))
 }

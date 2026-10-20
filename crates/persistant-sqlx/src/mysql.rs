@@ -199,8 +199,33 @@ impl MysqlBackend {
         &self,
         migrations: &[persistant_relational::Migration],
     ) -> Result<persistant_relational::MigrateReport, persistant_relational::MigrateError> {
+        self.fresh_run(migrations, false).await.map(|(r, _)| r)
+    }
+
+    /// As [`verify_fresh`](Self::verify_fresh), and read the scratch database's catalog before it is
+    /// dropped: the schema `migrations` produce, from migrations and a server, without touching the
+    /// target. The snapshot is stamped with the versions and checksums it was derived from.
+    pub async fn fresh_catalog(
+        &self,
+        migrations: &[persistant_relational::Migration],
+    ) -> Result<persistant_relational::catalog::Catalog, persistant_relational::MigrateError> {
+        let (_, catalog) = self.fresh_run(migrations, true).await?;
+        Ok(catalog.expect("a catalog was asked for"))
+    }
+
+    async fn fresh_run(
+        &self,
+        migrations: &[persistant_relational::Migration],
+        want_catalog: bool,
+    ) -> Result<
+        (
+            persistant_relational::MigrateReport,
+            Option<persistant_relational::catalog::Catalog>,
+        ),
+        persistant_relational::MigrateError,
+    > {
         use crate::migrate::backend_error;
-        use persistant_relational::{MigrateError, Migrates};
+        use persistant_relational::MigrateError;
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
         let nanos = std::time::SystemTime::now()
@@ -223,7 +248,15 @@ impl MysqlBackend {
         let result = match scratch {
             Ok(pool) => {
                 let r = match MysqlBackend::from_pool(pool.clone()).await {
-                    Ok(b) => Migrates::migrate(&b, migrations).await,
+                    Ok(b) => {
+                        crate::migrate::scratch_run(
+                            &b,
+                            migrations,
+                            want_catalog,
+                            b.applied_checksums(),
+                        )
+                        .await
+                    }
                     Err(e) => Err(MigrateError::Backend(e.to_string())),
                 };
                 pool.close().await;

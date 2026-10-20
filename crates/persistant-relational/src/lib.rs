@@ -12,6 +12,8 @@
 //! resist it.
 
 mod backend;
+#[cfg(feature = "catalog")]
+pub mod catalog;
 pub mod choose;
 pub mod conformance;
 pub mod contract;

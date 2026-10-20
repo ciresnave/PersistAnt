@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.22
+
+### Added
+- **Compile-time SQL, stage 4 part 1: the schema snapshot** (`docs/COMPILE-TIME-SQL.md` sections 1 and 4; PM [TASK] 2026-10-20). Feature `catalog` of `persistant-relational`: `catalog::read_catalog(&db, stamps)` reads the catalog of the connection's current schema (PostgreSQL), database (MySQL, MariaDB) or file (SQLite) through the `RelationalBackend` trait alone, into a `Catalog` (tables; columns with the engine's own lower-cased `type`, `nullable`, `has_default`; the primary key and the unique keys over plain columns in key order). Views, the migration ledger `_sqlx_migrations`, partial indexes and expression indexes are not in it. `Catalog::to_json` is deterministic (the same snapshot is the same bytes), `from_json` refuses a file with a newer `format` ("upgrade persistant") rather than guess, and `differences` names every change, including "stale: migration 37 is not in the snapshot" from the migration stamps.
+- `persistant-migrate snapshot [--scratch --dir DIR] [--url URL] [--out FILE] [--check]`. Without `--scratch` it reads the target's own catalog; with `--scratch` it applies the directory's migrations to a scratch schema (PostgreSQL), scratch database (MySQL, MariaDB) or temporary file (SQLite), reads that and drops it, so the target is never touched (`PgBackend::fresh_catalog`, `MysqlBackend::fresh_catalog`). `--check` writes nothing and exits **8** if the file is missing, unreadable, newer, stale or different. The file records the migration versions and checksums it was derived from. `--allow-remote` guards it like every verb.
+- Tests: the readers on real SQLite, PostgreSQL 16 and MySQL 8.4 (same tables, same structure back; what each engine must not report: view, partial and expression indexes, the ledger; a column added later is seen), 4 unit tests of the file (round trip, determinism, too-new, each kind of change named), and the CLI end to end on SQLite, PostgreSQL and MySQL: scratch snapshot leaves the target and the server clean, a changed migration makes the file stale (exit 8) naming the migration, the target's own snapshot after `up` equals the scratch one, a missing or newer file fails the check.
+- **Not done, said plainly:** the snapshot is PersistAnt's own type for now (UniSQL's `Schema` is not yet enumerable or serialisable, so there is no source 1: a snapshot from the migration files with no database, and no conversion to `unisql::Schema`); the macro does not read it yet (stage 5). MariaDB and the `snapshot` verb on MariaDB are exercised by the CI MariaDB job, not locally.
+
 ## 0.8.21
 
 ### Added
