@@ -1,6 +1,6 @@
 # Compile-time SQL: re-exporting UniSQL's macros with catalog-based checks
 
-Status: **design, 2026-10-18; step 2 of section 6 built in 0.8.21 (`persistant-macros`, `persistant::sql!`, `RelationalSqlExt`), the catalog readers and `persistant-migrate snapshot` (step 4, from a live catalog or a scratch apply) in 0.8.22, the catalog `Checker` and `sql!` reading the snapshot (step 5) in 0.9.0; `FromRow` (step 6) not built.** Written against PersistAnt 0.8.3 (`4febf59`) and UniSQL 0.24.11
+Status: **design, 2026-10-18; step 2 of section 6 built in 0.8.21 (`persistant-macros`, `persistant::sql!`, `RelationalSqlExt`), the catalog readers and `persistant-migrate snapshot` (step 4, from a live catalog or a scratch apply) in 0.8.22, the catalog `Checker` and `sql!` reading the snapshot (step 5) in 0.9.0; `FromRow` and `sql!(as T, ..)` (step 6) in 0.9.2.** Written against PersistAnt 0.8.3 (`4febf59`) and UniSQL 0.24.11
 (`a5cb56e`). Origin: PM [TASK], quoting CireSnave (`CIRESNAVE-EXPECTATIONS.md` 6.16): *"have PersistAnt
 re-export it and the catalog-based checks. ... All of our projects should strive to provide that same
 'checks happen at compile time' functionality where applicable."*

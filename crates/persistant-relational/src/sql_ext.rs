@@ -6,6 +6,7 @@
 //! [`Dialect`] picks one, and the target's parameter order is applied (a target may repeat or reorder
 //! placeholders). Nothing is parsed or translated at run time. The core traits do not change.
 
+use crate::row::{FromRow, TypedSql};
 use crate::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
 use std::future::Future;
 use unisql_embed::{Binding, Query, Target};
@@ -92,6 +93,46 @@ pub trait RelationalSqlExt: RelationalBackend {
 }
 
 impl<T: RelationalBackend + ?Sized> RelationalSqlExt for T {}
+
+/// Run a typed statement on a backend: `sql!(as T, ..)` was checked at build time to select what `T`
+/// reads, and only a matching `T` is accepted here.
+pub trait RelationalRowsExt: RelationalBackend {
+    /// Every row of `sql`, each read into a `T` (field `n` from column `n`).
+    fn query_as<'a, T: FromRow + Send + 'a>(
+        &'a self,
+        sql: &TypedSql<T>,
+        params: &[Value],
+    ) -> impl Future<Output = Result<Vec<T>, RelError>> + Send + 'a {
+        let prepared = prepare(&sql.query, &self.dialect(), params);
+        async move {
+            let (text, ordered) = prepared?;
+            let rows = self.query(text, &ordered).await?;
+            rows.iter().map(T::from_row).collect()
+        }
+    }
+}
+
+impl<T: RelationalBackend + ?Sized> RelationalRowsExt for T {}
+
+/// `query_as` inside a transaction; the dialect is passed in, as for the other transaction methods.
+pub trait RelationalTxRowsExt: RelationalTx {
+    /// Every row of `sql`, each read into a `T`.
+    fn query_as<'a, T: FromRow + Send + 'a>(
+        &'a mut self,
+        dialect: &Dialect,
+        sql: &TypedSql<T>,
+        params: &[Value],
+    ) -> impl Future<Output = Result<Vec<T>, RelError>> + Send + 'a {
+        let prepared = prepare(&sql.query, dialect, params);
+        async move {
+            let (text, ordered) = prepared?;
+            let rows = self.query(text, &ordered).await?;
+            rows.iter().map(T::from_row).collect()
+        }
+    }
+}
+
+impl<T: RelationalTx + ?Sized> RelationalTxRowsExt for T {}
 
 /// `execute_sql` and `query_sql` inside a transaction. A transaction does not know its dialect, so
 /// the caller passes the backend's (`db.dialect()`).

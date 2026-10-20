@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.2
+
+### Added
+- **Compile-time SQL, stage 6: typed rows** (`docs/COMPILE-TIME-SQL.md` section 5; PM [TASK] 2026-10-20). `#[derive(FromRow)]` (macro in `persistant-macros`, trait in `persistant-relational`, both re-exported by `persistant` with feature `sql-macros`) reads a struct with named fields from a result row **by position**; the field types are the intersection the engines share: `i64`, `i32`, `f64`, `bool` (a boolean, or an integer 0 or 1), `String`, `Vec<u8>`, and `Option` of any (`FromValue`; an unsupported type is the compiler's "trait bound not satisfied", at the field). `sql!(as T, source = .., schema = .., "SELECT ..")` yields a `TypedSql<T>` and **checks the SELECT list against `T` at build time** with `const` assertions that name the column: the number of columns; each column's name (its alias, if any) against the field's; its class against the field's type (numeric into `i64`/`i32`/`f64`, text into `String`, boolean into `bool`, other into `Vec<u8>`/`String`; a class the schema does not state allows anything); and a column that can be NULL needs an `Option` field. An expression column is named and typed by its alias: `count(*) AS "n: i64"` (or `Option<i64>`). `SELECT *`, `UNION`/`INTERSECT`/`EXCEPT`, an untyped expression, a column the table (whose column list is complete) lacks, and `as T` with `schema = none` are build errors; with joins or subqueries the columns are unknown, which is "no check", never a wrong one. `RelationalRowsExt::query_as` / `RelationalTxRowsExt::query_as` run a `TypedSql<T>` and accept only the matching `T`.
+- A read that fails says which column and why (`column 2 (field `email`): expected text, got Int(1)`); NULL into a field that is not an `Option` is an error, not a default.
+- Tests: 30 macro unit tests (derive output and its refusals, the SELECT list read against the schema, each assertion's message, `as T` errors with passing twins), 3 on the row types, doc-tests with three `compile_fail` cases (wrong type, nullable into a non-`Option`, wrong name) and their passing twin, and `persistant-sqlx/tests/sql_macro.rs` running `ITEMS` and an annotated `count(*)` through `query_as` (and in a transaction) on real SQLite, PostgreSQL 16 and MySQL 8.4 against the committed snapshot. The build error for a wrong field type reads: `column 2 (`email`) is text: the type of field 2 cannot hold it`.
+
+### Changed
+- The default path the `sql!` expansion names `Query` through is now `::persistant::relational::embed` (was `::persistant::embed`, which still exists); `crate = path`, when given, is text-compared without spaces. With `as T`, `crate = ..` must end in `::embed`, so the checks are found beside it.
+
+### Not done
+- Joins and subqueries are not typed (their columns are unknown), `SELECT *` is refused, and finer types (UUID, decimal, timestamps) are read with the driver's own types (`docs/DECODER-AUDIT.md`); a record inferred from a live server for the statement as executed, as sqlx's `query!` does, is out of reach for a layer that runs one statement on several engines (design section 5).
+
 ## 0.9.1
 
 ### Fixed
