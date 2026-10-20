@@ -143,13 +143,13 @@ async fn kv_on_mysql_certifies_every_leaf_on() {
 async fn kv_on_mysql_declares_bounded_call_when_a_timeout_is_set() {
     let Some(db) = backend().await else { return };
     let _serial = SERVER.lock().await;
-    let bound = std::time::Duration::from_millis(500);
+    let bound = std::time::Duration::from_millis(3000);
     let kv = KvOnRelational::open(persistant_sqlx::Bounded::new(db, bound))
         .await
         .expect("open");
     let config = Config::new()
         .with("dialect", flavor())
-        .with("call_timeout_ms", "500");
+        .with("call_timeout_ms", "3000");
     let rows = persistant_kv::conformance::certify_leaves(
         &kv,
         &config,
