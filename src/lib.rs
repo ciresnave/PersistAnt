@@ -108,10 +108,6 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
-<<<<<<< HEAD
-        assert_eq!(VERSION, "0.8.23");
-=======
         assert_eq!(VERSION, "0.9.0");
->>>>>>> 7416cd6 (compile-time SQL stage 5: sql! reads the schema, catalog Checker; schema is required (0.9.0))
     }
 }
