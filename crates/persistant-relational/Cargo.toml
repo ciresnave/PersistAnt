@@ -13,11 +13,10 @@ categories = ["database-implementations"]
 # `persistant::sql!` support: the `Sql` value the macro expands to, and `execute_sql` / `query_sql`.
 sql = ["dep:unisql-embed"]
 # A schema snapshot: read a database's catalog and write it as deterministic JSON.
-catalog = ["dep:serde", "dep:serde_json"]
+catalog = ["dep:unisql-core"]
 
 [dependencies]
 persistant-core = { workspace = true }
 # Published version only (portfolio rule 2026-10-07). No dependencies of its own, `no_std`.
-unisql-embed = { version = "0.24.14", optional = true }
-serde = { version = "1.0.229", features = ["derive"], optional = true }
-serde_json = { version = "1.0.151", optional = true }
+unisql-embed = { version = "0.24.17", optional = true }
+unisql-core = { version = "0.24.17", features = ["serde"], optional = true }

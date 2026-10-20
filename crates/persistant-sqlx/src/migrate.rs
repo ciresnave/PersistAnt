@@ -353,7 +353,7 @@ impl PgBackend {
     pub async fn fresh_catalog(
         &self,
         migrations: &[Migration],
-    ) -> Result<persistant_relational::catalog::Catalog, MigrateError> {
+    ) -> Result<persistant_relational::catalog::Snapshot, MigrateError> {
         let (_, catalog) = self.fresh_run(migrations, true).await?;
         Ok(catalog.expect("a catalog was asked for"))
     }
@@ -365,7 +365,7 @@ impl PgBackend {
     ) -> Result<
         (
             MigrateReport,
-            Option<persistant_relational::catalog::Catalog>,
+            Option<persistant_relational::catalog::Snapshot>,
         ),
         MigrateError,
     > {
@@ -446,7 +446,7 @@ pub(crate) async fn scratch_run<B, L>(
 ) -> Result<
     (
         MigrateReport,
-        Option<persistant_relational::catalog::Catalog>,
+        Option<persistant_relational::catalog::Snapshot>,
     ),
     MigrateError,
 >
@@ -458,8 +458,8 @@ where
     if !want_catalog {
         return Ok((report, None));
     }
-    let stamps = persistant_relational::catalog::stamps(&ledger.await?);
-    let catalog = persistant_relational::catalog::read_catalog(b, stamps)
+    let meta = persistant_relational::catalog::migration_meta(&ledger.await?);
+    let catalog = persistant_relational::catalog::read_catalog(b, meta)
         .await
         .map_err(|e| MigrateError::Backend(e.to_string()))?;
     Ok((report, Some(catalog)))

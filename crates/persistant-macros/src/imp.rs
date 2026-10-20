@@ -117,6 +117,7 @@ fn build(input: TokenStream) -> Result<TokenStream, Vec<Error>> {
             .map(|a| a.0.clone())
             .unwrap_or_default(),
         sql,
+        schema: None,
     };
     match expand(&input) {
         Ok(expansion) => {
@@ -139,7 +140,9 @@ fn build(input: TokenStream) -> Result<TokenStream, Vec<Error>> {
                     Kind::Allow => args.allow.as_ref().map(|a| a.1),
                     Kind::Requires => args.requires.as_ref().map(|a| a.1),
                     Kind::Forbids => args.forbids.as_ref().map(|a| a.1),
-                    Kind::Syntax | Kind::Placeholders | Kind::Refused => Some(sql_span),
+                    Kind::Syntax | Kind::Placeholders | Kind::Refused | Kind::Catalog => {
+                        Some(sql_span)
+                    }
                 }
                 .unwrap_or(sql_span);
                 err(span, p.message)

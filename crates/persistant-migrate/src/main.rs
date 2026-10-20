@@ -23,7 +23,7 @@
 //! a wrong URL in an environment variable must not silently migrate someone else's database.
 
 use persistant_migrate::{State, describe_target, load_dir, status};
-use persistant_relational::catalog::{self, Catalog};
+use persistant_relational::catalog::{self, Snapshot};
 use persistant_relational::{MigrateError, Migrates, Migration, RelError};
 use persistant_sqlx::{MysqlBackend, PgBackend, SqliteBackend};
 use std::path::PathBuf;
@@ -83,9 +83,10 @@ async fn connect(url: &str) -> Result<Db, String> {
 }
 
 /// The catalog `snapshot` is about: the target itself, or a scratch copy built from `migrations`.
-async fn derive(db: &Db, migrations: &[Migration], scratch: bool) -> Result<Catalog, String> {
+async fn derive(db: &Db, migrations: &[Migration], scratch: bool) -> Result<Snapshot, String> {
     let stamps_of = |l: Result<Vec<(i64, Vec<u8>)>, MigrateError>| {
-        l.map(|l| catalog::stamps(&l)).map_err(|e| e.to_string())
+        l.map(|l| catalog::migration_meta(&l))
+            .map_err(|e| e.to_string())
     };
     if scratch {
         return match db {
@@ -137,17 +138,20 @@ async fn snapshot(db: &Db, migrations: &[Migration], snap: &Snap) -> ExitCode {
                 );
             }
         };
-        let committed = match Catalog::from_json(&text) {
+        let committed = match catalog::parse(&text) {
             Ok(c) => c,
             Err(e) => return fail(format!("{}: {e}", snap.out.display()), 8),
         };
-        let diffs = committed.differences(&now);
+        let diffs = catalog::differences(&committed, &now);
         if diffs.is_empty() {
             println!(
                 "{} is current: {} tables, {} migrations",
                 snap.out.display(),
-                now.tables.len(),
-                now.migrations.len()
+                now.schema.tables().count(),
+                now.meta
+                    .keys()
+                    .filter(|k| k.starts_with("migration."))
+                    .count()
             );
             return ExitCode::SUCCESS;
         }
@@ -174,8 +178,11 @@ async fn snapshot(db: &Db, migrations: &[Migration], snap: &Snap) -> ExitCode {
     println!(
         "wrote {}: {} tables, {} migrations",
         snap.out.display(),
-        now.tables.len(),
-        now.migrations.len()
+        now.schema.tables().count(),
+        now.meta
+            .keys()
+            .filter(|k| k.starts_with("migration."))
+            .count()
     );
     ExitCode::SUCCESS
 }

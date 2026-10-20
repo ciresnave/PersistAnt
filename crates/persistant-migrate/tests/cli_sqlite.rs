@@ -41,7 +41,7 @@ fn migrations(dir: &Path) -> std::path::PathBuf {
 
 #[test]
 fn snapshot_scratch_live_check_and_stale() {
-    use persistant_relational::catalog::Catalog;
+    use persistant_relational::catalog;
     let t = tempfile::tempdir().unwrap();
     let m = migrations(t.path());
     let db = t.path().join("s.db");
@@ -57,19 +57,26 @@ fn snapshot_scratch_live_check_and_stale() {
         "{}",
         stdout(&snap)
     );
-    let cat = Catalog::from_json(&std::fs::read_to_string(&file).unwrap()).unwrap();
-    let things = &cat.tables["things"];
+    let cat = catalog::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let things = cat
+        .schema
+        .tables()
+        .find(|t| t.name == ["things"])
+        .expect("the things table");
+    let cols: Vec<_> = things.columns.keys().map(String::as_str).collect();
+    assert_eq!(cols, ["id", "n"], "{cat:?}");
+    assert_eq!(things.unique_keys, [vec!["id".to_string()]]);
+    assert_eq!(things.columns["n"].nullable, Some(true));
+    assert_eq!(things.columns["id"].nullable, Some(false));
+    assert!(things.columns_complete && !things.keys_unreliable);
     assert_eq!(
-        things
-            .columns
-            .iter()
-            .map(|c| c.name.as_str())
-            .collect::<Vec<_>>(),
-        ["id", "n"]
+        cat.meta
+            .keys()
+            .filter(|k| k.starts_with("migration."))
+            .count(),
+        2
     );
-    assert_eq!(things.primary_key, ["id"]);
-    assert_eq!(cat.migrations.len(), 2);
-    assert!(!cat.tables.contains_key("_sqlx_migrations"));
+    assert!(!cat.schema.tables().any(|t| t.name == ["_sqlx_migrations"]));
     assert_eq!(
         run(
             &["snapshot", "--scratch", "--check", "--dir", dir, "--out", f],

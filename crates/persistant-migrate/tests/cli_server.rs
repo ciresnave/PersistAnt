@@ -9,7 +9,7 @@
 //! own schema (PostgreSQL) or database (MySQL), dropped afterwards.
 
 use persistant_relational::RelationalBackend;
-use persistant_relational::catalog::Catalog;
+use persistant_relational::catalog;
 use persistant_sqlx::{MysqlBackend, PgBackend};
 use std::path::Path;
 use std::process::{Command, Output};
@@ -107,14 +107,26 @@ where
     );
     assert_eq!(leftovers().await, before, "snapshot left a scratch object");
     assert!(!has_things().await, "snapshot --scratch touched the target");
-    let cat = Catalog::from_json(&std::fs::read_to_string(&file).unwrap()).unwrap();
-    let things = &cat.tables["things"];
-    let cols: Vec<_> = things.columns.iter().map(|c| c.name.as_str()).collect();
+    let cat = catalog::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let things = cat
+        .schema
+        .tables()
+        .find(|t| t.name == ["things"])
+        .expect("the things table");
+    let cols: Vec<_> = things.columns.keys().map(String::as_str).collect();
     assert_eq!(cols, ["id", "n"], "{cat:?}");
-    assert_eq!(things.primary_key, ["id"]);
-    assert!(things.columns[1].nullable);
-    assert_eq!(cat.migrations.len(), 2);
-    assert!(!cat.tables.contains_key("_sqlx_migrations"));
+    assert_eq!(things.unique_keys, [vec!["id".to_string()]]);
+    assert_eq!(things.columns["n"].nullable, Some(true));
+    assert_eq!(things.columns["id"].nullable, Some(false));
+    assert!(things.columns_complete && !things.keys_unreliable);
+    assert_eq!(
+        cat.meta
+            .keys()
+            .filter(|k| k.starts_with("migration."))
+            .count(),
+        2
+    );
+    assert!(!cat.schema.tables().any(|t| t.name == ["_sqlx_migrations"]));
     assert_eq!(
         run(
             &["snapshot", "--scratch", "--check", "--dir", dir, "--out", f],

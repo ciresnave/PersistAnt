@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! The catalog readers against real engines: the same tables, read back as the same structure, plus
-//! what each engine must NOT report (views, partial and expression indexes, the migration ledger).
-//! SQLite always; PostgreSQL and MySQL when their server variables are set.
+//! what each engine must NOT report (views, the migration ledger) and what it must flag (a partial or
+//! expression unique index makes the table's key list unreliable). SQLite always; PostgreSQL and
+//! MySQL when their server variables are set.
 
-use persistant_relational::catalog::{Catalog, read_catalog};
+use persistant_relational::catalog::{self, ColumnClass, differences, read_catalog};
 use persistant_relational::{Dialect, RelationalBackend};
+use std::collections::BTreeMap;
 
 const USERS: &str = "persistant_cat_users";
 const PAIRS: &str = "persistant_cat_pairs";
@@ -30,8 +32,10 @@ async fn run<B: RelationalBackend>(db: &B) {
         format!("CREATE UNIQUE INDEX {USERS}_note ON {USERS} (note)"),
         format!("CREATE VIEW {VIEW} AS SELECT id FROM {USERS}"),
     ];
-    if matches!(dialect, Dialect::Postgres | Dialect::Sqlite) {
-        // Neither makes a conflict target, so neither may appear as a key.
+    let has_odd_indexes = matches!(dialect, Dialect::Postgres | Dialect::Sqlite);
+    if has_odd_indexes {
+        // Neither makes a conflict target: the table's key list must be flagged unreliable, not
+        // silently shortened.
         ddl.push(format!(
             "CREATE UNIQUE INDEX {USERS}_partial ON {USERS} (age) WHERE age > 100"
         ));
@@ -43,65 +47,86 @@ async fn run<B: RelationalBackend>(db: &B) {
         db.execute(sql, &[]).await.unwrap();
     }
 
-    let c = read_catalog(db, Vec::new()).await.unwrap();
-    assert_eq!(c.dialect, dialect.to_string());
+    let c = read_catalog(db, BTreeMap::new()).await.unwrap();
     let on = format!("on {}", db.backend());
+    assert_eq!(c.meta["dialect"], dialect.to_string(), "{on}");
 
-    // Only this test's tables: the database is shared with other tests.
-    assert!(c.tables.contains_key(USERS), "{on}: {:?}", c.tables.keys());
+    // Only this test's tables matter: the database is shared with other tests.
+    let users = c
+        .schema
+        .tables()
+        .find(|t| t.name == [USERS])
+        .unwrap_or_else(|| panic!("{on}: no {USERS}"));
     assert!(
-        !c.tables.contains_key(VIEW),
+        !c.schema.tables().any(|t| t.name == [VIEW]),
         "{on}: a view is not a base table"
     );
     assert!(
-        !c.tables.contains_key("_sqlx_migrations"),
+        !c.schema.tables().any(|t| t.name == ["_sqlx_migrations"]),
         "{on}: the ledger is never in it"
     );
 
-    let users = &c.tables[USERS];
-    let names: Vec<_> = users.columns.iter().map(|c| c.name.as_str()).collect();
-    assert_eq!(
-        names,
-        ["id", "email", "note", "age"],
-        "{on}: declaration order"
-    );
-    let col = |n: &str| users.columns.iter().find(|c| c.name == n).unwrap();
-    assert!(!col("id").nullable && !col("email").nullable, "{on}");
-    assert!(col("note").nullable && col("age").nullable, "{on}");
-    assert!(col("age").has_default, "{on}: DEFAULT 7");
+    let names: Vec<_> = users.columns.keys().map(String::as_str).collect();
+    assert_eq!(names, ["age", "email", "id", "note"], "{on}: name order");
     assert!(
-        !col("email").has_default && !col("note").has_default,
-        "{on}"
+        users.columns_complete,
+        "{on}: the column list was read in full"
     );
-    for c in &users.columns {
-        assert!(!c.declared_type.is_empty(), "{on}: {} has a type", c.name);
-        assert_eq!(c.declared_type, c.declared_type.to_lowercase(), "{on}");
+    let col = |n: &str| &users.columns[n];
+    assert_eq!(col("id").nullable, Some(false), "{on}");
+    assert_eq!(col("email").nullable, Some(false), "{on}");
+    assert_eq!(col("note").nullable, Some(true), "{on}");
+    assert_eq!(col("age").nullable, Some(true), "{on}");
+    assert_eq!(col("age").has_default, Some(true), "{on}: DEFAULT 7");
+    assert_eq!(col("email").has_default, Some(false), "{on}");
+    assert_eq!(col("note").has_default, Some(false), "{on}");
+    // Classified by the engine's own naming of the type; none is left Unknown here.
+    assert_eq!(col("id").class, ColumnClass::Numeric, "{on}");
+    assert_eq!(col("age").class, ColumnClass::Numeric, "{on}");
+    assert_eq!(col("email").class, ColumnClass::Text, "{on}");
+    assert_eq!(col("note").class, ColumnClass::Text, "{on}");
+    for (n, c) in users.columns {
+        let t = c.declared_type.as_deref().unwrap_or_default();
+        assert!(!t.is_empty(), "{on}: {n} has a declared type");
+        assert_eq!(t, t.to_lowercase(), "{on}");
     }
     assert!(
-        col("id").declared_type.contains("int"),
-        "{on}: {}",
+        col("id").declared_type.as_deref().unwrap().contains("int"),
+        "{on}: {:?}",
         col("id").declared_type
     );
 
-    assert_eq!(users.primary_key, ["id"], "{on}");
+    // The primary key first, then the other unique keys in order.
     assert_eq!(
         users.unique_keys,
-        [vec!["email".to_string()], vec!["note".to_string()]],
-        "{on}: the constraint and the unique index, not the partial or expression ones"
+        [
+            vec!["id".to_string()],
+            vec!["email".to_string()],
+            vec!["note".to_string()]
+        ],
+        "{on}"
     );
-    let pairs = &c.tables[PAIRS];
-    assert_eq!(pairs.primary_key, ["a", "b"], "{on}: key order");
+    assert_eq!(
+        users.keys_unreliable, has_odd_indexes,
+        "{on}: a partial or expression unique index flags the list, and nothing else does"
+    );
+    let pairs = c.schema.tables().find(|t| t.name == [PAIRS]).unwrap();
+    assert_eq!(
+        pairs.unique_keys,
+        [vec!["a".to_string(), "b".to_string()]],
+        "{on}: key order"
+    );
+    assert!(!pairs.keys_unreliable, "{on}");
     assert!(
-        pairs.unique_keys.is_empty(),
-        "{on}: the primary key is not also a unique key"
+        pairs.columns.values().all(|c| c.nullable == Some(false)),
+        "{on}"
     );
-    assert!(pairs.columns.iter().all(|c| !c.nullable), "{on}");
 
     // The file: deterministic, reads back identical, and a re-read of the database differs in nothing.
     let json = c.to_json();
-    assert_eq!(Catalog::from_json(&json).unwrap(), c, "{on}");
-    let again = read_catalog(db, Vec::new()).await.unwrap();
-    assert!(c.differences(&again).is_empty(), "{on}");
+    assert_eq!(catalog::parse(&json).unwrap(), c, "{on}");
+    let again = read_catalog(db, BTreeMap::new()).await.unwrap();
+    assert!(differences(&c, &again).is_empty(), "{on}");
 
     // And a real change is seen: the control for "differences" being empty above.
     db.execute(
@@ -110,8 +135,8 @@ async fn run<B: RelationalBackend>(db: &B) {
     )
     .await
     .unwrap();
-    let changed = read_catalog(db, Vec::new()).await.unwrap();
-    let d = c.differences(&changed).join("\n");
+    let changed = read_catalog(db, BTreeMap::new()).await.unwrap();
+    let d = differences(&c, &changed).join("\n");
     assert!(
         d.contains(&format!("column {PAIRS}.extra: not in the snapshot")),
         "{on}: {d}"

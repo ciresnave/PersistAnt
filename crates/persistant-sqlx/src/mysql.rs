@@ -208,7 +208,7 @@ impl MysqlBackend {
     pub async fn fresh_catalog(
         &self,
         migrations: &[persistant_relational::Migration],
-    ) -> Result<persistant_relational::catalog::Catalog, persistant_relational::MigrateError> {
+    ) -> Result<persistant_relational::catalog::Snapshot, persistant_relational::MigrateError> {
         let (_, catalog) = self.fresh_run(migrations, true).await?;
         Ok(catalog.expect("a catalog was asked for"))
     }
@@ -220,7 +220,7 @@ impl MysqlBackend {
     ) -> Result<
         (
             persistant_relational::MigrateReport,
-            Option<persistant_relational::catalog::Catalog>,
+            Option<persistant_relational::catalog::Snapshot>,
         ),
         persistant_relational::MigrateError,
     > {

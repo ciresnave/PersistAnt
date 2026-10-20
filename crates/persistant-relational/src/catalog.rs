@@ -1,225 +1,211 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! A schema snapshot: what a database's catalog says about its tables, read through the
-//! [`RelationalBackend`] trait on PostgreSQL, MySQL/MariaDB and SQLite, and a deterministic JSON file
-//! to commit beside the code (`docs/COMPILE-TIME-SQL.md` section 1). Feature `catalog`.
+//! [`RelationalBackend`] trait on PostgreSQL, MySQL/MariaDB and SQLite, as UniSQL's [`Snapshot`] (the
+//! file format is UniSQL's; this repo writes it, `docs/COMPILE-TIME-SQL.md` sections 1 and 7).
+//! Feature `catalog`.
 //!
-//! The file records structure only, never data. Tables are base tables of the connection's current
-//! schema or database; the migration ledger `_sqlx_migrations` is never in it.
+//! The file records structure only, never data. Tables are the base tables of the connection's
+//! current schema or database; the migration ledger `_sqlx_migrations` is never in it. The snapshot's
+//! `meta` carries the dialect and, when it was derived from migrations, each one's version and
+//! checksum, so a snapshot older than its directory is *detected* ([`differences`]).
 //!
 //! What each engine can tell us, and how it is normalised:
 //! * `declared_type` is the engine's own spelling, lower-cased (`bigint`, `character varying`,
-//!   `varchar(40)`, `integer`). Types are not mapped across engines.
-//! * `nullable` is the column's `NOT NULL` flag inverted. SQLite is the exception that proves why it
-//!   is read with care: only an `INTEGER PRIMARY KEY` is truly never NULL there, but a primary-key
-//!   column is reported as not nullable on every engine, which is the declared intent.
+//!   `varchar(40)`, `integer`). It is classified (`Text`, `Numeric`, `Boolean`, `Other`, `Unknown`)
+//!   from that spelling by the engine's own rules; a type no rule recognises is `Unknown`, never
+//!   guessed. No collation is recorded (an unstated collation is unknown, not the default).
+//! * `nullable` is the column's `NOT NULL` flag inverted; a primary-key column is not nullable on every
+//!   engine, which is the declared intent (only an `INTEGER PRIMARY KEY` is truly never NULL in SQLite).
 //! * `has_default` means "the column may be left out of an `INSERT`": a `DEFAULT`, an identity or
 //!   auto-increment column, or SQLite's rowid alias. A MariaDB `COLUMN_DEFAULT` of the text `NULL`
 //!   (how it reports a nullable column with no default) is not a default.
-//! * Keys are the primary key and the unique constraints or unique indexes over plain columns.
-//!   Partial and expression indexes are skipped: they do not make a conflict target.
+//! * Keys are the primary key and the unique constraints or unique indexes over plain columns, in key
+//!   order. A table with a partial or expression unique index has its key list marked **unreliable**
+//!   (UniSQL then derives no conflict key from it) rather than that index being silently dropped.
+//! * Every table's column list is marked complete: it was read in full.
 
 use crate::{Dialect, RelError, RelationalBackend, Row, Value};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fmt;
+pub use unisql_core::snapshot::{Snapshot, SnapshotError};
+pub use unisql_core::{Column, ColumnClass, Schema};
 
-/// The snapshot file format this code writes and reads. A file with a larger number is refused, not
-/// guessed at.
-pub const FORMAT: u32 = 1;
+/// The ledger the migration machinery keeps; never part of a snapshot.
+const LEDGER: &str = "_sqlx_migrations";
 
-/// One column.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Column {
-    /// The column name.
-    pub name: String,
-    /// The engine's own type name, lower-cased.
-    #[serde(rename = "type")]
-    pub declared_type: String,
-    /// Whether NULL is allowed.
-    pub nullable: bool,
-    /// Whether an `INSERT` may leave the column out.
-    pub has_default: bool,
+/// Read a snapshot written by [`Snapshot::to_json`]; a file of a newer format is refused ("update
+/// unisql"), not guessed at.
+pub fn parse(text: &str) -> Result<Snapshot, SnapshotError> {
+    Snapshot::from_json(text)
 }
 
-/// One table.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct Table {
-    /// Columns in declaration order.
-    pub columns: Vec<Column>,
-    /// The primary key's columns in key order; empty if there is none.
-    pub primary_key: Vec<String>,
-    /// Other unique keys (each a list of columns in key order), sorted.
-    pub unique_keys: Vec<Vec<String>>,
+/// The `meta` entries that record which migrations a snapshot was derived from: one per
+/// `(version, checksum)` row of the ledger, the key sorted by version, the checksum as lower-case hex.
+pub fn migration_meta(ledger: &[(i64, Vec<u8>)]) -> BTreeMap<String, String> {
+    ledger
+        .iter()
+        .map(|(version, sum)| {
+            (
+                format!("migration.{version:020}"),
+                sum.iter().map(|b| format!("{b:02x}")).collect(),
+            )
+        })
+        .collect()
 }
 
-/// One applied migration the snapshot was derived from (when it was derived from migrations).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MigrationStamp {
-    /// The migration's version.
-    pub version: i64,
-    /// Its checksum as lower-case hex.
-    pub checksum: String,
+fn migrations_of(s: &Snapshot) -> BTreeMap<i64, &str> {
+    s.meta
+        .iter()
+        .filter_map(|(k, v)| {
+            let version = k.strip_prefix("migration.")?.parse::<i64>().ok()?;
+            Some((version, v.as_str()))
+        })
+        .collect()
 }
 
-/// A schema snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Catalog {
-    /// [`FORMAT`] when written.
-    pub format: u32,
-    /// The dialect it was read from (`postgres`, `mysql`, `mariadb`, `sqlite`).
-    pub dialect: String,
-    /// The migrations it was derived from, ascending; empty when read from a database whose
-    /// migrations are not known.
-    pub migrations: Vec<MigrationStamp>,
-    /// Tables by name.
-    pub tables: BTreeMap<String, Table>,
+type TableFacts = (BTreeMap<String, Column>, Vec<Vec<String>>, bool);
+
+fn tables_of(s: &Snapshot) -> BTreeMap<String, TableFacts> {
+    s.schema
+        .tables()
+        .map(|t| {
+            (
+                t.name.join("."),
+                (t.columns.clone(), t.unique_keys.to_vec(), t.keys_unreliable),
+            )
+        })
+        .collect()
 }
 
-/// Why a snapshot could not be read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CatalogError {
-    /// The text is not a snapshot.
-    Malformed(String),
-    /// The file was written by a newer format than this code understands.
-    TooNew {
-        /// The file's format.
-        found: u32,
-        /// The newest this code reads.
-        supported: u32,
-    },
-}
-
-impl fmt::Display for CatalogError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CatalogError::Malformed(m) => write!(f, "not a schema snapshot: {m}"),
-            CatalogError::TooNew { found, supported } => write!(
-                f,
-                "the snapshot is format {found}, newer than the {supported} this build reads: upgrade persistant"
-            ),
+/// What differs between `old` (say, the committed file) and `new` (what the database says now), one
+/// line each; empty when they are the same. The migration stamps are compared first, so a snapshot
+/// older than its directory says "stale" and names the migration.
+pub fn differences(old: &Snapshot, new: &Snapshot) -> Vec<String> {
+    let mut out = Vec::new();
+    let (od, nd) = (old.meta.get("dialect"), new.meta.get("dialect"));
+    if od != nd {
+        out.push(format!(
+            "dialect: snapshot {}, now {}",
+            od.map_or("?", String::as_str),
+            nd.map_or("?", String::as_str)
+        ));
+    }
+    let (have, want) = (migrations_of(old), migrations_of(new));
+    for (v, sum) in &want {
+        match have.get(v) {
+            None => out.push(format!("stale: migration {v} is not in the snapshot")),
+            Some(c) if c != sum => out.push(format!(
+                "stale: migration {v} changed since the snapshot (checksum differs)"
+            )),
+            Some(_) => {}
         }
     }
-}
-
-impl std::error::Error for CatalogError {}
-
-impl Catalog {
-    /// The deterministic JSON text of this snapshot (two-space indent, trailing newline): the same
-    /// snapshot is always the same bytes, so a committed file diffs cleanly.
-    pub fn to_json(&self) -> String {
-        let mut s = serde_json::to_string_pretty(self).expect("a snapshot always serialises");
-        s.push('\n');
-        s
+    for v in have.keys().filter(|v| !want.contains_key(*v)) {
+        out.push(format!(
+            "stale: the snapshot has migration {v}, which is no longer there"
+        ));
     }
-
-    /// Read a snapshot written by [`Catalog::to_json`].
-    pub fn from_json(text: &str) -> Result<Catalog, CatalogError> {
-        // The format number first, so a newer file is "too new" and not "malformed" even when its
-        // other fields have changed shape.
-        #[derive(Deserialize)]
-        struct Head {
-            format: u32,
-        }
-        let head: Head =
-            serde_json::from_str(text).map_err(|e| CatalogError::Malformed(e.to_string()))?;
-        if head.format > FORMAT {
-            return Err(CatalogError::TooNew {
-                found: head.format,
-                supported: FORMAT,
-            });
-        }
-        serde_json::from_str(text).map_err(|e| CatalogError::Malformed(e.to_string()))
+    let (ot, nt) = (tables_of(old), tables_of(new));
+    for name in nt.keys().filter(|t| !ot.contains_key(*t)) {
+        out.push(format!("table {name}: not in the snapshot"));
     }
-
-    /// What differs between `self` (say, the committed file) and `other` (what the database says
-    /// now), one line each; empty when they are the same. Migration stamps are compared first, so a
-    /// snapshot older than its directory says "stale" and names the migration.
-    pub fn differences(&self, other: &Catalog) -> Vec<String> {
-        let mut out = Vec::new();
-        if self.dialect != other.dialect {
-            out.push(format!(
-                "dialect: snapshot {}, now {}",
-                self.dialect, other.dialect
-            ));
-        }
-        let have: BTreeMap<i64, &str> = self
-            .migrations
-            .iter()
-            .map(|m| (m.version, m.checksum.as_str()))
-            .collect();
-        for m in &other.migrations {
-            match have.get(&m.version) {
-                None => out.push(format!(
-                    "stale: migration {} is not in the snapshot",
-                    m.version
-                )),
-                Some(c) if *c != m.checksum => out.push(format!(
-                    "stale: migration {} changed since the snapshot (checksum differs)",
-                    m.version
+    for (name, (ocols, okeys, ounrel)) in &ot {
+        let Some((ncols, nkeys, nunrel)) = nt.get(name) else {
+            out.push(format!("table {name}: in the snapshot, gone now"));
+            continue;
+        };
+        for (c, col) in ncols {
+            match ocols.get(c) {
+                None => out.push(format!("column {name}.{c}: not in the snapshot")),
+                Some(o) if o != col => out.push(format!(
+                    "column {name}.{c}: snapshot {} {:?} nullable={:?} default={:?}, now {} {:?} nullable={:?} default={:?}",
+                    o.declared_type.as_deref().unwrap_or("?"),
+                    o.class,
+                    o.nullable,
+                    o.has_default,
+                    col.declared_type.as_deref().unwrap_or("?"),
+                    col.class,
+                    col.nullable,
+                    col.has_default
                 )),
                 Some(_) => {}
             }
         }
-        for m in &self.migrations {
-            if !other.migrations.iter().any(|o| o.version == m.version) {
-                out.push(format!(
-                    "stale: the snapshot has migration {}, which is no longer there",
-                    m.version
-                ));
-            }
+        for c in ocols.keys().filter(|c| !ncols.contains_key(*c)) {
+            out.push(format!("column {name}.{c}: in the snapshot, gone now"));
         }
-        for name in other
-            .tables
-            .keys()
-            .filter(|t| !self.tables.contains_key(*t))
-        {
-            out.push(format!("table {name}: not in the snapshot"));
+        if okeys != nkeys {
+            out.push(format!(
+                "table {name}: unique keys snapshot {okeys:?}, now {nkeys:?}"
+            ));
         }
-        for (name, old) in &self.tables {
-            let Some(new) = other.tables.get(name) else {
-                out.push(format!("table {name}: in the snapshot, gone now"));
-                continue;
-            };
-            for c in &new.columns {
-                match old.columns.iter().find(|o| o.name == c.name) {
-                    None => out.push(format!("column {name}.{}: not in the snapshot", c.name)),
-                    Some(o) if o != c => out.push(format!(
-                        "column {name}.{}: snapshot {} nullable={} default={}, now {} nullable={} default={}",
-                        c.name,
-                        o.declared_type,
-                        o.nullable,
-                        o.has_default,
-                        c.declared_type,
-                        c.nullable,
-                        c.has_default
-                    )),
-                    Some(_) => {}
-                }
+        if ounrel != nunrel {
+            out.push(format!(
+                "table {name}: key list reliable={}, was {}",
+                !nunrel, !ounrel
+            ));
+        }
+    }
+    out
+}
+
+// ---- classifying a declared type -----------------------------------------------------------
+
+/// The comparison class of a declared type, by each engine's own naming. A type none of the rules
+/// recognises is [`ColumnClass::Unknown`].
+pub fn classify(dialect: &Dialect, declared: &str) -> ColumnClass {
+    let t = declared.trim().to_lowercase();
+    let base = t.split(['(', ' ']).next().unwrap_or("");
+    match dialect {
+        Dialect::Postgres => match t.as_str() {
+            "text" | "character varying" | "character" | "name" | "citext" | "bpchar" => {
+                ColumnClass::Text
             }
-            for o in old
-                .columns
-                .iter()
-                .filter(|o| !new.columns.iter().any(|c| c.name == o.name))
+            "smallint" | "integer" | "bigint" | "numeric" | "decimal" | "real"
+            | "double precision" | "money" => ColumnClass::Numeric,
+            "boolean" => ColumnClass::Boolean,
+            "bytea" | "uuid" | "json" | "jsonb" | "date" | "interval" | "inet" | "cidr"
+            | "macaddr" | "xml" | "array" | "bit" | "bit varying" | "oid" => ColumnClass::Other,
+            t if t.starts_with("timestamp") || t.starts_with("time ") || t == "time" => {
+                ColumnClass::Other
+            }
+            _ => ColumnClass::Unknown,
+        },
+        Dialect::MySql | Dialect::MariaDb => match base {
+            "char" | "varchar" | "tinytext" | "text" | "mediumtext" | "longtext" | "enum"
+            | "set" => ColumnClass::Text,
+            // `tinyint(1)` is how MySQL spells a boolean, but it is an integer there: not Boolean.
+            "tinyint" | "smallint" | "mediumint" | "int" | "integer" | "bigint" | "decimal"
+            | "numeric" | "float" | "double" | "real" | "year" => ColumnClass::Numeric,
+            "binary" | "varbinary" | "tinyblob" | "blob" | "mediumblob" | "longblob" | "date"
+            | "datetime" | "timestamp" | "time" | "json" | "bit" | "uuid" | "inet4" | "inet6"
+            | "geometry" | "point" | "linestring" | "polygon" => ColumnClass::Other,
+            _ => ColumnClass::Unknown,
+        },
+        Dialect::Sqlite => {
+            // SQLite's own affinity rules (https://www.sqlite.org/datatype3.html section 3.1), in
+            // their order. A declared `boolean` is numeric affinity but says what it means.
+            if t == "boolean" || t == "bool" {
+                ColumnClass::Boolean
+            } else if t.contains("int") {
+                ColumnClass::Numeric
+            } else if t.contains("char") || t.contains("clob") || t.contains("text") {
+                ColumnClass::Text
+            } else if t.is_empty() || t.contains("blob") {
+                ColumnClass::Other
+            } else if t.contains("real")
+                || t.contains("floa")
+                || t.contains("doub")
+                || t.contains("numeric")
+                || t.contains("decimal")
             {
-                out.push(format!(
-                    "column {name}.{}: in the snapshot, gone now",
-                    o.name
-                ));
-            }
-            if old.primary_key != new.primary_key {
-                out.push(format!(
-                    "table {name}: primary key snapshot {:?}, now {:?}",
-                    old.primary_key, new.primary_key
-                ));
-            }
-            if old.unique_keys != new.unique_keys {
-                out.push(format!(
-                    "table {name}: unique keys snapshot {:?}, now {:?}",
-                    old.unique_keys, new.unique_keys
-                ));
+                ColumnClass::Numeric
+            } else if t.contains("date") || t.contains("time") || t.contains("json") {
+                ColumnClass::Other
+            } else {
+                ColumnClass::Unknown
             }
         }
-        out
+        Dialect::Other(_) => ColumnClass::Unknown,
     }
 }
 
@@ -253,28 +239,33 @@ fn flag(r: &Row, i: usize) -> Result<bool, RelError> {
     }
 }
 
-/// Stamps from a ledger's `(version, checksum)` rows, ascending, the checksum as lower-case hex.
-pub fn stamps(ledger: &[(i64, Vec<u8>)]) -> Vec<MigrationStamp> {
-    ledger
-        .iter()
-        .map(|(version, sum)| MigrationStamp {
-            version: *version,
-            checksum: sum.iter().map(|b| format!("{b:02x}")).collect(),
-        })
-        .collect()
+/// One table as read, before it becomes part of the [`Schema`].
+#[derive(Default)]
+struct Read {
+    /// name, declared type (lower case), nullable, has default
+    columns: Vec<(String, String, bool, bool)>,
+    primary_key: Vec<String>,
+    unique_keys: Vec<Vec<String>>,
+    /// A unique index the reader could not express as a list of plain columns exists.
+    keys_unreliable: bool,
 }
 
-/// The ledger the migration machinery keeps; never part of a snapshot.
-const LEDGER: &str = "_sqlx_migrations";
+impl Read {
+    fn mark_not_null(&mut self, col: &str) {
+        if let Some(c) = self.columns.iter_mut().find(|c| c.0 == col) {
+            c.2 = false;
+        }
+    }
+}
 
 /// Read the catalog of the connection's current schema (PostgreSQL), database (MySQL, MariaDB) or
-/// file (SQLite). `migrations` is stamped into the result as given.
+/// file (SQLite). `meta` is stored in the snapshot as given, with the dialect added.
 pub async fn read_catalog<B: RelationalBackend>(
     db: &B,
-    migrations: Vec<MigrationStamp>,
-) -> Result<Catalog, RelError> {
+    mut meta: BTreeMap<String, String>,
+) -> Result<Snapshot, RelError> {
     let dialect = db.dialect();
-    let tables = match &dialect {
+    let mut tables = match &dialect {
         Dialect::Postgres => read_postgres(db).await?,
         Dialect::MySql | Dialect::MariaDb => read_mysql(db, &dialect).await?,
         Dialect::Sqlite => read_sqlite(db).await?,
@@ -284,22 +275,43 @@ pub async fn read_catalog<B: RelationalBackend>(
             )));
         }
     };
-    let mut tables = tables;
     tables.remove(LEDGER);
-    for t in tables.values_mut() {
+    let mut schema = Schema::new();
+    for (name, mut t) in tables {
+        let table = vec![name];
+        for (col, declared, nullable, has_default) in &t.columns {
+            schema.set_column(
+                table.clone(),
+                col.clone(),
+                Column::new(classify(&dialect, declared))
+                    .with_declared_type(declared.clone())
+                    .with_nullable(*nullable)
+                    .with_default(*has_default),
+            );
+        }
+        schema.mark_columns_complete(table.clone());
         t.unique_keys.sort();
         t.unique_keys.dedup();
+        if !t.primary_key.is_empty() {
+            schema.add_unique_key(table.clone(), t.primary_key.clone());
+        }
+        for k in t.unique_keys {
+            if k != t.primary_key {
+                schema.add_unique_key(table.clone(), k);
+            }
+        }
+        if t.keys_unreliable {
+            schema.mark_keys_unreliable(table);
+        }
     }
-    Ok(Catalog {
-        format: FORMAT,
-        dialect: dialect.to_string(),
-        migrations,
-        tables,
-    })
+    meta.insert("dialect".to_string(), dialect.to_string());
+    let mut snapshot = Snapshot::new(schema);
+    snapshot.meta = meta;
+    Ok(snapshot)
 }
 
-async fn read_postgres<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, Table>, RelError> {
-    let mut tables: BTreeMap<String, Table> = BTreeMap::new();
+async fn read_postgres<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, Read>, RelError> {
+    let mut tables: BTreeMap<String, Read> = BTreeMap::new();
     let cols = db
         .query(
             "SELECT CAST(c.table_name AS TEXT), CAST(c.column_name AS TEXT), \
@@ -314,60 +326,60 @@ async fn read_postgres<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, 
         )
         .await?;
     for r in &cols {
-        tables.entry(txt(r, 0)?).or_default().columns.push(Column {
-            name: txt(r, 1)?,
-            declared_type: txt(r, 2)?.to_lowercase(),
-            nullable: txt(r, 3)? == "YES",
-            has_default: flag(r, 4)?,
-        });
+        tables.entry(txt(r, 0)?).or_default().columns.push((
+            txt(r, 1)?,
+            txt(r, 2)?.to_lowercase(),
+            txt(r, 3)? == "YES",
+            flag(r, 4)?,
+        ));
     }
-    // Unique and primary indexes over plain columns, whole (not partial). One row per index, its
-    // columns joined in key order with the unit separator.
+    // Every unique index, with its plain columns joined in key order by the unit separator, and
+    // whether it is partial or over an expression (then its column list is not the whole story).
     let keys = db
         .query(
             "SELECT CAST(t.relname AS TEXT), CAST(i.relname AS TEXT), \
              CASE WHEN ix.indisprimary THEN 1 ELSE 0 END, \
+             CASE WHEN ix.indpred IS NOT NULL OR ix.indexprs IS NOT NULL THEN 1 ELSE 0 END, \
              CAST(string_agg(CAST(a.attname AS TEXT), chr(31) ORDER BY k.ord) AS TEXT) \
              FROM pg_index ix \
              JOIN pg_class t ON t.oid = ix.indrelid \
              JOIN pg_class i ON i.oid = ix.indexrelid \
              JOIN pg_namespace n ON n.oid = t.relnamespace \
              CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) \
-             JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum \
-             WHERE n.nspname = current_schema() AND ix.indisunique AND ix.indpred IS NULL \
-             AND ix.indexprs IS NULL AND t.relkind = 'r' AND k.attnum > 0 \
-             GROUP BY t.relname, i.relname, ix.indisprimary \
+             LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum \
+             AND k.attnum > 0 \
+             WHERE n.nspname = current_schema() AND ix.indisunique AND t.relkind = 'r' \
+             GROUP BY t.relname, i.relname, ix.indisprimary, ix.indpred, ix.indexprs \
              ORDER BY t.relname, i.relname",
             &[],
         )
         .await?;
     for r in &keys {
-        let cols: Vec<String> = txt(r, 3)?.split('\u{1f}').map(str::to_string).collect();
-        if let Some(t) = tables.get_mut(&txt(r, 0)?) {
-            if flag(r, 2)? {
-                t.primary_key = cols.clone();
-                for c in &cols {
-                    mark_not_null(t, c);
-                }
-            } else {
-                t.unique_keys.push(cols);
+        let Some(t) = tables.get_mut(&txt(r, 0)?) else {
+            continue;
+        };
+        if flag(r, 3)? {
+            t.keys_unreliable = true;
+            continue;
+        }
+        let cols: Vec<String> = txt(r, 4)?.split('\u{1f}').map(str::to_string).collect();
+        if flag(r, 2)? {
+            for c in &cols {
+                t.mark_not_null(c);
             }
+            t.primary_key = cols;
+        } else {
+            t.unique_keys.push(cols);
         }
     }
     Ok(tables)
 }
 
-fn mark_not_null(t: &mut Table, col: &str) {
-    if let Some(c) = t.columns.iter_mut().find(|c| c.name == col) {
-        c.nullable = false;
-    }
-}
-
 async fn read_mysql<B: RelationalBackend>(
     db: &B,
     dialect: &Dialect,
-) -> Result<BTreeMap<String, Table>, RelError> {
-    let mut tables: BTreeMap<String, Table> = BTreeMap::new();
+) -> Result<BTreeMap<String, Read>, RelError> {
+    let mut tables: BTreeMap<String, Read> = BTreeMap::new();
     // MariaDB reports a nullable column with no default as the text NULL.
     let default = if *dialect == Dialect::MariaDb {
         "c.COLUMN_DEFAULT IS NOT NULL AND c.COLUMN_DEFAULT <> 'NULL'"
@@ -391,15 +403,15 @@ async fn read_mysql<B: RelationalBackend>(
         )
         .await?;
     for r in &cols {
-        tables.entry(txt(r, 0)?).or_default().columns.push(Column {
-            name: txt(r, 1)?,
-            declared_type: txt(r, 2)?.to_lowercase(),
-            nullable: txt(r, 3)? == "YES",
-            has_default: flag(r, 4)?,
-        });
+        tables.entry(txt(r, 0)?).or_default().columns.push((
+            txt(r, 1)?,
+            txt(r, 2)?.to_lowercase(),
+            txt(r, 3)? == "YES",
+            flag(r, 4)?,
+        ));
     }
-    // Unique indexes (the primary key is the one named PRIMARY), whole columns only: a prefix index
-    // (SUB_PART) or a functional one (NULL column name) does not make a conflict target.
+    // Unique indexes (the primary key is the one named PRIMARY). A prefix index (SUB_PART) or a
+    // functional one (NULL column name) does not make a conflict target and marks the list unreliable.
     let keys = db
         .query(
             "SELECT CAST(TABLE_NAME AS CHAR), CAST(INDEX_NAME AS CHAR), \
@@ -418,18 +430,18 @@ async fn read_mysql<B: RelationalBackend>(
         g.1 |= flag(r, 4)?;
     }
     for ((table, index), (cols, partial)) in grouped {
-        if partial {
+        let Some(t) = tables.get_mut(&table) else {
             continue;
-        }
-        if let Some(t) = tables.get_mut(&table) {
-            if index == "PRIMARY" {
-                for c in &cols {
-                    mark_not_null(t, c);
-                }
-                t.primary_key = cols;
-            } else {
-                t.unique_keys.push(cols);
+        };
+        if partial {
+            t.keys_unreliable = true;
+        } else if index == "PRIMARY" {
+            for c in &cols {
+                t.mark_not_null(c);
             }
+            t.primary_key = cols;
+        } else {
+            t.unique_keys.push(cols);
         }
     }
     Ok(tables)
@@ -439,8 +451,8 @@ fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-async fn read_sqlite<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, Table>, RelError> {
-    let mut tables: BTreeMap<String, Table> = BTreeMap::new();
+async fn read_sqlite<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, Read>, RelError> {
+    let mut tables: BTreeMap<String, Read> = BTreeMap::new();
     let names = db
         .query(
             "SELECT name FROM sqlite_master WHERE type = 'table' \
@@ -450,7 +462,7 @@ async fn read_sqlite<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, Ta
         .await?;
     for n in &names {
         let name = txt(n, 0)?;
-        let mut table = Table::default();
+        let mut table = Read::default();
         // cid, name, type, notnull, dflt_value, pk
         let info = db
             .query(&format!("PRAGMA table_info({})", quote_ident(&name)), &[])
@@ -467,12 +479,12 @@ async fn read_sqlite<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, Ta
             }
             // A lone INTEGER PRIMARY KEY is the rowid: it fills itself in when left out.
             let rowid_alias = pk_pos > 0 && pk_count == 1 && declared == "integer";
-            table.columns.push(Column {
-                name: col,
-                declared_type: declared,
-                nullable: !notnull && pk_pos == 0,
-                has_default: opt_txt(r, 4)?.is_some() || rowid_alias,
-            });
+            table.columns.push((
+                col,
+                declared,
+                !notnull && pk_pos == 0,
+                opt_txt(r, 4)?.is_some() || rowid_alias,
+            ));
         }
         pk.sort();
         table.primary_key = pk.into_iter().map(|(_, c)| c).collect();
@@ -481,8 +493,11 @@ async fn read_sqlite<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, Ta
             .query(&format!("PRAGMA index_list({})", quote_ident(&name)), &[])
             .await?;
         for ix in &indexes {
-            let origin = txt(ix, 3)?;
-            if !flag(ix, 2)? || flag(ix, 4)? || origin == "pk" {
+            if !flag(ix, 2)? || txt(ix, 3)? == "pk" {
+                continue;
+            }
+            if flag(ix, 4)? {
+                table.keys_unreliable = true;
                 continue;
             }
             // seqno, cid, name (NULL for an expression)
@@ -494,8 +509,9 @@ async fn read_sqlite<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, Ta
                 .await?;
             let names: Option<Vec<String>> =
                 cols.iter().map(|c| opt_txt(c, 2).ok().flatten()).collect();
-            if let Some(names) = names {
-                table.unique_keys.push(names);
+            match names {
+                Some(names) => table.unique_keys.push(names),
+                None => table.keys_unreliable = true,
             }
         }
         tables.insert(name, table);
@@ -507,106 +523,142 @@ async fn read_sqlite<B: RelationalBackend>(db: &B) -> Result<BTreeMap<String, Ta
 mod tests {
     use super::*;
 
-    fn col(name: &str, ty: &str, nullable: bool, has_default: bool) -> Column {
-        Column {
-            name: name.into(),
-            declared_type: ty.into(),
-            nullable,
-            has_default,
+    fn snap(dialect: &str, migrations: &[(i64, &str)], cols: &[(&str, ColumnClass)]) -> Snapshot {
+        let mut schema = Schema::new();
+        for (name, class) in cols {
+            schema.set_column(
+                vec!["users".to_string()],
+                name.to_string(),
+                Column::new(*class).with_nullable(false).with_default(false),
+            );
         }
+        schema.mark_columns_complete(vec!["users".to_string()]);
+        schema.add_unique_key(vec!["users".to_string()], vec!["id".to_string()]);
+        let mut s = Snapshot::new(schema);
+        s.meta.insert("dialect".into(), dialect.into());
+        for (v, c) in migrations {
+            s.meta.insert(format!("migration.{v:020}"), (*c).into());
+        }
+        s
     }
 
-    fn sample() -> Catalog {
-        let mut tables = BTreeMap::new();
-        tables.insert(
-            "users".to_string(),
-            Table {
-                columns: vec![
-                    col("id", "bigint", false, true),
-                    col("email", "text", false, false),
-                    col("note", "text", true, false),
-                ],
-                primary_key: vec!["id".into()],
-                unique_keys: vec![vec!["email".into()]],
-            },
-        );
-        Catalog {
-            format: FORMAT,
-            dialect: "postgres".into(),
-            migrations: vec![MigrationStamp {
-                version: 1,
-                checksum: "ab12".into(),
-            }],
-            tables,
-        }
-    }
+    const COLS: [(&str, ColumnClass); 2] =
+        [("id", ColumnClass::Numeric), ("email", ColumnClass::Text)];
 
     #[test]
-    fn json_round_trips_and_is_deterministic() {
-        let c = sample();
-        let text = c.to_json();
-        assert_eq!(Catalog::from_json(&text).unwrap(), c);
-        assert_eq!(c.to_json(), text, "the same snapshot is the same bytes");
-        assert!(text.ends_with("}\n"));
-        assert!(text.contains("\"type\": \"bigint\""), "{text}");
-    }
-
-    #[test]
-    fn a_newer_format_is_refused_not_guessed() {
-        let text = sample().to_json().replace("\"format\": 1", "\"format\": 2");
-        assert_eq!(
-            Catalog::from_json(&text),
-            Err(CatalogError::TooNew {
-                found: 2,
-                supported: FORMAT
-            })
-        );
-        // A newer file whose other fields changed shape is still "too new", not "malformed".
+    fn the_file_round_trips_is_deterministic_and_refuses_a_newer_format() {
+        let s = snap("postgres", &[(1, "ab12")], &COLS);
+        let text = s.to_json();
+        assert_eq!(parse(&text).unwrap(), s);
+        assert_eq!(s.to_json(), text, "the same snapshot is the same bytes");
+        let newer = text.replace("\"format\": 1", "\"format\": 9");
         assert!(matches!(
-            Catalog::from_json(r#"{"format": 9, "tables": 5}"#),
-            Err(CatalogError::TooNew { found: 9, .. })
+            parse(&newer),
+            Err(SnapshotError::TooNew { found: 9, .. })
         ));
         // The control: the same text at the supported format reads.
-        assert!(Catalog::from_json(&sample().to_json()).is_ok());
-        assert!(matches!(
-            Catalog::from_json("[]"),
-            Err(CatalogError::Malformed(_))
-        ));
+        assert!(parse(&text).is_ok());
+    }
+
+    #[test]
+    fn migration_meta_sorts_by_version_not_by_text() {
+        let m = migration_meta(&[(2, vec![0xab]), (10, vec![0x01, 0xff])]);
+        let keys: Vec<_> = m.keys().cloned().collect();
+        assert_eq!(
+            keys,
+            [
+                "migration.00000000000000000002",
+                "migration.00000000000000000010"
+            ]
+        );
+        assert_eq!(m["migration.00000000000000000010"], "01ff");
     }
 
     #[test]
     fn identical_snapshots_differ_in_nothing() {
-        assert!(sample().differences(&sample()).is_empty());
+        let a = snap("postgres", &[(1, "ab12")], &COLS);
+        assert!(differences(&a, &a.clone()).is_empty());
     }
 
     #[test]
     fn each_kind_of_change_is_named() {
-        let old = sample();
-        let mut now = sample();
-        now.migrations.push(MigrationStamp {
-            version: 2,
-            checksum: "cd34".into(),
-        });
-        let t = now.tables.get_mut("users").unwrap();
-        t.columns[2].nullable = false;
-        t.columns.push(col("age", "integer", true, false));
-        t.columns.remove(1);
-        t.unique_keys.clear();
-        now.tables.insert("orders".into(), Table::default());
-        let d = old.differences(&now).join("\n");
+        let old = snap("postgres", &[(1, "ab12")], &COLS);
+        let mut now = snap(
+            "postgres",
+            &[(1, "ab12"), (2, "cd34")],
+            &[("id", ColumnClass::Numeric), ("age", ColumnClass::Numeric)],
+        );
+        now.schema.mark_keys_unreliable(vec!["users".to_string()]);
+        now.schema.set_column(
+            vec!["orders".into()],
+            "id".into(),
+            Column::new(ColumnClass::Numeric),
+        );
+        let d = differences(&old, &now).join("\n");
         for want in [
             "stale: migration 2 is not in the snapshot",
             "table orders: not in the snapshot",
             "column users.age: not in the snapshot",
             "column users.email: in the snapshot, gone now",
-            "column users.note: snapshot text nullable=true default=false, now text nullable=false default=false",
-            "unique keys snapshot",
+            "table users: key list reliable=false, was true",
         ] {
             assert!(d.contains(want), "missing {want:?} in:\n{d}");
         }
-        // A changed checksum is stale too.
-        let mut changed = sample();
-        changed.migrations[0].checksum = "ff".into();
-        assert!(old.differences(&changed)[0].contains("changed since the snapshot"));
+        // A changed checksum is stale too; a vanished migration is named; a dialect change is named.
+        let changed = snap("mysql", &[(1, "ff")], &COLS);
+        let d = differences(&old, &changed);
+        assert!(
+            d.iter().any(|l| l.contains("changed since the snapshot")),
+            "{d:?}"
+        );
+        assert!(d.iter().any(|l| l.starts_with("dialect:")), "{d:?}");
+        let gone = snap("postgres", &[], &COLS);
+        assert!(
+            differences(&old, &gone)
+                .iter()
+                .any(|l| l.contains("migration 1, which is no longer there"))
+        );
+    }
+
+    #[test]
+    fn declared_types_are_classified_by_each_engines_own_rules() {
+        use ColumnClass::*;
+        let pg = Dialect::Postgres;
+        for (t, want) in [
+            ("bigint", Numeric),
+            ("character varying", Text),
+            ("boolean", Boolean),
+            ("bytea", Other),
+            ("timestamp with time zone", Other),
+            ("citext_domain", Unknown),
+        ] {
+            assert_eq!(classify(&pg, t), want, "postgres {t}");
+        }
+        let my = Dialect::MySql;
+        for (t, want) in [
+            ("bigint", Numeric),
+            ("varchar(40)", Text),
+            ("tinyint(1)", Numeric), // MySQL's boolean is an integer: not Boolean
+            ("longblob", Other),
+            ("datetime(6)", Other),
+            ("geomcollection", Unknown),
+        ] {
+            assert_eq!(classify(&my, t), want, "mysql {t}");
+        }
+        let lite = Dialect::Sqlite;
+        for (t, want) in [
+            ("integer", Numeric),
+            ("bigint", Numeric), // contains "int"
+            ("varchar(80)", Text),
+            ("text", Text),
+            ("blob", Other),
+            ("", Other),
+            ("double precision", Numeric),
+            ("boolean", Boolean),
+            ("frobnicate", Unknown),
+        ] {
+            assert_eq!(classify(&lite, t), want, "sqlite {t}");
+        }
+        assert_eq!(classify(&Dialect::Other("x".into()), "int"), Unknown);
     }
 }
