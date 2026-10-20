@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.22
+
+### Added
+- **Compile-time SQL, stage 4 part 1: the schema snapshot** (`docs/COMPILE-TIME-SQL.md` sections 1 and 4; PM [TASK] 2026-10-20). Feature `catalog` of `persistant-relational`: `catalog::read_catalog(&db, meta)` reads the catalog of the connection's current schema (PostgreSQL), database (MySQL, MariaDB) or file (SQLite) through the `RelationalBackend` trait alone and returns **UniSQL's `Snapshot`** (unisql-core 0.24.17: the file format is UniSQL's, this repo writes it). Each column carries its engine-spelled lower-cased `declared_type`, a comparison class from the engine's own rules (`catalog::classify`: `Text`, `Numeric`, `Boolean`, `Other`, or `Unknown` when no rule recognises the type, never a guess; MySQL's `tinyint(1)` is Numeric), `nullable` and `has_default`; each table's column list is marked complete and its unique keys stated (primary key first). Views, the migration ledger `_sqlx_migrations` and prefix keys are not in it. A table with a **partial or expression unique index has its key list marked unreliable** (so UniSQL derives no conflict key from it) instead of that index being silently dropped. `meta` records the dialect and, when derived from migrations, `migration.<version>` -> checksum. `catalog::parse` refuses a newer `format`; `catalog::differences(old, new)` names every change, including "stale: migration 37 is not in the snapshot".
+- `persistant-migrate snapshot [--scratch --dir DIR] [--url URL] [--out FILE] [--check]`. Without `--scratch` it reads the target's own catalog; with `--scratch` it applies the directory's migrations to a scratch schema (PostgreSQL), scratch database (MySQL, MariaDB) or temporary file (SQLite), reads that and drops it, so the target is never touched (`PgBackend::fresh_catalog`, `MysqlBackend::fresh_catalog`). `--check` writes nothing and exits **8** if the file is missing, unreadable, newer, stale or different. `--allow-remote` guards it like every verb.
+- Tests: the readers on real SQLite, PostgreSQL 16 and MySQL 8.4 (same tables, same structure, classes, keys and the unreliable flag back; what each engine must not report: view, ledger; a later change is seen), unit tests of the file (round trip, determinism, too-new refused, each kind of change named, the type classifier per engine), and the CLI end to end on SQLite, PostgreSQL and MySQL: a scratch snapshot leaves the target and the server clean, a changed migration makes the file stale (exit 8) naming the migration, the target's own snapshot after `up` equals the scratch one, a missing or newer file fails the check.
+
+### Changed
+- `unisql-macro-core` / `unisql-embed` / `unisql` are pinned at 0.24.17. 0.24.14's `Input` had no `schema` field; 0.24.17's does, and the unpinned minimum let CI resolve the newer one before the code was ready (PR #96's first run). `persistant::sql!` passes `schema: None` for now and reports `Kind::Catalog` problems at the statement.
+
+### Not done
+- Database-free snapshot from the migration files (source 1: `unisql::schema_from_ddl`) and `persistant::sql!` reading the snapshot with a catalog `Checker` (stage 5). MariaDB is exercised by the CI MariaDB job, not locally.
+
 ## 0.8.21
 
 ### Added

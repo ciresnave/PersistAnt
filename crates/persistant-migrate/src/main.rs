@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! `persistant-migrate up|status|verify-fresh --dir DIR [--url URL] [--allow-remote]`
 //!
+//! `persistant-migrate snapshot [--scratch --dir DIR] [--url URL] [--out FILE] [--check] [--allow-remote]`
+//! writes the schema snapshot (`persistant-schema.json` by default; structure only, no data): without
+//! `--scratch` it reads the catalog of the target itself; with `--scratch` it applies the migrations
+//! of `--dir` to a scratch schema or database (or a temporary SQLite file), reads that, and drops it,
+//! so the target is never touched. The file records the migrations it was derived from. With
+//! `--check` nothing is written: the snapshot is derived again and the command fails (exit 8) if it
+//! differs from the file, saying what changed ("stale: migration 37 is not in the snapshot").
+//!
 //! The URL may also come from `PERSISTANT_DATABASE_URL` (preferred: a command line is visible to
 //! other users of the machine). Schemes: `postgres://`, `postgresql://`, `mysql://`, `mariadb://`,
 //! `sqlite:PATH`.
 //!
 //! Exit codes: 0 done; 2 usage; 3 an applied migration's text changed; 4 the database is newer than
 //! the directory; 5 a migration is recorded as dirty; 6 a migration failed; 7 anything else (cannot
-//! connect, cannot read the directory); 9 the target is not on this machine and `--allow-remote` was
+//! connect, cannot read the directory); 8 `snapshot --check` found the file stale or different; 9 the target is not on this machine and `--allow-remote` was
 //! not given.
 //!
 //! Every run prints its target (host, port, database; never the password) before it connects, and a
@@ -15,13 +23,24 @@
 //! a wrong URL in an environment variable must not silently migrate someone else's database.
 
 use persistant_migrate::{State, describe_target, load_dir, status};
+use persistant_relational::catalog::{self, Snapshot};
 use persistant_relational::{MigrateError, Migrates, Migration, RelError};
 use persistant_sqlx::{MysqlBackend, PgBackend, SqliteBackend};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: persistant-migrate <up|status|verify-fresh> --dir DIR [--url URL] [--allow-remote]\n  \
+const USAGE: &str = "usage: persistant-migrate <up|status|verify-fresh> --dir DIR [--url URL] [--allow-remote]\n       \
+persistant-migrate snapshot [--scratch --dir DIR] [--url URL] [--out FILE] [--check] [--allow-remote]\n  \
 URL defaults to $PERSISTANT_DATABASE_URL; schemes postgres://, mysql://, mariadb://, sqlite:PATH";
+
+/// Where `snapshot` writes and `snapshot --check` reads, unless `--out` says otherwise.
+const DEFAULT_SNAPSHOT: &str = "persistant-schema.json";
+
+struct Snap {
+    scratch: bool,
+    check: bool,
+    out: PathBuf,
+}
 
 enum Db {
     Pg(PgBackend),
@@ -61,6 +80,111 @@ async fn connect(url: &str) -> Result<Db, String> {
     } else {
         Err("the URL scheme is not one of postgres, mysql, mariadb, sqlite".to_string())
     }
+}
+
+/// The catalog `snapshot` is about: the target itself, or a scratch copy built from `migrations`.
+async fn derive(db: &Db, migrations: &[Migration], scratch: bool) -> Result<Snapshot, String> {
+    let stamps_of = |l: Result<Vec<(i64, Vec<u8>)>, MigrateError>| {
+        l.map(|l| catalog::migration_meta(&l))
+            .map_err(|e| e.to_string())
+    };
+    if scratch {
+        return match db {
+            Db::Pg(b) => b.fresh_catalog(migrations).await.map_err(|e| e.to_string()),
+            Db::Mysql(b) => b.fresh_catalog(migrations).await.map_err(|e| e.to_string()),
+            Db::Sqlite(_) => {
+                // A throwaway database file, deleted with its directory.
+                let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+                let b = SqliteBackend::open(dir.path().join("fresh.db"))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                b.migrate(migrations).await.map_err(|e| e.to_string())?;
+                let stamps = stamps_of(b.applied_checksums().await)?;
+                catalog::read_catalog(&b, stamps)
+                    .await
+                    .map_err(|e| e.to_string())
+            }
+        };
+    }
+    match db {
+        Db::Pg(b) => {
+            let stamps = stamps_of(b.applied_checksums().await)?;
+            catalog::read_catalog(b, stamps).await
+        }
+        Db::Mysql(b) => {
+            let stamps = stamps_of(b.applied_checksums().await)?;
+            catalog::read_catalog(b, stamps).await
+        }
+        Db::Sqlite(b) => {
+            let stamps = stamps_of(b.applied_checksums().await)?;
+            catalog::read_catalog(b, stamps).await
+        }
+    }
+    .map_err(|e| e.to_string())
+}
+
+async fn snapshot(db: &Db, migrations: &[Migration], snap: &Snap) -> ExitCode {
+    let now = match derive(db, migrations, snap.scratch).await {
+        Ok(c) => c,
+        Err(e) => return fail(e, 7),
+    };
+    if snap.check {
+        let text = match std::fs::read_to_string(&snap.out) {
+            Ok(t) => t,
+            Err(e) => {
+                return fail(
+                    format!("no snapshot to check at {}: {e}", snap.out.display()),
+                    8,
+                );
+            }
+        };
+        let committed = match catalog::parse(&text) {
+            Ok(c) => c,
+            Err(e) => return fail(format!("{}: {e}", snap.out.display()), 8),
+        };
+        let diffs = catalog::differences(&committed, &now);
+        if diffs.is_empty() {
+            println!(
+                "{} is current: {} tables, {} migrations",
+                snap.out.display(),
+                now.schema.tables().count(),
+                now.meta
+                    .keys()
+                    .filter(|k| k.starts_with("migration."))
+                    .count()
+            );
+            return ExitCode::SUCCESS;
+        }
+        for d in &diffs {
+            eprintln!("  {d}");
+        }
+        return fail(
+            format!(
+                "{} is out of date ({} differences); run `persistant-migrate snapshot` and commit it",
+                snap.out.display(),
+                diffs.len()
+            ),
+            8,
+        );
+    }
+    if let Some(parent) = snap.out.parent().filter(|p| !p.as_os_str().is_empty())
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        return fail(format!("cannot create {}: {e}", parent.display()), 7);
+    }
+    if let Err(e) = std::fs::write(&snap.out, now.to_json()) {
+        return fail(format!("cannot write {}: {e}", snap.out.display()), 7);
+    }
+    println!(
+        "wrote {}: {} tables, {} migrations",
+        snap.out.display(),
+        now.schema.tables().count(),
+        now.meta
+            .keys()
+            .filter(|k| k.starts_with("migration."))
+            .count()
+    );
+    ExitCode::SUCCESS
 }
 
 async fn run(cmd: &str, db: &Db, migrations: &[Migration]) -> ExitCode {
@@ -150,17 +274,33 @@ async fn main() -> ExitCode {
     let mut dir = None::<PathBuf>;
     let mut url = std::env::var("PERSISTANT_DATABASE_URL").ok();
     let mut allow_remote = false;
+    let mut snap = Snap {
+        scratch: false,
+        check: false,
+        out: PathBuf::from(DEFAULT_SNAPSHOT),
+    };
     while let Some(a) = args.next() {
         match a.as_str() {
             "--dir" => dir = args.next().map(PathBuf::from),
             "--url" => url = args.next(),
             "--allow-remote" => allow_remote = true,
+            "--scratch" if cmd == "snapshot" => snap.scratch = true,
+            "--check" if cmd == "snapshot" => snap.check = true,
+            "--out" if cmd == "snapshot" => match args.next() {
+                Some(p) => snap.out = PathBuf::from(p),
+                None => return fail(USAGE, 2),
+            },
             _ => return fail(USAGE, 2),
         }
     }
-    let (Some(dir), Some(url)) = (dir, url) else {
+    // `snapshot` of the target itself reads no directory; every other use needs one.
+    let needs_dir = cmd != "snapshot" || snap.scratch;
+    let Some(url) = url else {
         return fail(USAGE, 2);
     };
+    if needs_dir && dir.is_none() {
+        return fail(USAGE, 2);
+    }
     let target = describe_target(&url);
     eprintln!("persistant-migrate: {cmd} on {}", target.display);
     if !target.local && !allow_remote {
@@ -169,13 +309,19 @@ async fn main() -> ExitCode {
             9,
         );
     }
-    let migrations = match load_dir(&dir).await {
-        Ok(m) => m,
-        Err(e) => return fail(e, 7),
+    let migrations = match &dir {
+        Some(d) => match load_dir(d).await {
+            Ok(m) => m,
+            Err(e) => return fail(e, 7),
+        },
+        None => Vec::new(),
     };
     let db = match connect(&url).await {
         Ok(d) => d,
         Err(e) => return fail(e, 7),
     };
+    if cmd == "snapshot" {
+        return snapshot(&db, &migrations, &snap).await;
+    }
     run(&cmd, &db, &migrations).await
 }

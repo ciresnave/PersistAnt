@@ -40,6 +40,89 @@ fn migrations(dir: &Path) -> std::path::PathBuf {
 }
 
 #[test]
+fn snapshot_scratch_live_check_and_stale() {
+    use persistant_relational::catalog;
+    let t = tempfile::tempdir().unwrap();
+    let m = migrations(t.path());
+    let db = t.path().join("s.db");
+    let dir = m.to_str().unwrap();
+    let file = t.path().join("sub").join("schema.json");
+    let f = file.to_str().unwrap();
+
+    // Scratch: the target database file is never created, and the output directory is.
+    let snap = run(&["snapshot", "--scratch", "--dir", dir, "--out", f], &db);
+    assert_eq!(snap.status.code(), Some(0), "{snap:?}");
+    assert!(
+        stdout(&snap).contains("1 tables, 2 migrations"),
+        "{}",
+        stdout(&snap)
+    );
+    let cat = catalog::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let things = cat
+        .schema
+        .tables()
+        .find(|t| t.name == ["things"])
+        .expect("the things table");
+    let cols: Vec<_> = things.columns.keys().map(String::as_str).collect();
+    assert_eq!(cols, ["id", "n"], "{cat:?}");
+    assert_eq!(things.unique_keys, [vec!["id".to_string()]]);
+    assert_eq!(things.columns["n"].nullable, Some(true));
+    assert_eq!(things.columns["id"].nullable, Some(false));
+    assert!(things.columns_complete && !things.keys_unreliable);
+    assert_eq!(
+        cat.meta
+            .keys()
+            .filter(|k| k.starts_with("migration."))
+            .count(),
+        2
+    );
+    assert!(!cat.schema.tables().any(|t| t.name == ["_sqlx_migrations"]));
+    assert_eq!(
+        run(
+            &["snapshot", "--scratch", "--check", "--dir", dir, "--out", f],
+            &db
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+
+    // A changed migration makes the committed file stale (exit 8) and says which one.
+    write(
+        &m,
+        "2_more.up.sql",
+        "ALTER TABLE things ADD COLUMN other TEXT;",
+    );
+    let stale = run(
+        &["snapshot", "--scratch", "--check", "--dir", dir, "--out", f],
+        &db,
+    );
+    assert_eq!(stale.status.code(), Some(8), "{stale:?}");
+    let err = String::from_utf8_lossy(&stale.stderr);
+    assert!(err.contains("stale: migration 2 changed"), "{err}");
+    write(&m, "2_more.up.sql", "ALTER TABLE things ADD COLUMN n TEXT;");
+
+    // After `up`, the database's own catalog is the same snapshot; without `up` it is not.
+    let before = run(&["snapshot", "--check", "--out", f], &db);
+    assert_eq!(before.status.code(), Some(8), "{before:?}");
+    assert_eq!(run(&["up", "--dir", dir], &db).status.code(), Some(0));
+    let live = run(&["snapshot", "--check", "--out", f], &db);
+    assert_eq!(live.status.code(), Some(0), "{live:?}");
+
+    // A snapshot of a newer format, or no file at all, is a failed check.
+    std::fs::write(&file, "{\"format\": 99}").unwrap();
+    let newer = run(&["snapshot", "--check", "--out", f], &db);
+    assert_eq!(newer.status.code(), Some(8));
+    assert!(
+        String::from_utf8_lossy(&newer.stderr).contains("newer than"),
+        "{newer:?}"
+    );
+    // Reading the target needs no directory; scratch does.
+    let usage = run(&["snapshot", "--scratch", "--out", f], &db);
+    assert_eq!(usage.status.code(), Some(2), "{usage:?}");
+}
+
+#[test]
 fn up_then_status_then_a_changed_migration_is_exit_3() {
     let t = tempfile::tempdir().unwrap();
     let m = migrations(t.path());

@@ -19,7 +19,7 @@ name = "persistant-migrate"
 path = "src/main.rs"
 
 [dependencies]
-persistant-relational = { workspace = true }
+persistant-relational = { workspace = true, features = ["catalog"] }
 persistant-sqlx = { workspace = true, features = ["sqlite", "mysql"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate"] }
 sha2 = "0.10"

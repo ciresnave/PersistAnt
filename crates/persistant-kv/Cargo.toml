@@ -14,7 +14,7 @@ persistant-core = { workspace = true }
 persistant-blob = { workspace = true }
 persistant-relational = { workspace = true }
 # Pure translation, no I/O. Published version only (CireSnave rule 2026-10-07).
-unisql = "0.24.14"
+unisql = "0.24.17"
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["rt", "macros"] }
