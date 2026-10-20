@@ -1,0 +1,39 @@
+{
+  "format": 1,
+  "meta": {
+    "dialect": "sqlite",
+    "migration.00000000000000000001": "1ac938fb23b3ee51198c8a623cfe03bd5c3c606374cf051ec9ab08823ce2293aa65f7bbea9fd66ef5513728de689da78"
+  },
+  "schema": {
+    "tables": [
+      {
+        "name": [
+          "persistant_sqlmacro"
+        ],
+        "columns": {
+          "id": {
+            "class": "Numeric",
+            "collation": null,
+            "declared_type": "bigint",
+            "nullable": false,
+            "has_default": false
+          },
+          "name": {
+            "class": "Text",
+            "collation": null,
+            "declared_type": "varchar(40)",
+            "nullable": false,
+            "has_default": false
+          }
+        },
+        "unique_keys": [
+          [
+            "id"
+          ]
+        ],
+        "keys_unreliable": false,
+        "columns_complete": true
+      }
+    ]
+  }
+}

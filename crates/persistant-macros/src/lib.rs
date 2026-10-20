@@ -17,6 +17,7 @@
 //! be is a compile error. Nothing is looked up in a database and no schema is read yet (the
 //! catalog-based checks are a later stage).
 
+mod checker;
 mod imp;
 
 /// Check and translate a literal statement at build time. See the crate documentation.
