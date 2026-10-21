@@ -8,6 +8,7 @@
 //! run**: [`Migrates`](persistant_relational::Migrates) has no undo.
 
 use persistant_relational::Migration;
+use persistant_relational::catalog::{self, Snapshot};
 use sha2::{Digest, Sha384};
 use std::path::Path;
 
@@ -71,6 +72,38 @@ pub async fn load_dir(dir: &Path) -> Result<Vec<Migration>, LoadError> {
 /// The checksum the ledger holds for `m`: SHA-384 of its text.
 pub fn checksum(m: &Migration) -> Vec<u8> {
     Sha384::digest(m.sql.as_bytes()).to_vec()
+}
+
+/// A snapshot read from the migration files alone, with no database: the migrations' text, in version
+/// order, is read as DDL in `dialect` (`postgres`, `mysql`, `mariadb` or `sqlite`) by UniSQL's
+/// `schema_from_ddl`. Returns the snapshot and the statements UniSQL could not read (head and
+/// reason); a skipped statement can only leave a column unregistered, never invent one.
+///
+/// This is **not** the catalog's answer: only `CREATE TABLE`, `ALTER TABLE .. ADD|DROP|ALTER COLUMN`
+/// and `DROP TABLE` are applied, types keep the spelling the migration wrote, and no key or default
+/// the DDL does not state is assumed. Its `meta` says `source = ddl` so [`catalog::differences`]
+/// never compares it with a catalog snapshot as if they were the same kind.
+pub fn snapshot_from_files(
+    migrations: &[Migration],
+    dialect: &str,
+) -> Result<(Snapshot, Vec<String>), String> {
+    let mut ordered: Vec<&Migration> = migrations.iter().collect();
+    ordered.sort_by_key(|m| m.version);
+    let mut ddl = String::new();
+    for m in &ordered {
+        ddl.push_str(&m.sql);
+        if !m.sql.ends_with(char::from(10)) {
+            ddl.push(char::from(10));
+        }
+    }
+    let read = unisql::schema_from_ddl(&ddl, dialect).map_err(|e| e.to_string())?;
+    let ledger: Vec<(i64, Vec<u8>)> = ordered.iter().map(|m| (m.version, checksum(m))).collect();
+    let mut meta = catalog::migration_meta(&ledger);
+    meta.insert("dialect".to_string(), dialect.to_string());
+    meta.insert("source".to_string(), "ddl".to_string());
+    let mut snapshot = Snapshot::new(read.schema);
+    snapshot.meta = meta;
+    Ok((snapshot, read.skipped))
 }
 
 /// Where one migration stands against a database.
