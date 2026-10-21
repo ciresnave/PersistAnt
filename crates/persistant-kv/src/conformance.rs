@@ -27,7 +27,7 @@ use crate::{BatchOp, Defect, KvBackend, KvError, MemoryKv};
 use persistant_blob::concurrency::{Task, join_all, yield_now};
 use persistant_core::{CapabilityId, Config, Controls, Reason, Row, Verdict};
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// A leaf this module can decide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -327,13 +327,41 @@ async fn delete<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
 async fn ttl<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     let short = format!("{base}a/short");
     let live = format!("{base}a/live");
-    b.put(&short, b"s".to_vec(), Some(Duration::from_millis(1000)))
+    // "Readable inside its window" is only judged when the window was still open: the time from
+    // before the put to after the get is measured on this machine's monotonic clock, and a read that
+    // missed after the window had already passed (a stalled CI machine, a paused VM) says nothing
+    // about the backend, so the check is repeated with a window four times longer. A backend that
+    // misses while the window was open fails at once, whatever the window.
+    let mut window_ms = 1000u64;
+    loop {
+        let started = Instant::now();
+        b.put(
+            &short,
+            b"s".to_vec(),
+            Some(Duration::from_millis(window_ms)),
+        )
         .await?;
-    b.put(&live, b"l".to_vec(), None).await?;
-    if b.get(&short).await?.as_deref() != Some(&b"s"[..]) {
-        return wrong("an entry with a time to live was not readable inside its window");
+        b.put(&live, b"l".to_vec(), None).await?;
+        let seen = b.get(&short).await?;
+        let elapsed = started.elapsed();
+        if seen.as_deref() == Some(&b"s"[..]) {
+            break;
+        }
+        if elapsed < Duration::from_millis(window_ms) {
+            return wrong("an entry with a time to live was not readable inside its window");
+        }
+        if window_ms >= 16_000 {
+            return wrong(
+                "the machine stalled past every window tried; no verdict on the time to live",
+            );
+        }
+        eprintln!(
+            "kv.ttl: the {window_ms} ms window had already passed ({elapsed:?}) when the read returned; the machine stalled, so this read says nothing about the backend. Repeating with a {} ms window.",
+            window_ms * 4
+        );
+        window_ms *= 4;
     }
-    std::thread::sleep(Duration::from_millis(1200));
+    std::thread::sleep(Duration::from_millis(window_ms + 200));
     if b.get(&short).await?.is_some() {
         return wrong("an expired entry is still returned by get");
     }
@@ -1314,6 +1342,96 @@ mod tests {
             }
             self.inner.ordered_scan_values(prefix, after, limit).await
         }
+    }
+
+    /// A backend on a machine that stalls once: the first `get` happens only after the pause (the
+    /// way a paused VM or a starved CI runner delays it), so an entry with a 1 s window has expired
+    /// by the time it is read. The backend itself is correct.
+    struct StallsOnce {
+        inner: MemoryKv,
+        gets: std::sync::atomic::AtomicU32,
+    }
+
+    impl KvBackend for StallsOnce {
+        fn backend(&self) -> &str {
+            self.inner.backend()
+        }
+        fn version(&self) -> &str {
+            self.inner.version()
+        }
+        async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+            if self.gets.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                std::thread::sleep(Duration::from_millis(1100));
+            }
+            self.inner.get(key).await
+        }
+        async fn put(
+            &self,
+            key: &str,
+            value: Vec<u8>,
+            ttl: Option<Duration>,
+        ) -> Result<(), KvError> {
+            self.inner.put(key, value, ttl).await
+        }
+        async fn delete(&self, key: &str) -> Result<(), KvError> {
+            self.inner.delete(key).await
+        }
+        async fn prefix_list(
+            &self,
+            prefix: &str,
+            after: Option<&str>,
+            limit: usize,
+        ) -> Result<crate::KeyPage, KvError> {
+            self.inner.prefix_list(prefix, after, limit).await
+        }
+    }
+
+    /// A backend that acknowledges an entry with a time to live and never keeps it.
+    struct DropsTtlEntries(MemoryKv);
+
+    impl KvBackend for DropsTtlEntries {
+        fn backend(&self) -> &str {
+            self.0.backend()
+        }
+        fn version(&self) -> &str {
+            self.0.version()
+        }
+        async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+            self.0.get(key).await
+        }
+        async fn put(
+            &self,
+            key: &str,
+            value: Vec<u8>,
+            ttl: Option<Duration>,
+        ) -> Result<(), KvError> {
+            if ttl.is_some() {
+                return Ok(());
+            }
+            self.0.put(key, value, ttl).await
+        }
+        async fn delete(&self, key: &str) -> Result<(), KvError> {
+            self.0.delete(key).await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stall_past_the_ttl_window_is_not_a_verdict_but_a_miss_inside_it_is() {
+        // The read came after the window had closed: inconclusive, so the check repeats with a
+        // longer window and passes, in ONE attempt (no leaf-level retry needed).
+        let stalled = StallsOnce {
+            inner: MemoryKv::new(),
+            gets: std::sync::atomic::AtomicU32::new(0),
+        };
+        assert_eq!(run_leaf_once(Leaf::Ttl, &stalled).await, Ok(()));
+        // Positive control that the pause happened: more than one `get` of the short key.
+        assert!(stalled.gets.load(std::sync::atomic::Ordering::SeqCst) >= 3);
+        // A backend that loses the entry while the window is open fails at once.
+        let bad = DropsTtlEntries(MemoryKv::new());
+        assert!(matches!(
+            run_leaf_once(Leaf::Ttl, &bad).await,
+            Err(Failure::Wrong(_))
+        ));
     }
 
     #[tokio::test]
