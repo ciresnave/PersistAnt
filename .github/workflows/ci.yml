@@ -45,6 +45,10 @@ jobs:
       - name: cargo test persistant --all-features
         run: cargo test -p persistant --all-features --no-fail-fast
 
+      # A build with only the base registry (memory, fs): no SQLite, no server driver.
+      - name: cargo test persistant --features registry
+        run: cargo test -p persistant --features registry --test registry --no-fail-fast
+
   msrv:
     name: MSRV (rust-version in Cargo.toml)
     runs-on: ubuntu-latest

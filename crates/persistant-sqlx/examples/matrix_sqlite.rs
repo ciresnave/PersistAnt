@@ -39,10 +39,29 @@ async fn main() {
             .into_iter()
             .map(|c| c.row),
     );
+    // The durable profile (`open_durable`: WAL, synchronous=FULL), which the registry offers as
+    // `sqlite-full`. Key-value leaves only: that is the layer a registry handle serves.
+    let full_path =
+        std::env::temp_dir().join(format!("persistant-matrix-full-{}.db", std::process::id()));
+    let full = KvOnRelational::open(
+        SqliteBackend::open_durable(&full_path)
+            .await
+            .expect("open durable"),
+    )
+    .await
+    .expect("open kv durable");
+    rows.extend(
+        persistant_kv::conformance::certify(&full, &config, &env)
+            .await
+            .into_iter()
+            .map(|c| c.row),
+    );
     print!("{}", Matrix::from_rows(rows).to_tsv());
-    for ext in ["", "-wal", "-shm"] {
-        let mut p = path.as_os_str().to_owned();
-        p.push(ext);
-        let _ = std::fs::remove_file(p);
+    for base in [&path, &full_path] {
+        for ext in ["", "-wal", "-shm"] {
+            let mut p = base.as_os_str().to_owned();
+            p.push(ext);
+            let _ = std::fs::remove_file(p);
+        }
     }
 }

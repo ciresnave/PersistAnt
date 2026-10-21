@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.7
+
+### Added
+- **`persistant::registry` (features `registry`, `registry-sqlite`, `all-backends`): needs in, sorted backends out, the id kept in config opens the backend** (registry PR 3 of 4; CireSnave's design, `docs/DESIGN-KINDS.md` top). `registry::providers(&ProviderNeeds)` returns every backend compiled into the build that has all the needed capabilities, sorted by the preferred ones in order of importance, each `Listing` carrying a stable `id`, its endpoint kind, durability with basis, and `why()` text (preferred met and lacking, durability, caveats; `sqlite` vs `sqlite-full` explained). `registry::open_named(id, &Endpoint, &needs)` opens the backend the program stored in its config, checks the gate before touching anything and again for the backend actually opened, and returns a `Handle` whose `kv()` is the closed enum `AnyKv` (implements `KvBackend`, forwards every method). Ids today: `memory`, `fs`, `sqlite`, `sqlite-full`; they are append-only and never change meaning. A new backend module reaches a program when it upgrades `persistant` and rebuilds; there are no dynamic plugins. The handle serves key-value only, so a need for any other kind is reported unmet.
+- `matrix/sqlx-sqlite.tsv` now also records the key-value leaves of `sqlite-full` (`SqliteBackend::open_durable`), so the registry can offer it on recorded facts.
+
 ## 0.9.6
 
 ### Added
