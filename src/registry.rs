@@ -9,6 +9,7 @@
 //!
 //! ```no_run
 //! # async fn demo() -> Result<(), Box<dyn std::error::Error>> {
+//! use persistant::kv::KvBackend;
 //! use persistant::registry::{self, Endpoint};
 //! use persistant::capability::{CapabilityId, choose::Durability, provider::ProviderNeeds};
 //! let id = |s| CapabilityId::new(s).unwrap();
