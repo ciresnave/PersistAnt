@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.6
+
+### Added
+- **`persistant_core::provider`: an order of importance, and the one call a setup UI makes** (registry PR 2 of 4). `ProviderNeeds::prefer(ids)` takes the ids that matter, most important first; a preferred id never excludes a provider. `sorted` orders qualified providers by the preferred ids in that order (having the first outranks any combination of the rest), then measured median time (unmeasured last, still listed), then name, and returns the evidence it sorted on (`Sorted`). `select` is `providers` then `sorted`; an unmet required set is still `Unmet`, whatever is preferred.
+
 ## 0.9.5
 
 ### Added
