@@ -163,6 +163,7 @@ impl Provider {
 pub struct ProviderNeeds {
     ids: Vec<CapabilityId>,
     min_durability: Durability,
+    preferred: Vec<CapabilityId>,
 }
 
 impl ProviderNeeds {
@@ -171,7 +172,21 @@ impl ProviderNeeds {
         ProviderNeeds {
             ids,
             min_durability,
+            preferred: Vec::new(),
         }
+    }
+
+    /// What matters most, **most important first**. A preferred id never excludes a provider; it
+    /// only orders the ones that qualify ([`sorted`]).
+    #[must_use]
+    pub fn prefer(mut self, preferred: Vec<CapabilityId>) -> Self {
+        self.preferred = preferred;
+        self
+    }
+
+    /// The preferred ids, most important first.
+    pub fn preferred(&self) -> &[CapabilityId] {
+        &self.preferred
     }
 
     /// The needed ids.
@@ -311,6 +326,84 @@ pub fn rank(
             .and_then(|p| p.declared)
     };
     crate::choose::choose(&candidates, need, speed, &declared)
+}
+
+/// One provider in a sorted answer, with what it was sorted on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sorted {
+    /// The provider.
+    pub provider: Provider,
+    /// Each preferred id, in the order of importance given, and whether this provider has it.
+    pub preferred: Vec<(CapabilityId, bool)>,
+    /// Median time of the ranking workload in the ranking environment, if measured.
+    pub p50_ns: Option<u64>,
+}
+
+/// Order `qualified` (the result of [`providers`]) for a setup UI: by the preferred ids in order of
+/// importance (a provider having the first preferred id outranks any that lacks it, whatever the
+/// rest), then by measured median time, smaller first, with unmeasured last, then by name. Nothing is
+/// dropped: every provider passed in is in the result, with the evidence it was sorted on. `speed`
+/// is the [`Need`] naming the workload and environment, and the table; without it nothing is measured.
+pub fn sorted(
+    qualified: &[Provider],
+    needs: &ProviderNeeds,
+    matrix: &Matrix,
+    speed: Option<(&Need, &crate::bench::SpeedTable)>,
+) -> Vec<Sorted> {
+    use crate::bench::Outcome;
+    let mut out: Vec<Sorted> = qualified
+        .iter()
+        .map(|p| {
+            let p50_ns = speed.and_then(|(need, table)| {
+                let s = p.primary();
+                table.rows().iter().find_map(|r| match r.outcome {
+                    Outcome::Measured(st)
+                        if r.workload == need.rank_by
+                            && r.backend == s.backend
+                            && r.version == s.version
+                            && r.config == s.config
+                            && r.env.comparable_key() == need.environment =>
+                    {
+                        Some(st.p50_ns)
+                    }
+                    _ => None,
+                })
+            });
+            Sorted {
+                provider: p.clone(),
+                preferred: needs
+                    .preferred
+                    .iter()
+                    .map(|id| (id.clone(), p.lookup(matrix, id) == Lookup::On))
+                    .collect(),
+                p50_ns,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        let met = |x: &Sorted| x.preferred.iter().map(|(_, m)| !*m).collect::<Vec<_>>();
+        met(a)
+            .cmp(&met(b))
+            .then_with(|| match (a.p50_ns, b.p50_ns) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+            .then_with(|| a.provider.name.cmp(&b.provider.name))
+    });
+    out
+}
+
+/// [`providers`] then [`sorted`]: the one call a setup UI makes.
+pub fn select(
+    table: &[Provider],
+    needs: &ProviderNeeds,
+    matrix: &Matrix,
+    speed: Option<(&Need, &crate::bench::SpeedTable)>,
+) -> Result<Vec<Sorted>, Unmet> {
+    let q = providers(table, needs, matrix)?;
+    Ok(sorted(&q, needs, matrix, speed))
 }
 
 #[cfg(test)]
@@ -517,5 +610,86 @@ mod tests {
         assert_eq!(names, ["fast", "slow"]);
         assert_eq!(c.unmeasured.len(), 1);
         assert_eq!(c.unmeasured[0].backend, "nope");
+    }
+
+    #[test]
+    fn first_preferred_outweighs_all_later_ones_then_speed_then_name() {
+        use crate::bench::{Environment, Outcome, SpeedRow, SpeedTable, Stats};
+        let d = decl(Durability::Volatile);
+        let table = [
+            prov("a", &["a"], d),
+            prov("b", &["b"], d),
+            prov("c", &["c"], d),
+            prov("d", &["d"], d),
+        ];
+        // All have kv.get (required). a: p2 only. b: p1 only. c: p1 and p2. d: neither.
+        let m = matrix(&[
+            ("kv.get", "a", true),
+            ("kv.get", "b", true),
+            ("kv.get", "c", true),
+            ("kv.get", "d", true),
+            ("kv.ttl", "a", true),
+            ("kv.ttl", "b", true),
+            ("kv.ttl", "c", true),
+            ("kv.cas", "c", true),
+            ("kv.cas", "a", true),
+        ]);
+        // Importance: kv.ttl first, kv.cas second.
+        let n = needs(&["kv.get"], Durability::Volatile).prefer(vec![id("kv.ttl"), id("kv.cas")]);
+        let got = select(&table, &n, &m, None).unwrap();
+        let names: Vec<_> = got.iter().map(|s| s.provider.name()).collect();
+        // a and c have both preferred ids and tie, so name order: a, c; then b (first only); then d.
+        assert_eq!(names, ["a", "c", "b", "d"]);
+        // Evidence is carried.
+        assert_eq!(
+            got[2].preferred,
+            vec![(id("kv.ttl"), true), (id("kv.cas"), false)]
+        );
+
+        // Speed breaks a tie, unmeasured last, and a preferred id never excludes.
+        let env = Environment {
+            machine: "m".into(),
+            os: "linux".into(),
+            arch: "x86_64".into(),
+            date: "2026-10-21".into(),
+            digest: None,
+            rerun: "cmd".into(),
+        };
+        let st = |p50| Stats {
+            n: 5,
+            p50_ns: p50,
+            p95_ns: p50,
+            p99_ns: p50,
+            max_ns: p50,
+            ops_per_sec: 1,
+        };
+        let mk = |b: &str, p50| SpeedRow {
+            workload: "w".into(),
+            backend: b.into(),
+            version: "1".into(),
+            config: Config::new(),
+            env: env.clone(),
+            outcome: Outcome::Measured(st(p50)),
+        };
+        let speed = SpeedTable::from_rows(vec![mk("a", 90), mk("c", 10)]);
+        let need = Need {
+            leaves: vec![],
+            min_durability: Durability::Volatile,
+            rank_by: "w".into(),
+            environment: env.comparable_key(),
+        };
+        let got = select(&table, &n, &m, Some((&need, &speed))).unwrap();
+        let names: Vec<_> = got.iter().map(|s| s.provider.name()).collect();
+        assert_eq!(names, ["c", "a", "b", "d"]);
+        assert_eq!(got[0].p50_ns, Some(10));
+        assert_eq!(got[3].p50_ns, None);
+    }
+
+    #[test]
+    fn select_is_an_error_when_the_required_set_is_unmet_whatever_is_preferred() {
+        let table = [prov("a", &["a"], decl(Durability::Volatile))];
+        let m = matrix(&[("kv.ttl", "a", true)]);
+        let n = needs(&["kv.get"], Durability::Volatile).prefer(vec![id("kv.ttl")]);
+        assert!(select(&table, &n, &m, None).is_err());
     }
 }
