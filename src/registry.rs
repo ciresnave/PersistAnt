@@ -32,7 +32,8 @@
 //!
 //! # What a build can offer, and when a rebuild is needed
 //! The table is **compiled in** from the enabled features (`registry` gives `memory` and `fs`;
-//! `registry-sqlite` adds `sqlite` and `sqlite-full`; `all-backends` is every one). A new backend
+//! `registry-sqlite` adds `sqlite` and `sqlite-full`; `registry-postgres` adds `postgres`; `registry-mysql` adds `mysql`
+//! and `mariadb`; `all-backends` is every one). A new backend
 //! module reaches a program when it upgrades `persistant` and **rebuilds**; there are no dynamic
 //! plugins. A program that pins an old `persistant` never sees it. Which backends a binary can offer
 //! is a fact of that binary, not a runtime accident.
@@ -55,8 +56,17 @@ use persistant_core::{CapabilityId, Config, Matrix};
 use persistant_kv::{BatchOp, BoundedProbe, KeyPage, KvBackend, KvError, KvOnBlob, ValuePage};
 use persistant_opendal::OpendalBlob;
 
-#[cfg(feature = "registry-sqlite")]
+#[cfg(any(
+    feature = "registry-sqlite",
+    feature = "registry-postgres",
+    feature = "registry-mysql"
+))]
 use persistant_kv::KvOnRelational;
+use persistant_relational::ConnectionSecret;
+#[cfg(feature = "registry-mysql")]
+use persistant_sqlx::MysqlBackend;
+#[cfg(feature = "registry-postgres")]
+use persistant_sqlx::PgBackend;
 #[cfg(feature = "registry-sqlite")]
 use persistant_sqlx::SqliteBackend;
 
@@ -68,8 +78,12 @@ pub enum Endpoint {
     None,
     /// A directory or file on the local filesystem.
     Path(PathBuf),
-    /// A connection URL.
+    /// A connection URL held as plain text. Prefer [`Endpoint::Secret`]: a URL usually carries a
+    /// password and this one is a `Debug` print away from a log file.
     Url(String),
+    /// A connection URL held as a secret: read from the environment, a file or a literal only when
+    /// the backend is opened, and never printed.
+    Secret(ConnectionSecret),
 }
 
 impl Endpoint {
@@ -78,23 +92,41 @@ impl Endpoint {
         Endpoint::Path(p.as_ref().to_path_buf())
     }
 
+    /// A connection URL read from the environment variable `name` when the backend is opened.
+    pub fn url_env(name: impl Into<String>) -> Self {
+        Endpoint::Secret(ConnectionSecret::Env(name.into()))
+    }
+
     fn kind(&self) -> &'static str {
         match self {
             Endpoint::None => "none",
             Endpoint::Path(_) => "path",
-            Endpoint::Url(_) => "url",
+            Endpoint::Url(_) | Endpoint::Secret(_) => "url",
         }
     }
 
-    fn fits(&self, spec: &EndpointSpec) -> bool {
-        match (self, spec) {
+    /// The URL text of a URL-kind endpoint, resolved now. A failure to resolve never carries the URL.
+    fn url(&self) -> Result<Option<String>, OpenError> {
+        match self {
+            Endpoint::Url(u) => Ok(Some(u.clone())),
+            Endpoint::Secret(sec) => sec
+                .resolve()
+                .map(|r| Some(r.expose().to_string()))
+                .map_err(|e| OpenError::Open(format!("could not read the connection URL: {e}"))),
+            _ => Ok(None),
+        }
+    }
+
+    fn fits(&self, spec: &EndpointSpec) -> Result<bool, OpenError> {
+        Ok(match (self, spec) {
             (Endpoint::None, EndpointSpec::None) => true,
             (Endpoint::Path(_), EndpointSpec::Path) => true,
-            (Endpoint::Url(u), EndpointSpec::Url { schemes }) => u
-                .split_once(':')
-                .is_some_and(|(s, _)| schemes.iter().any(|x| x == s)),
+            (Endpoint::Url(_) | Endpoint::Secret(_), EndpointSpec::Url { schemes }) => self
+                .url()?
+                .and_then(|u| u.split_once(':').map(|(s, _)| s.to_string()))
+                .is_some_and(|s| schemes.contains(&s)),
             _ => false,
-        }
+        })
     }
 }
 
@@ -120,6 +152,14 @@ pub enum OpenError {
     },
     /// The gate refused: the unmet capabilities, per backend (here, the one asked for).
     Unmet(Unmet),
+    /// The server answered as a different backend than the id asked for (a MariaDB server behind
+    /// the `mysql` id, or the reverse). Nothing was written.
+    ServerMismatch {
+        /// The id asked for.
+        id: &'static str,
+        /// What the server turned out to be (the matrix backend name).
+        found: String,
+    },
     /// The backend failed to open.
     Open(String),
 }
@@ -138,6 +178,12 @@ impl fmt::Display for OpenError {
                 write!(f, "backend `{id}` opens from {wanted:?}, not a {got}")
             }
             OpenError::Unmet(u) => write!(f, "{u}"),
+            OpenError::ServerMismatch { id, found } => {
+                write!(
+                    f,
+                    "backend `{id}` was asked for, but the server is `{found}`"
+                )
+            }
             OpenError::Open(m) => write!(f, "could not open: {m}"),
         }
     }
@@ -206,6 +252,52 @@ fn specs() -> Vec<Spec> {
             ],
         });
     }
+    #[cfg(feature = "registry-postgres")]
+    v.push(Spec {
+        id: "postgres",
+        title: "PostgreSQL server",
+        kv_backend: "kv-on-relational:postgres",
+        facts: &[("dialect", "postgres")],
+        endpoint: || EndpointSpec::Url {
+            schemes: vec!["postgres".to_string(), "postgresql".to_string()],
+        },
+        notes: &[
+            "Opens from a connection URL (`postgres://...`); pass it as a secret (environment variable or file) so it is never printed.",
+            "Offered only on the server versions the recorded matrix covers; any other server version is refused at open with the unmet ids.",
+            "A full disk fails loud (a write returns an error and every acknowledged key is kept).",
+        ],
+    });
+    #[cfg(feature = "registry-mysql")]
+    {
+        v.push(Spec {
+            id: "mysql",
+            title: "MySQL server",
+            kv_backend: "kv-on-relational:mysql",
+            facts: &[("dialect", "mysql")],
+            endpoint: || EndpointSpec::Url {
+                schemes: vec!["mysql".to_string()],
+            },
+            notes: &[
+                "Opens from a connection URL (`mysql://...`); pass it as a secret. A MariaDB server behind this id is refused: use `mariadb`.",
+                "Offered only on the server versions the recorded matrix covers.",
+                "CAVEAT: a full disk makes MySQL STALL, not fail: the call gets no answer and no error. Give every call your own timeout (the backend reports `call_bound`).",
+            ],
+        });
+        v.push(Spec {
+            id: "mariadb",
+            title: "MariaDB server",
+            kv_backend: "kv-on-relational:mariadb",
+            facts: &[("dialect", "mariadb")],
+            endpoint: || EndpointSpec::Url {
+                schemes: vec!["mysql".to_string(), "mariadb".to_string()],
+            },
+            notes: &[
+                "Opens from a connection URL (`mysql://...` or `mariadb://...`); pass it as a secret. A MySQL server behind this id is refused: use `mysql`.",
+                "Offered only on the server versions the recorded matrix covers.",
+                "No durability class is declared for MariaDB (no power-loss run exists for it), so a need above Volatile does not list it.",
+            ],
+        });
+    }
     v
 }
 
@@ -225,6 +317,18 @@ fn matrix() -> &'static Matrix {
             Matrix::parse(include_str!("../matrix/sqlx-sqlite.tsv"))
                 .expect("embedded matrix/sqlx-sqlite.tsv"),
         );
+        #[cfg(feature = "registry-postgres")]
+        m.merge(
+            Matrix::parse(include_str!("../matrix/sqlx-postgres.tsv"))
+                .expect("embedded matrix/sqlx-postgres.tsv"),
+        );
+        #[cfg(feature = "registry-mysql")]
+        for text in [
+            include_str!("../matrix/sqlx-mysql.tsv"),
+            include_str!("../matrix/sqlx-mariadb.tsv"),
+        ] {
+            m.merge(Matrix::parse(text).expect("embedded mysql/mariadb matrix"));
+        }
         m
     })
 }
@@ -273,6 +377,9 @@ pub struct Listing {
     pub durability: Option<Declared>,
     /// Each preferred capability, in the order of importance given, and whether this backend has it.
     pub preferred: Vec<(CapabilityId, bool)>,
+    /// The matrix version the capability rows were recorded under (adapter version, then the
+    /// driver or server version after the `+`). The backend is refused at open on any other.
+    pub recorded: String,
     /// Measured median time of the ranking workload, if one was supplied and measured.
     pub p50_ns: Option<u64>,
     /// Caveats in plain words (what it does not survive, what to choose instead).
@@ -299,6 +406,9 @@ impl Listing {
                 join(true),
                 join(false)
             ));
+        }
+        if let Some((_, server)) = self.recorded.split_once('+') {
+            out.push(format!("recorded on version {server} only"));
         }
         match self.p50_ns {
             Some(ns) => out.push(format!("speed: median {ns} ns on the ranking workload")),
@@ -329,6 +439,7 @@ fn listing(s: &Sorted) -> Listing {
         endpoint: s.provider.endpoint().clone(),
         durability: s.provider.declared(),
         preferred: s.preferred.clone(),
+        recorded: s.provider.primary().version.clone(),
         p50_ns: s.p50_ns,
         notes: spec.notes.to_vec(),
     }
@@ -363,6 +474,12 @@ pub enum AnyKv {
     /// `sqlite` and `sqlite-full`.
     #[cfg(feature = "registry-sqlite")]
     Sqlite(KvOnRelational<SqliteBackend>),
+    /// `postgres`.
+    #[cfg(feature = "registry-postgres")]
+    Postgres(KvOnRelational<PgBackend>),
+    /// `mysql` and `mariadb`.
+    #[cfg(feature = "registry-mysql")]
+    Mysql(KvOnRelational<MysqlBackend>),
 }
 
 macro_rules! each {
@@ -371,6 +488,10 @@ macro_rules! each {
             AnyKv::Blob($k) => $e,
             #[cfg(feature = "registry-sqlite")]
             AnyKv::Sqlite($k) => $e,
+            #[cfg(feature = "registry-postgres")]
+            AnyKv::Postgres($k) => $e,
+            #[cfg(feature = "registry-mysql")]
+            AnyKv::Mysql($k) => $e,
         }
     };
 }
@@ -491,7 +612,7 @@ pub async fn open_named(
         });
     };
     let want = (spec.endpoint)();
-    if !endpoint.fits(&want) {
+    if !endpoint.fits(&want)? {
         return Err(OpenError::WrongEndpoint {
             id: spec.id,
             wanted: want,
@@ -501,6 +622,12 @@ pub async fn open_named(
     let p = provider_for(spec, m);
     provider::providers(std::slice::from_ref(&p), needs, m).map_err(OpenError::Unmet)?;
     let kv = open_kv(spec.id, endpoint).await?;
+    if kv.backend() != spec.kv_backend {
+        return Err(OpenError::ServerMismatch {
+            id: spec.id,
+            found: kv.backend().to_string(),
+        });
+    }
     // Again, for what was actually opened.
     let actual = Provider::new(
         spec.id,
@@ -545,6 +672,22 @@ async fn open_kv(id: &str, endpoint: &Endpoint) -> Result<AnyKv, OpenError> {
                 .await
                 .map_err(|e| open(&e))?;
             Ok(AnyKv::Sqlite(
+                KvOnRelational::open(db).await.map_err(|e| open(&e))?,
+            ))
+        }
+        #[cfg(feature = "registry-postgres")]
+        ("postgres", Endpoint::Url(_) | Endpoint::Secret(_)) => {
+            let url = endpoint.url()?.unwrap_or_default();
+            let db = PgBackend::connect(&url).await.map_err(|e| open(&e))?;
+            Ok(AnyKv::Postgres(
+                KvOnRelational::open(db).await.map_err(|e| open(&e))?,
+            ))
+        }
+        #[cfg(feature = "registry-mysql")]
+        ("mysql" | "mariadb", Endpoint::Url(_) | Endpoint::Secret(_)) => {
+            let url = endpoint.url()?.unwrap_or_default();
+            let db = MysqlBackend::connect(&url).await.map_err(|e| open(&e))?;
+            Ok(AnyKv::Mysql(
                 KvOnRelational::open(db).await.map_err(|e| open(&e))?,
             ))
         }

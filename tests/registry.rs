@@ -26,6 +26,12 @@ fn the_ids_a_program_stores_in_its_config_are_pinned() {
         "sqlite",
         #[cfg(feature = "registry-sqlite")]
         "sqlite-full",
+        #[cfg(feature = "registry-postgres")]
+        "postgres",
+        #[cfg(feature = "registry-mysql")]
+        "mysql",
+        #[cfg(feature = "registry-mysql")]
+        "mariadb",
     ];
     assert_eq!(registry::known_ids(), want);
 }
@@ -203,12 +209,14 @@ async fn sqlite_and_sqlite_full_are_told_apart_in_the_list_text() {
         "{full}"
     );
     assert!(full.contains("synchronous=FULL"), "{full}");
-    // Asking for Machine lists only the durable one.
-    let machine = registry::providers(&basic(Durability::Machine)).unwrap();
-    assert_eq!(
-        machine.iter().map(|l| l.id).collect::<Vec<_>>(),
-        ["sqlite-full"]
-    );
+    // Asking for Machine lists the durable profile and not the default one.
+    let machine: Vec<_> = registry::providers(&basic(Durability::Machine))
+        .unwrap()
+        .iter()
+        .map(|l| l.id)
+        .collect();
+    assert!(machine.contains(&"sqlite-full"), "{machine:?}");
+    assert!(!machine.contains(&"sqlite"), "{machine:?}");
 
     let dir = tempfile::tempdir().unwrap();
     for name in ["sqlite", "sqlite-full"] {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.8
+
+### Added
+- **`persistant::registry` serves the servers** (registry PR 4 of 4): features `registry-postgres` and `registry-mysql` (and `all-backends`, now every backend) add the ids `postgres`, `mysql` and `mariadb`. A server opens from a connection URL; `Endpoint::Secret(ConnectionSecret)` and `Endpoint::url_env(NAME)` keep it out of logs and `Debug` output. `open_named` refuses a server that is not the one the id names (`OpenError::ServerMismatch`: a MariaDB server behind `mysql`, or the reverse), and a server version the recorded matrix does not cover (the unmet ids). `Listing` gains `recorded` (the version the rows were recorded under) and its `why()` says "recorded on version X only". The MySQL list text carries the disk-full STALL caveat and the MariaDB text says no durability class is declared. New CI steps run `tests/registry_servers.rs` against the PostgreSQL, MySQL and MariaDB service containers.
+- `OpenError::ServerMismatch` and `Endpoint::Secret` are additive on `#[non_exhaustive]` enums.
+
 ## 0.9.7
 
 ### Added

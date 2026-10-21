@@ -2,17 +2,17 @@
 members = [".", "crates/persistant-core", "crates/persistant-blob", "crates/persistant-opendal", "crates/persistant-kv", "crates/persistant-relational", "crates/persistant-sqlx", "crates/persistant-migrate", "crates/persistant-macros"]
 
 [workspace.package]
-version = "0.9.7"
+version = "0.9.8"
 
 [workspace.dependencies]
-persistant-core = { version = "0.9.7", path = "crates/persistant-core" }
-persistant-blob = { version = "0.9.7", path = "crates/persistant-blob" }
-persistant-kv = { version = "0.9.7", path = "crates/persistant-kv" }
-persistant-opendal = { version = "0.9.7", path = "crates/persistant-opendal" }
-persistant-relational = { version = "0.9.7", path = "crates/persistant-relational" }
-persistant-sqlx = { version = "0.9.7", path = "crates/persistant-sqlx" }
-persistant-migrate = { version = "0.9.7", path = "crates/persistant-migrate" }
-persistant-macros = { version = "0.9.7", path = "crates/persistant-macros" }
+persistant-core = { version = "0.9.8", path = "crates/persistant-core" }
+persistant-blob = { version = "0.9.8", path = "crates/persistant-blob" }
+persistant-kv = { version = "0.9.8", path = "crates/persistant-kv" }
+persistant-opendal = { version = "0.9.8", path = "crates/persistant-opendal" }
+persistant-relational = { version = "0.9.8", path = "crates/persistant-relational" }
+persistant-sqlx = { version = "0.9.8", path = "crates/persistant-sqlx" }
+persistant-migrate = { version = "0.9.8", path = "crates/persistant-migrate" }
+persistant-macros = { version = "0.9.8", path = "crates/persistant-macros" }
 
 [package]
 name = "persistant"
@@ -69,10 +69,12 @@ kv = ["dep:persistant-kv", "blob", "relational", "core"]
 opendal-driver = ["dep:persistant-opendal", "blob"]
 sqlx-driver = ["dep:persistant-sqlx", "relational"]
 # `persistant::registry`: needs in, sorted backends out, `open_named` by the id kept in config. `registry`
-# offers `memory` and `fs`; `registry-sqlite` adds `sqlite` and `sqlite-full`; `all-backends` is every one.
+# offers `memory` and `fs`; `registry-sqlite` adds `sqlite` and `sqlite-full`; `registry-postgres`, `registry-mysql` add the servers; `all-backends` is every one.
 registry = ["kv", "core", "opendal-driver"]
 registry-sqlite = ["registry", "sqlx-driver", "persistant-sqlx/sqlite"]
-all-backends = ["registry", "registry-sqlite"]
+registry-postgres = ["registry", "sqlx-driver"]
+registry-mysql = ["registry", "sqlx-driver", "persistant-sqlx/mysql"]
+all-backends = ["registry", "registry-sqlite", "registry-postgres", "registry-mysql"]
 # `persistant::sql!`: build-time checked and translated SQL, run with `execute_sql` / `query_sql`.
 sql-macros = ["dep:persistant-macros", "relational", "persistant-relational/sql"]
 

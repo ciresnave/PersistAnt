@@ -143,6 +143,9 @@ jobs:
           PERSISTANT_REQUIRE_TLS_DATABASE: "1"
         run: cargo test -p persistant-sqlx --no-fail-fast
 
+      - name: cargo test persistant registry (real PostgreSQL)
+        run: cargo test -p persistant --features registry-postgres --test registry_servers --no-fail-fast
+
       # The migrate binary end to end on this server: up, status, verify-fresh and the exit codes.
       - name: cargo test persistant-migrate (real PostgreSQL)
         run: cargo test -p persistant-migrate --no-fail-fast
@@ -246,6 +249,9 @@ jobs:
       - name: cargo test persistant-sqlx --features mysql (against MariaDB)
         run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test checked_in_matrix_mariadb --test sweep --test decode_types --no-fail-fast
 
+      - name: cargo test persistant registry (MariaDB)
+        run: cargo test -p persistant --features registry-mysql --test registry_servers --no-fail-fast
+
       - name: cargo test persistant-migrate (against MariaDB)
         run: cargo test -p persistant-migrate --no-fail-fast
 
@@ -298,6 +304,9 @@ jobs:
 
       - name: cargo test persistant-sqlx --features mysql
         run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test checked_in_matrix_mysql --test durability_mysql --test sweep --test decode_types --no-fail-fast
+
+      - name: cargo test persistant registry (MySQL)
+        run: cargo test -p persistant --features registry-mysql --test registry_servers --no-fail-fast
 
       - name: cargo test persistant-migrate (against MySQL)
         run: cargo test -p persistant-migrate --no-fail-fast
