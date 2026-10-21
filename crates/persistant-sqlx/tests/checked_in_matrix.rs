@@ -9,18 +9,23 @@ fn the_recorded_postgres_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        35,
-        "eighteen kv/lock leaves and seventeen relational leaves (eleven contract, six migration) are certified"
+        36,
+        "eighteen kv/lock leaves (kv.bounded_call twice: unset and set) and seventeen relational leaves (eleven contract, six migration) are certified"
     );
     for r in m.rows() {
-        // kv.bounded_call is recorded off: the matrix certifies the backend with no timeout configured.
-        assert_eq!(
-            r.enabled,
-            r.subject.as_str() != "kv.bounded_call",
-            "{}: {}",
-            r.subject,
-            r.note
-        );
+        // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),
+        // on when the backend was certified through `Bounded` (`call_bound=set`).
+        let bound_row = r.subject.as_str() == "kv.bounded_call";
+        if bound_row {
+            assert_eq!(
+                r.enabled,
+                r.config.get("call_bound") == Some("set"),
+                "{}",
+                r.note
+            );
+            continue;
+        }
+        assert!(r.enabled, "{}: {}", r.subject, r.note);
         // kv rows are keyed by the adapter, relational rows by the server itself.
         let want = if r.subject.as_str().starts_with("rel.") {
             "postgres"

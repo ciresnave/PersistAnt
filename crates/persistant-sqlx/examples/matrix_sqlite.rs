@@ -8,7 +8,9 @@
 
 use persistant_core::{Config, Matrix};
 use persistant_kv::KvOnRelational;
-use persistant_sqlx::SqliteBackend;
+use persistant_kv::conformance::Leaf;
+use persistant_sqlx::{Bounded, SqliteBackend};
+use std::time::Duration;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -56,6 +58,33 @@ async fn main() {
             .into_iter()
             .map(|c| c.row),
     );
+    // `kv.bounded_call` with a call bound configured (row config `call_bound=set`), for each
+    // profile; the unbounded runs above recorded it as `call_bound=unset`. The tables exist, so
+    // opening through the bound only finds them.
+    for (name, bounded_path, durable) in
+        [("sqlite", &path, false), ("sqlite-full", &full_path, true)]
+    {
+        let inner = if durable {
+            SqliteBackend::open_durable(bounded_path).await
+        } else {
+            SqliteBackend::open(bounded_path).await
+        }
+        .unwrap_or_else(|e| panic!("open {name} for the bound: {e}"));
+        let bounded = KvOnRelational::open(Bounded::new(inner, Duration::from_millis(2000)))
+            .await
+            .expect("open bounded");
+        rows.extend(
+            persistant_kv::conformance::certify_leaves(
+                &bounded,
+                &config,
+                &env,
+                &[Leaf::BoundedCall],
+            )
+            .await
+            .into_iter()
+            .map(|c| c.row),
+        );
+    }
     print!("{}", Matrix::from_rows(rows).to_tsv());
     for base in [&path, &full_path] {
         for ext in ["", "-wal", "-shm"] {

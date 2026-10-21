@@ -6,7 +6,8 @@ use persistant::capability::CapabilityId;
 use persistant::capability::choose::Durability;
 use persistant::capability::provider::{DurabilityShortfall, ProviderNeeds};
 use persistant::kv::KvBackend;
-use persistant::registry::{self, Endpoint, OpenError};
+use persistant::registry::{self, Endpoint, OpenError, OpenOptions};
+use std::time::Duration;
 
 fn id(s: &str) -> CapabilityId {
     CapabilityId::new(s).unwrap()
@@ -238,4 +239,105 @@ async fn sqlite_and_sqlite_full_are_told_apart_in_the_list_text() {
     .await
     .unwrap_err();
     assert!(matches!(e, OpenError::Unmet(_)), "{e:?}");
+}
+
+fn bounded() -> ProviderNeeds {
+    ProviderNeeds::new(
+        vec![id("kv.get"), id("kv.put"), id("kv.bounded_call")],
+        Durability::Volatile,
+    )
+}
+
+#[test]
+fn a_bounded_need_is_unmet_by_memory_and_fs_whatever_else_is_built() {
+    match registry::providers(&bounded()) {
+        Err(e) => {
+            // Nothing built can be bounded: every provider is named with the unmet id.
+            assert_eq!(e.providers.len(), registry::known_ids().len());
+            assert!(e.providers.iter().all(|p| {
+                p.missing
+                    .iter()
+                    .any(|(i, _)| i.as_str() == "kv.bounded_call")
+            }));
+        }
+        Ok(list) => {
+            let ids: Vec<_> = list.iter().map(|l| l.id).collect();
+            assert!(!ids.contains(&"memory") && !ids.contains(&"fs"), "{ids:?}");
+            assert!(list[0].why().join("\n").contains("OpenOptions::call_bound"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn into_kv_gives_an_owned_store_for_a_generic_consumer() {
+    async fn consumer<K: KvBackend>(kv: K) -> Option<Vec<u8>> {
+        kv.put("k", b"v".to_vec(), None).await.unwrap();
+        kv.get("k").await.unwrap()
+    }
+    let h = registry::open_named("memory", &Endpoint::None, &basic(Durability::Volatile))
+        .await
+        .unwrap();
+    assert_eq!(consumer(h.into_kv()).await, Some(b"v".to_vec()));
+}
+
+#[tokio::test]
+async fn a_call_bound_is_refused_where_it_cannot_apply_and_required_where_needed() {
+    let opts = OpenOptions::new().call_bound(Duration::from_secs(2));
+    let e = registry::open_named_with(
+        "memory",
+        &Endpoint::None,
+        &basic(Durability::Volatile),
+        &opts,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(e, OpenError::BoundUnsupported { id: "memory" }),
+        "{e:?}"
+    );
+    // A bounded need without a bound: refused before any I/O (the directory is not created).
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("never");
+    let e = registry::open_named("fs", &Endpoint::path(&root), &bounded())
+        .await
+        .unwrap_err();
+    assert!(matches!(e, OpenError::BoundRequired { id: "fs" }), "{e:?}");
+    assert!(!root.exists());
+}
+
+#[cfg(feature = "registry-sqlite")]
+#[tokio::test]
+async fn sqlite_lists_kv_bounded_call_and_opens_bounded_only_with_a_bound() {
+    let list = registry::providers(&bounded()).unwrap();
+    let ids: Vec<_> = list.iter().map(|l| l.id).collect();
+    assert!(
+        ids.contains(&"sqlite") && ids.contains(&"sqlite-full"),
+        "{ids:?}"
+    );
+    assert!(!ids.contains(&"memory") && !ids.contains(&"fs"), "{ids:?}");
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["sqlite", "sqlite-full"] {
+        let file = dir.path().join(format!("{name}.db"));
+        let e = registry::open_named(name, &Endpoint::path(&file), &bounded())
+            .await
+            .unwrap_err();
+        assert!(matches!(e, OpenError::BoundRequired { .. }), "{e:?}");
+        let opts = OpenOptions::new().call_bound(Duration::from_secs(5));
+        let h = registry::open_named_with(name, &Endpoint::path(&file), &bounded(), &opts)
+            .await
+            .unwrap();
+        assert_eq!(h.kv().call_bound(), Some(Duration::from_secs(5)));
+        h.kv().put("k", b"v".to_vec(), None).await.unwrap();
+        assert_eq!(h.kv().get("k").await.unwrap(), Some(b"v".to_vec()));
+    }
+    // Opened without the need and without a bound, the same backend reports no bound.
+    let file = dir.path().join("plain.db");
+    let h = registry::open_named(
+        "sqlite",
+        &Endpoint::path(&file),
+        &basic(Durability::Process),
+    )
+    .await
+    .unwrap();
+    assert_eq!(h.kv().call_bound(), None);
 }

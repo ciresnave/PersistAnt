@@ -1221,6 +1221,23 @@ pub async fn certify_leaves<K: KvBackend>(
             known_bad_failed,
         };
         let result = run_leaf(leaf, target).await;
+        // Whether a call bound is configured is a fact the gate can read at open, so it is part of
+        // this leaf's row: a backend opened without a bound is off, the same backend opened with
+        // one is judged on its own row, and neither row vetoes the other.
+        let bound_cfg;
+        let config = if leaf == Leaf::BoundedCall {
+            bound_cfg = config.clone().with(
+                "call_bound",
+                if target.call_bound().is_some() {
+                    "set"
+                } else {
+                    "unset"
+                },
+            );
+            &bound_cfg
+        } else {
+            config
+        };
         let mut md = metadata.clone().with("test", format!("kv::{}", leaf.id()));
         if let Ok(t) = Config::parse(leaf.trials()) {
             for key in ["contenders", "rounds", "value_bytes", "ttl_ms", "sleep_ms"] {
