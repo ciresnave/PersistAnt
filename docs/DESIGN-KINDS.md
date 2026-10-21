@@ -1,5 +1,21 @@
 # PersistAnt: one persistence layer, every kind of persistence
 
+## How PersistAnt works (CireSnave, 2026-10-21, verbatim; read this before anything below)
+
+> *"My original thinking was something like this: When someone writes a program that needs persistence, they would have their configuration UI call PersistAnt with a list of capabilities they need, and likely also an order of importance so the backends could be sorted.  PersistAnt would take that information and compare it to the capabilities of its backends and return a sorted list of backends.  The program's configuration UI could then provide that list to whoever is setting up the program and they could choose a backend.  That backend would be stored in the program's configuration.  When the program ran, it would tell PersistAnt what backend it was configured for and then use backend-agnostic calls to do whatever it needed to with that backend through PersistAnt.  That way if PersistAnt gained a new backend module, every program that used PersistAnt whose capabilities were met by that new backend would instantly have support for a new backend."*
+
+Earlier the same day: *"PersistAnt was supposed to have a function that, when fed a list of needed capabilities, would provide a list of backends PersistAnt could provide that would satisfy all of those capabilities.  If it doesn't have that, the current design is already wrong."*
+
+**The five-step contract**, built as `persistant::registry` (0.9.7; section 3, "Backend registration"):
+
+1. The program's setup UI sends PersistAnt its required capabilities plus an ordered list of what matters most (`ProviderNeeds::new(..).prefer(..)`).
+2. PersistAnt returns the backends that meet the required set, sorted by that order of importance, then speed (`registry::providers`); a need nothing satisfies is an error naming each backend's unmet id, never a closest match.
+3. The operator picks one from the list, which says why each ranks where it does (`Listing::why`).
+4. The program stores the backend's **stable id** in its own configuration.
+5. At run time the program passes the id (and where: a path or URL) to `registry::open_named` and uses backend-agnostic calls only (`Handle::kv`).
+
+**Not allowed:** a project naming a backend in its own code, or owning a registry or candidate list of backends.
+
 Design document. Written 2026-10-11 by the PersistAnt lane for the PM's `[TASK]` of the same day;
 **revised 2026-10-14** after a design conversation with CireSnave's session (§2, §3), and **built
 and published as 0.4.23 the same day**: §11 says what exists, what was found by building it, and what
@@ -377,12 +393,13 @@ persistant                (facade: re-exports; features pick kinds and drivers; 
 9. **UniSQL is a dependency of the adapter, not of the traits**, and it is not on crates.io (§7).
    Nothing in `persistant-core`, `-blob`, `-relational`, `-opendal` or `-sqlx` needs it.
 
-**Backend registration.** There is **no global registry.** A configuration is serialisable data with a
-URL scheme (`fs:`, `memory:`, `postgres:`, `sqlite:`, `redis:`); the facade's `open` matches the scheme
-among the drivers compiled in. A third-party or consumer-private backend implements the kind trait and
-is passed in (`open_with`). Both paths go through the same gate: declare needs → look up the capability
-row → refuse or open. Reason: a registry makes "what can this binary do?" a runtime accident; and the
-configuration must stay plain data for §6.
+**Backend registration.** *(Rewritten 2026-10-21. It used to say there is no global registry and that the facade's `open` matches a URL scheme; that left "which backends satisfy my needs?" unanswerable, which CireSnave ruled wrong, see the top of this file.)* The registry is a **table compiled into the build** from the enabled features (`registry`: `memory`, `fs`; `registry-sqlite`: `sqlite`, `sqlite-full`; `all-backends`: every one). Each entry is a provider: a stable string id, the matrix rows it is looked up under (version and configuration come from the recorded `matrix/*.tsv`, embedded), its declared durability, and the endpoint it needs (none, a path, a URL). It is not mutable at run time and not populated by the program, so "what can this binary do?" is still a fact of the binary, not an accident. The program never names a backend in its own code: it asks `registry::providers(&needs)` and later `registry::open_named(id, endpoint, &needs)`, and both go through the same gate (needs against the recorded rows, boolean, off unless a test passed).
+
+- **Ids are plain strings a program stores in its configuration. They are append-only and never change meaning**; a changed meaning is a new id (a test pins the list). Driver and server versions are not in the id; the gate checks the backend actually opened against the recorded rows and refuses with the unmet ids.
+- **A new backend module reaches every program whose needs it meets** when the program upgrades `persistant` and rebuilds. There are no dynamic plugins (nobody asked for them); a program pinned to an old `persistant` does not see it.
+- A consumer-private backend that implements the kind trait is still used directly, outside the registry, through the same traits; it does not appear in the sorted list.
+- The handle serves the key-value kind in this release (`Handle::kv`, the closed enum `AnyKv`); a need for blob or relational ids is reported unmet until the handle serves them.
+- Why a closed enum and not a boxed trait object: `KvBackend` returns `impl Future`, so it is not object-safe; an enum needs no second trait, no allocation per call, and its variants are exactly the drivers the build includes.
 
 **Where blob metadata and KV rows live is configuration, not code.** One Postgres instance can hold a
 program's relational schema and its KV table. That is the integration the ruling asks for and §4.4 makes

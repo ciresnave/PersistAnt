@@ -9,8 +9,8 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        35,
-        "eighteen kv/lock leaves and seventeen relational leaves (eleven contract, six migration) are certified"
+        53,
+        "eighteen kv/lock leaves on each of sqlite and sqlite-full, and seventeen relational leaves (eleven contract, six migration) are certified"
     );
     for r in m.rows() {
         // SQLite has no row locks and holds the write lock from `begin`: those leaves are recorded off.
@@ -27,13 +27,18 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
             r.subject,
             r.note
         );
-        // kv rows are keyed by the adapter, relational rows by the server itself.
-        let want = if r.subject.as_str().starts_with("rel.") {
-            "sqlite"
+        // kv rows are keyed by the adapter (plain and the durable `open_durable` profile), relational
+        // rows by the server itself.
+        if r.subject.as_str().starts_with("rel.") {
+            assert_eq!(r.backend, "sqlite");
         } else {
-            "kv-on-relational:sqlite"
-        };
-        assert_eq!(r.backend, want);
+            assert!(
+                ["kv-on-relational:sqlite", "kv-on-relational:sqlite-full"]
+                    .contains(&r.backend.as_str()),
+                "{}",
+                r.backend
+            );
+        }
         assert_eq!(r.config.get("dialect"), Some("sqlite"));
         assert!(r.metadata.get("test").is_some());
     }
