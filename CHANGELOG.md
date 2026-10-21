@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.10
+
+### Added
+- **`kv.bounded_call` is listed and opened as "bounded on open"** (for Synapse). The matrix learns a readable config fact `call_bound=set|unset`: the conformance row for `kv.bounded_call` now carries it (an unbounded backend's NO row is `call_bound=unset` and no longer vetoes a bounded open; the same backend through `persistant_sqlx::Bounded` has its own `call_bound=set` YES row, recorded by the matrix examples for sqlite, sqlite-full, postgres, mysql and mariadb). The other key-value leaves are not re-certified bounded: `Bounded` changes nothing below its bound. `registry::providers` evaluates a `kv.bounded_call` need with `call_bound=set`, so the database backends list it (text: "holds only when opened with a call bound") while `memory` and `fs` stay unmet. `registry::open_named_with(id, endpoint, needs, &OpenOptions::new().call_bound(d))` opens through `Bounded` and the second gate reads the bound back from the backend; `open_named` is `open_named_with` with default options. A bounded need without a bound is `OpenError::BoundRequired` before any I/O; a bound for `memory`/`fs` is `OpenError::BoundUnsupported`. `AnyKv` gains `SqliteBounded`, `PostgresBounded` and `MysqlBounded`.
+- **`Handle::into_kv(self) -> AnyKv`**: the store owned, for a consumer generic over `K: KvBackend`.
+
 ## 0.9.9
 
 ### Fixed

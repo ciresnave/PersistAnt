@@ -11,8 +11,10 @@
 
 use persistant_core::{Config, Matrix};
 use persistant_kv::KvOnRelational;
+use persistant_kv::conformance::Leaf;
 use persistant_relational::RelationalBackend;
-use persistant_sqlx::MysqlBackend;
+use persistant_sqlx::{Bounded, MysqlBackend};
+use std::time::Duration;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -30,6 +32,20 @@ async fn main() {
         .into_iter()
         .map(|c| c.row)
         .collect();
+    // `kv.bounded_call` for the same server opened with a call bound (row config `call_bound=set`);
+    // the unbounded run above recorded it as `call_bound=unset`.
+    let bounded = KvOnRelational::open(Bounded::new(
+        MysqlBackend::connect(&url).await.expect("connect bounded"),
+        Duration::from_millis(2000),
+    ))
+    .await
+    .expect("open bounded");
+    rows.extend(
+        persistant_kv::conformance::certify_leaves(&bounded, &config, &env, &[Leaf::BoundedCall])
+            .await
+            .into_iter()
+            .map(|c| c.row),
+    );
     // The relational kind's own leaves, on the same server.
     rows.extend(
         persistant_relational::conformance::certify(&rel_db, &config, &env)

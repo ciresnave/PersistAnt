@@ -63,6 +63,12 @@ use persistant_opendal::OpendalBlob;
 ))]
 use persistant_kv::KvOnRelational;
 use persistant_relational::ConnectionSecret;
+#[cfg(any(
+    feature = "registry-sqlite",
+    feature = "registry-postgres",
+    feature = "registry-mysql"
+))]
+use persistant_sqlx::Bounded;
 #[cfg(feature = "registry-mysql")]
 use persistant_sqlx::MysqlBackend;
 #[cfg(feature = "registry-postgres")]
@@ -152,6 +158,16 @@ pub enum OpenError {
     },
     /// The gate refused: the unmet capabilities, per backend (here, the one asked for).
     Unmet(Unmet),
+    /// The needs include `kv.bounded_call` but no `call_bound` was given. Nothing was touched.
+    BoundRequired {
+        /// The id asked for.
+        id: &'static str,
+    },
+    /// A `call_bound` was given for a backend that cannot be bounded (`memory`, `fs`).
+    BoundUnsupported {
+        /// The id asked for.
+        id: &'static str,
+    },
     /// The server answered as a different backend than the id asked for (a MariaDB server behind
     /// the `mysql` id, or the reverse). Nothing was written.
     ServerMismatch {
@@ -178,6 +194,13 @@ impl fmt::Display for OpenError {
                 write!(f, "backend `{id}` opens from {wanted:?}, not a {got}")
             }
             OpenError::Unmet(u) => write!(f, "{u}"),
+            OpenError::BoundRequired { id } => write!(
+                f,
+                "backend `{id}`: the needs include kv.bounded_call, which holds only when opened with OpenOptions::call_bound"
+            ),
+            OpenError::BoundUnsupported { id } => {
+                write!(f, "backend `{id}` cannot be opened with a call bound")
+            }
             OpenError::ServerMismatch { id, found } => {
                 write!(
                     f,
@@ -190,6 +213,30 @@ impl fmt::Display for OpenError {
 }
 
 impl std::error::Error for OpenError {}
+
+/// Options for [`open_named_with`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct OpenOptions {
+    /// Cut every call off after this long, returning a timeout error instead of waiting
+    /// (`persistant_sqlx::Bounded`). Needed for `kv.bounded_call`; only the database backends can
+    /// be bounded.
+    pub call_bound: Option<Duration>,
+}
+
+impl OpenOptions {
+    /// No options: the defaults ([`open_named`] uses these).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Bound every call at `bound`.
+    #[must_use]
+    pub fn call_bound(mut self, bound: Duration) -> Self {
+        self.call_bound = Some(bound);
+        self
+    }
+}
 
 /// How a provider is described in the table: id, words for the operator, and where to look it up.
 struct Spec {
@@ -333,35 +380,61 @@ fn matrix() -> &'static Matrix {
     })
 }
 
-/// The matrix row (version and full config) for a spec, taken from the recorded rows. No row: an
-/// empty version, so every lookup is "no row" and the unmet list says so.
-fn surface_for(s: &Spec, matrix: &Matrix) -> Surface {
+/// `config` with the `call_bound` fact set to `set` or `unset` (the gate reads it at open).
+fn with_bound(config: &Config, bounded: bool) -> Config {
+    let kept: Vec<String> = config
+        .to_string()
+        .split(';')
+        .filter(|kv| !kv.is_empty() && !kv.starts_with("call_bound="))
+        .map(str::to_string)
+        .collect();
+    let mut c = Config::parse(&kept.join(";")).expect("config facts parse");
+    c = c.with("call_bound", if bounded { "set" } else { "unset" });
+    c
+}
+
+/// The matrix row (version and config) for a spec, taken from the recorded rows, with the
+/// `call_bound` fact the program will open with. No row: an empty version, so every lookup is "no
+/// row" and the unmet list says so.
+fn surface_for(s: &Spec, matrix: &Matrix, bounded: bool) -> Surface {
     let row = matrix.rows().iter().find(|r| {
         r.backend == s.kv_backend && s.facts.iter().all(|(k, v)| r.config.get(k) == Some(v))
     });
     match row {
-        Some(r) => Surface::new(s.kv_backend, r.version.clone(), r.config.clone()),
+        Some(r) => Surface::new(
+            s.kv_backend,
+            r.version.clone(),
+            with_bound(&r.config, bounded),
+        ),
         None => {
             let mut c = Config::new();
             for (k, v) in s.facts {
                 c = c.with(*k, *v);
             }
-            Surface::new(s.kv_backend, "", c)
+            Surface::new(s.kv_backend, "", with_bound(&c, bounded))
         }
     }
 }
 
-fn provider_for(s: &Spec, matrix: &Matrix) -> Provider {
+fn provider_for(s: &Spec, matrix: &Matrix, bounded: bool) -> Provider {
     Provider::new(
         s.id,
-        vec![surface_for(s, matrix)],
+        vec![surface_for(s, matrix, bounded)],
         persistant_kv::choose::declared_durability(s.kv_backend),
         (s.endpoint)(),
     )
 }
 
-fn table(matrix: &Matrix) -> Vec<Provider> {
-    specs().iter().map(|s| provider_for(s, matrix)).collect()
+fn table(matrix: &Matrix, bounded: bool) -> Vec<Provider> {
+    specs()
+        .iter()
+        .map(|s| provider_for(s, matrix, bounded))
+        .collect()
+}
+
+/// Whether the needs include `kv.bounded_call`: the program wants every call cut off at a bound.
+fn wants_bound(needs: &ProviderNeeds) -> bool {
+    needs.ids().iter().any(|i| i.as_str() == "kv.bounded_call")
 }
 
 /// One backend in the sorted list a setup UI shows.
@@ -428,7 +501,7 @@ impl Listing {
     }
 }
 
-fn listing(s: &Sorted) -> Listing {
+fn listing(s: &Sorted, bounded: bool) -> Listing {
     let spec = specs()
         .into_iter()
         .find(|x| x.id == s.provider.name())
@@ -441,7 +514,15 @@ fn listing(s: &Sorted) -> Listing {
         preferred: s.preferred.clone(),
         recorded: s.provider.primary().version.clone(),
         p50_ns: s.p50_ns,
-        notes: spec.notes.to_vec(),
+        notes: {
+            let mut n = spec.notes.to_vec();
+            if bounded {
+                n.push(
+                    "kv.bounded_call: holds only when opened with a call bound (OpenOptions::call_bound); open_named refuses the open without one.",
+                );
+            }
+            n
+        },
     }
 }
 
@@ -459,8 +540,9 @@ pub fn providers_ranked(
     speed: Option<(&Need, &persistant_core::bench::SpeedTable)>,
 ) -> Result<Vec<Listing>, Unmet> {
     let m = matrix();
-    let sorted = provider::select(&table(m), needs, m, speed)?;
-    Ok(sorted.iter().map(listing).collect())
+    let bounded = wants_bound(needs);
+    let sorted = provider::select(&table(m, bounded), needs, m, speed)?;
+    Ok(sorted.iter().map(|s| listing(s, bounded)).collect())
 }
 
 /// A key-value backend of whichever provider was opened. A closed set: the build decides which
@@ -474,12 +556,21 @@ pub enum AnyKv {
     /// `sqlite` and `sqlite-full`.
     #[cfg(feature = "registry-sqlite")]
     Sqlite(KvOnRelational<SqliteBackend>),
+    /// `sqlite` and `sqlite-full`, opened with a call bound.
+    #[cfg(feature = "registry-sqlite")]
+    SqliteBounded(KvOnRelational<Bounded<SqliteBackend>>),
     /// `postgres`.
     #[cfg(feature = "registry-postgres")]
     Postgres(KvOnRelational<PgBackend>),
+    /// `postgres`, opened with a call bound.
+    #[cfg(feature = "registry-postgres")]
+    PostgresBounded(KvOnRelational<Bounded<PgBackend>>),
     /// `mysql` and `mariadb`.
     #[cfg(feature = "registry-mysql")]
     Mysql(KvOnRelational<MysqlBackend>),
+    /// `mysql` and `mariadb`, opened with a call bound.
+    #[cfg(feature = "registry-mysql")]
+    MysqlBounded(KvOnRelational<Bounded<MysqlBackend>>),
 }
 
 macro_rules! each {
@@ -488,10 +579,16 @@ macro_rules! each {
             AnyKv::Blob($k) => $e,
             #[cfg(feature = "registry-sqlite")]
             AnyKv::Sqlite($k) => $e,
+            #[cfg(feature = "registry-sqlite")]
+            AnyKv::SqliteBounded($k) => $e,
             #[cfg(feature = "registry-postgres")]
             AnyKv::Postgres($k) => $e,
+            #[cfg(feature = "registry-postgres")]
+            AnyKv::PostgresBounded($k) => $e,
             #[cfg(feature = "registry-mysql")]
             AnyKv::Mysql($k) => $e,
+            #[cfg(feature = "registry-mysql")]
+            AnyKv::MysqlBounded($k) => $e,
         }
     };
 }
@@ -590,6 +687,12 @@ impl Handle {
     pub fn kv(&self) -> &AnyKv {
         &self.kv
     }
+
+    /// The key-value store, owned: for a consumer that is generic over `K: KvBackend` and keeps the
+    /// store (the handle's id is dropped; read it with [`Handle::id`] first if it is wanted).
+    pub fn into_kv(self) -> AnyKv {
+        self.kv
+    }
 }
 
 /// Open the backend `id` (the string the program stored in its configuration) at `endpoint`.
@@ -603,6 +706,19 @@ pub async fn open_named(
     endpoint: &Endpoint,
     needs: &ProviderNeeds,
 ) -> Result<Handle, OpenError> {
+    open_named_with(id, endpoint, needs, &OpenOptions::new()).await
+}
+
+/// As [`open_named`], with [`OpenOptions`]. If the needs include `kv.bounded_call`, a
+/// `call_bound` is required ([`OpenError::BoundRequired`], before any I/O); with one, the backend is
+/// opened through `persistant_sqlx::Bounded` and the second gate reads the bound back from the
+/// backend actually opened.
+pub async fn open_named_with(
+    id: &str,
+    endpoint: &Endpoint,
+    needs: &ProviderNeeds,
+    options: &OpenOptions,
+) -> Result<Handle, OpenError> {
     let m = matrix();
     let all = specs();
     let Some(spec) = all.iter().find(|s| s.id == id) else {
@@ -611,6 +727,12 @@ pub async fn open_named(
             known: all.iter().map(|s| s.id).collect(),
         });
     };
+    if wants_bound(needs) && options.call_bound.is_none() {
+        return Err(OpenError::BoundRequired { id: spec.id });
+    }
+    if options.call_bound.is_some() && matches!(spec.id, "memory" | "fs") {
+        return Err(OpenError::BoundUnsupported { id: spec.id });
+    }
     let want = (spec.endpoint)();
     if !endpoint.fits(&want)? {
         return Err(OpenError::WrongEndpoint {
@@ -619,9 +741,9 @@ pub async fn open_named(
             got: endpoint.kind(),
         });
     }
-    let p = provider_for(spec, m);
+    let p = provider_for(spec, m, options.call_bound.is_some());
     provider::providers(std::slice::from_ref(&p), needs, m).map_err(OpenError::Unmet)?;
-    let kv = open_kv(spec.id, endpoint).await?;
+    let kv = open_kv(spec.id, endpoint, options.call_bound).await?;
     if kv.backend() != spec.kv_backend {
         return Err(OpenError::ServerMismatch {
             id: spec.id,
@@ -634,7 +756,7 @@ pub async fn open_named(
         vec![Surface::new(
             kv.backend(),
             kv.version(),
-            p.primary().config.clone(),
+            with_bound(&p.primary().config, kv.call_bound().is_some()),
         )],
         persistant_kv::choose::declared_durability(kv.backend()),
         p.endpoint().clone(),
@@ -643,7 +765,15 @@ pub async fn open_named(
     Ok(Handle { id: spec.id, kv })
 }
 
-async fn open_kv(id: &str, endpoint: &Endpoint) -> Result<AnyKv, OpenError> {
+/// Open the key-value store of provider `id`. With a `bound`, the database backends are opened
+/// through `Bounded`; the tables are created first through an unbounded connection, because the DDL
+/// of a first open can outlast any bound short enough to be useful and what is bounded is the
+/// program's calls, not setup.
+async fn open_kv(
+    id: &str,
+    endpoint: &Endpoint,
+    bound: Option<Duration>,
+) -> Result<AnyKv, OpenError> {
     let open = |e: &dyn fmt::Display| OpenError::Open(e.to_string());
     match (id, endpoint) {
         ("memory", _) => Ok(AnyKv::Blob(KvOnBlob::new(
@@ -660,36 +790,64 @@ async fn open_kv(id: &str, endpoint: &Endpoint) -> Result<AnyKv, OpenError> {
             )))
         }
         #[cfg(feature = "registry-sqlite")]
-        ("sqlite", Endpoint::Path(file)) => {
-            let db = SqliteBackend::open(file).await.map_err(|e| open(&e))?;
-            Ok(AnyKv::Sqlite(
-                KvOnRelational::open(db).await.map_err(|e| open(&e))?,
-            ))
-        }
-        #[cfg(feature = "registry-sqlite")]
-        ("sqlite-full", Endpoint::Path(file)) => {
-            let db = SqliteBackend::open_durable(file)
-                .await
-                .map_err(|e| open(&e))?;
-            Ok(AnyKv::Sqlite(
-                KvOnRelational::open(db).await.map_err(|e| open(&e))?,
-            ))
+        ("sqlite" | "sqlite-full", Endpoint::Path(file)) => {
+            let durable = id == "sqlite-full";
+            let connect = || async {
+                if durable {
+                    SqliteBackend::open_durable(file).await
+                } else {
+                    SqliteBackend::open(file).await
+                }
+                .map_err(|e| open(&e))
+            };
+            let db = connect().await?;
+            let kv = KvOnRelational::open(db).await.map_err(|e| open(&e))?;
+            match bound {
+                None => Ok(AnyKv::Sqlite(kv)),
+                Some(b) => {
+                    drop(kv);
+                    let db = Bounded::new(connect().await?, b);
+                    Ok(AnyKv::SqliteBounded(
+                        KvOnRelational::open(db).await.map_err(|e| open(&e))?,
+                    ))
+                }
+            }
         }
         #[cfg(feature = "registry-postgres")]
         ("postgres", Endpoint::Url(_) | Endpoint::Secret(_)) => {
             let url = endpoint.url()?.unwrap_or_default();
             let db = PgBackend::connect(&url).await.map_err(|e| open(&e))?;
-            Ok(AnyKv::Postgres(
-                KvOnRelational::open(db).await.map_err(|e| open(&e))?,
-            ))
+            let kv = KvOnRelational::open(db).await.map_err(|e| open(&e))?;
+            match bound {
+                None => Ok(AnyKv::Postgres(kv)),
+                Some(b) => {
+                    drop(kv);
+                    let db = PgBackend::connect(&url).await.map_err(|e| open(&e))?;
+                    Ok(AnyKv::PostgresBounded(
+                        KvOnRelational::open(Bounded::new(db, b))
+                            .await
+                            .map_err(|e| open(&e))?,
+                    ))
+                }
+            }
         }
         #[cfg(feature = "registry-mysql")]
         ("mysql" | "mariadb", Endpoint::Url(_) | Endpoint::Secret(_)) => {
             let url = endpoint.url()?.unwrap_or_default();
             let db = MysqlBackend::connect(&url).await.map_err(|e| open(&e))?;
-            Ok(AnyKv::Mysql(
-                KvOnRelational::open(db).await.map_err(|e| open(&e))?,
-            ))
+            let kv = KvOnRelational::open(db).await.map_err(|e| open(&e))?;
+            match bound {
+                None => Ok(AnyKv::Mysql(kv)),
+                Some(b) => {
+                    drop(kv);
+                    let db = MysqlBackend::connect(&url).await.map_err(|e| open(&e))?;
+                    Ok(AnyKv::MysqlBounded(
+                        KvOnRelational::open(Bounded::new(db, b))
+                            .await
+                            .map_err(|e| open(&e))?,
+                    ))
+                }
+            }
         }
         _ => Err(OpenError::Open(format!("no opener for `{id}`"))),
     }

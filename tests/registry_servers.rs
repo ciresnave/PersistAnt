@@ -12,7 +12,8 @@ use persistant::capability::CapabilityId;
 use persistant::capability::choose::Durability;
 use persistant::capability::provider::ProviderNeeds;
 use persistant::kv::KvBackend;
-use persistant::registry::{self, Endpoint, OpenError};
+use persistant::registry::{self, Endpoint, OpenError, OpenOptions};
+use std::time::Duration;
 
 fn needs(min: Durability) -> ProviderNeeds {
     let id = |s| CapabilityId::new(s).unwrap();
@@ -136,4 +137,49 @@ async fn mysql_and_mariadb_are_told_apart_and_the_wrong_one_is_refused() {
         matches!(&e, OpenError::ServerMismatch { id, found } if *id == wrong && found.ends_with(right)),
         "{e:?}"
     );
+}
+
+/// A server opened with a call bound lists and opens `kv.bounded_call`, and without one is refused.
+#[cfg(any(feature = "registry-postgres", feature = "registry-mysql"))]
+#[tokio::test]
+async fn a_bounded_need_opens_a_server_only_with_a_bound() {
+    let id = |s| CapabilityId::new(s).unwrap();
+    let bounded = ProviderNeeds::new(
+        vec![
+            id("kv.get"),
+            id("kv.put"),
+            id("kv.delete"),
+            id("kv.bounded_call"),
+        ],
+        Durability::Volatile,
+    );
+    let mut cases: Vec<(&str, String)> = Vec::new();
+    #[cfg(feature = "registry-postgres")]
+    if let Some(v) = url_var(
+        "PERSISTANT_TEST_DATABASE_URL",
+        "PERSISTANT_REQUIRE_DATABASE",
+    ) {
+        cases.push(("postgres", v));
+    }
+    #[cfg(feature = "registry-mysql")]
+    if let Some(v) = url_var("PERSISTANT_TEST_MYSQL_URL", "PERSISTANT_REQUIRE_MYSQL") {
+        let maria = std::env::var("PERSISTANT_TEST_MYSQL_FLAVOR").as_deref() == Ok("mariadb");
+        cases.push((if maria { "mariadb" } else { "mysql" }, v));
+    }
+    for (name, var) in cases {
+        let ep = Endpoint::url_env(&var);
+        let list = registry::providers(&bounded).unwrap();
+        assert!(
+            list.iter().any(|l| l.id == name),
+            "{name} lists kv.bounded_call"
+        );
+        let e = registry::open_named(name, &ep, &bounded).await.unwrap_err();
+        assert!(matches!(e, OpenError::BoundRequired { .. }), "{e:?}");
+        let opts = OpenOptions::new().call_bound(Duration::from_secs(10));
+        let h = registry::open_named_with(name, &ep, &bounded, &opts)
+            .await
+            .unwrap();
+        assert_eq!(h.kv().call_bound(), Some(Duration::from_secs(10)));
+        roundtrip(&h).await;
+    }
 }
