@@ -9,19 +9,28 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        53,
-        "eighteen kv/lock leaves on each of sqlite and sqlite-full, and seventeen relational leaves (eleven contract, six migration) are certified"
+        55,
+        "eighteen kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and seventeen relational leaves (eleven contract, six migration) are certified"
     );
     for r in m.rows() {
+        // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),
+        // on when the backend was certified through `Bounded` (`call_bound=set`).
+        let bound_row = r.subject.as_str() == "kv.bounded_call";
+        if bound_row {
+            assert_eq!(
+                r.enabled,
+                r.config.get("call_bound") == Some("set"),
+                "{}",
+                r.note
+            );
+            continue;
+        }
         // SQLite has no row locks and holds the write lock from `begin`: those leaves are recorded off.
         assert_eq!(
             r.enabled,
             !matches!(
                 r.subject.as_str(),
-                "rel.row_lock"
-                    | "rel.isolation.repeatable_read"
-                    | "rel.isolation.serializable"
-                    | "kv.bounded_call"
+                "rel.row_lock" | "rel.isolation.repeatable_read" | "rel.isolation.serializable"
             ),
             "{}: {}",
             r.subject,
