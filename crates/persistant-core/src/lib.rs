@@ -15,6 +15,7 @@ pub mod choose;
 mod config;
 mod id;
 mod matrix;
+pub mod provider;
 mod row;
 mod verdict;
 pub mod vocabulary;
