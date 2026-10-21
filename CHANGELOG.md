@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.9
+
+### Fixed
+- **The `kv.ttl` leaf no longer turns a correct backend off on a stalled machine.** It wrote an entry with a 1 s window and failed with "not readable inside its window" whenever more than a second passed between the put and the read (hosted Windows CI, `kv_on_sqlite_certifies_every_leaf_on`). The read is now judged only if the window was still open on the monotonic clock (measured from before the put to after the get); if it had already passed, the stall is printed ("kv.ttl: the 1000 ms window had already passed ... Repeating with a 4000 ms window") and the check repeats with a window four times longer, up to 16 s, then reports that the machine stalled. A backend that misses while the window is open still fails at once (test `a_stall_past_the_ttl_window_is_not_a_verdict_but_a_miss_inside_it_is`, with a backend that never keeps a time-to-live entry as the known bad); one that never expires entries still fails the later check (`Defect::TtlIgnored`). Expiry stays judged by the server's clock; no clock is injected.
+
 ## 0.9.8
 
 ### Added
