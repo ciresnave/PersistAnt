@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.5
+
+### Added
+- **`persistant_core::provider`: "which backends can give me all of this?"** (registry PR 1 of 3; no driver, no I/O). `providers(&[Provider], &ProviderNeeds, &Matrix)` returns every provider whose recorded rows say `On` for every needed capability id (on at least one of its `Surface`s, `Off` on none) and whose declared durability reaches the minimum. Capability stays boolean. If nothing qualifies the result is `Unmet`: for every provider, each needed id it lacks with the matrix's own word (`Off(reason)` or no row) and any durability shortfall; there is no closest match and no partial list. `rank` orders the qualified set through the existing `choose()`. A `Provider` carries the `EndpointSpec` (none, path, or URL schemes) the registry's `open` will need; `open` and the closed `AnyKv` enum arrive in the facade (PRs 2 and 3).
+
 ## 0.9.4
 
 ### Fixed
