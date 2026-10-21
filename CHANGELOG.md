@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.4
+
+### Fixed
+- **`persistant-relational` `declared_durability` now says what the power-cut run showed.** It still read "no power-loss test" for every backend, though run 39178436801 (a Hyper-V guest powered off after 300 acknowledged writes, five cycles each, nothing lost; the `synchronous=OFF` control lost every key) had verified `Machine` through `KvOnRelational`, and the kv table already said so. `sqlite-full` (what `SqliteBackend::open_durable` reports, previously unknown here) is `Machine`, verified; `postgres` and `mysql` are `Machine`, verified; plain `sqlite` stays `Process` with nothing verified. Every basis is scoped to acknowledged key-value writes on ext4/Hyper-V and lists what was not exercised (multi-statement transactions, DDL, host power loss, NTFS, disk cache, torn sectors). The MySQL basis records that a full disk STALLS (no answer, no error; run 39325665814), so a caller needs a call bound (`call_bound`, `kv.bounded_call`).
+
 ## 0.9.3
 
 ### Added
