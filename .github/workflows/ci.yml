@@ -151,6 +151,8 @@ jobs:
         run: cargo test -p persistant-migrate --no-fail-fast
 
       - name: Regenerate matrix/sqlx-postgres.tsv
+        # Also after a failed test step: the regenerated file is what a matrix change needs to be read from.
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p generated
           cargo run -q -p persistant-sqlx --example matrix > generated/sqlx-postgres.tsv
@@ -256,6 +258,8 @@ jobs:
         run: cargo test -p persistant-migrate --no-fail-fast
 
       - name: Regenerate matrix/sqlx-mariadb.tsv
+        # Also after a failed test step: the regenerated file is what a matrix change needs to be read from.
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p generated
           cargo run -q -p persistant-sqlx --features mysql --example matrix_mysql > generated/sqlx-mariadb.tsv
@@ -325,6 +329,8 @@ jobs:
         run: cargo test -p persistant-sqlx --features mysql --test tls_mysql
 
       - name: Regenerate matrix/sqlx-mysql.tsv
+        # Also after a failed test step: the regenerated file is what a matrix change needs to be read from.
+        if: ${{ !cancelled() }}
         run: |
           mkdir -p generated
           cargo run -q -p persistant-sqlx --features mysql --example matrix_mysql > generated/sqlx-mysql.tsv
