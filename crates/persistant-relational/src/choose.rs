@@ -4,10 +4,12 @@
 //! module supplies what is specific to relational databases: the table of what each backend declares
 //! about its durability, the typed way to name a need, and the contract check that makes a candidate.
 //!
-//! **Durability is declared and, for the relational kind, not verified at all yet**: the kv kind has a
-//! process-kill test (`kv.durability.process`) that exercises these databases through
-//! `KvOnRelational`, but there is no relational-level one, so every `verified` here is `None`. A
-//! power-loss test is not built.
+//! **Durability is declared; `Machine` is verified only where the guest power-cut harness ran.** That
+//! harness (`scripts/machine-durability`, run 39178436801) drives *key-value* writes through
+//! `KvOnRelational` on SQLite (`open_durable`), PostgreSQL and MySQL, so what it shows is that an
+//! acknowledged single-row write survives the loss of the guest OS (ext4, Hyper-V). It does not
+//! exercise relational-level multi-statement transactions or DDL. There is no relational-level
+//! process-kill test, so no backend here is verified as high as `Process` by this kind's own tests.
 
 use crate::RelationalBackend;
 use crate::conformance::Leaf;
@@ -22,25 +24,36 @@ pub use persistant_core::choose::{
 /// What the relational databases document about their own durability, by the name they carry in the
 /// matrix. `None` for a backend this table does not know: that is unknown, not volatile.
 pub fn declared_durability(backend: &str) -> Option<Declared> {
-    let d = |class, basis| {
+    let d = |class, basis, verified| {
         Some(Declared {
             class,
             basis,
-            verified: None,
+            verified,
         })
     };
+    // Run 39178436801 (main 02f86a7): a Hyper-V guest powered off after 300 acknowledged key-value
+    // writes, five cycles each, nothing lost; the synchronous=OFF control lost every key.
+    let m = Some(Durability::Machine);
     match backend {
         "sqlite" => d(
             Durability::Process,
-            "SQLite WAL file; sqlx's default synchronous=FULL is documented but not asserted or tested here",
+            "SQLite WAL file opened with SqliteBackend::open; synchronous is not asserted, so the class is Process and nothing is verified. Open with open_durable (reports sqlite-full) to declare Machine",
+            None,
+        ),
+        "sqlite-full" => d(
+            Durability::Machine,
+            "SQLite WAL file, synchronous=FULL set explicitly (SqliteBackend::open_durable); verified for acknowledged key-value writes: guest power loss on ext4 (Hyper-V), run 39178436801; not exercised: multi-statement transactions, DDL, host power loss, NTFS, disk cache, torn sectors",
+            m,
         ),
         "postgres" => d(
             Durability::Machine,
-            "PostgreSQL defaults (fsync=on, synchronous_commit=on); documented, no power-loss test",
+            "PostgreSQL defaults (fsync=on, synchronous_commit=on); verified for acknowledged key-value writes: guest power loss on ext4 (Hyper-V), run 39178436801; not exercised: multi-statement transactions, DDL, host power loss, NTFS, disk cache, torn sectors",
+            m,
         ),
         "mysql" => d(
             Durability::Machine,
-            "InnoDB defaults (innodb_flush_log_at_trx_commit=1); documented, no power-loss test",
+            "InnoDB defaults (innodb_flush_log_at_trx_commit=1); verified for acknowledged key-value writes: guest power loss on ext4 (Hyper-V), run 39178436801; disk full STALLS, it does NOT fail loud: the client gets no answer and no error (run 39325665814), so a caller needs a call bound (kv.bounded_call / call_bound); not exercised: multi-statement transactions, DDL, host power loss, NTFS, disk cache, torn sectors",
+            m,
         ),
         _ => None,
     }
@@ -91,10 +104,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn no_relational_backend_is_marked_verified_and_an_unknown_one_is_unknown() {
-        for b in ["sqlite", "postgres", "mysql"] {
-            assert!(declared_durability(b).expect(b).verified.is_none(), "{b}");
+    fn machine_is_verified_only_where_the_power_cut_harness_ran() {
+        for b in ["sqlite-full", "postgres", "mysql"] {
+            let d = declared_durability(b).expect(b);
+            assert_eq!(d.class, Durability::Machine, "{b}");
+            assert_eq!(d.verified, Some(Durability::Machine), "{b}");
         }
+        // The default SQLite open asserts no synchronous mode: Process, nothing verified.
+        let plain = declared_durability("sqlite").expect("sqlite");
+        assert_eq!(plain.class, Durability::Process);
+        assert!(plain.verified.is_none());
         assert!(declared_durability("some-other-db").is_none());
     }
 }
