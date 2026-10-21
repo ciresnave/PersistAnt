@@ -9,6 +9,11 @@
 //! `--check` nothing is written: the snapshot is derived again and the command fails (exit 8) if it
 //! differs from the file, saying what changed ("stale: migration 37 is not in the snapshot").
 //!
+//! `snapshot --from-files --dir DIR --dialect postgres|mysql|mariadb|sqlite` needs no database and no
+//! URL: UniSQL reads the migrations as DDL (`CREATE TABLE`, `ALTER TABLE .. ADD|DROP|ALTER COLUMN`,
+//! `DROP TABLE`). The snapshot says `source = ddl`; types keep the migration's spelling and statements
+//! UniSQL cannot read are listed on stderr. `--check` re-derives it the same way.
+//!
 //! The URL may also come from `PERSISTANT_DATABASE_URL` (preferred: a command line is visible to
 //! other users of the machine). Schemes: `postgres://`, `postgresql://`, `mysql://`, `mariadb://`,
 //! `sqlite:PATH`.
@@ -22,7 +27,7 @@
 //! target that is not loopback, a unix socket or an SQLite file is refused without `--allow-remote`:
 //! a wrong URL in an environment variable must not silently migrate someone else's database.
 
-use persistant_migrate::{State, describe_target, load_dir, status};
+use persistant_migrate::{State, describe_target, load_dir, snapshot_from_files, status};
 use persistant_relational::catalog::{self, Snapshot};
 use persistant_relational::{MigrateError, Migrates, Migration, RelError};
 use persistant_sqlx::{MysqlBackend, PgBackend, SqliteBackend};
@@ -30,7 +35,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: persistant-migrate <up|status|verify-fresh> --dir DIR [--url URL] [--allow-remote]\n       \
-persistant-migrate snapshot [--scratch --dir DIR] [--url URL] [--out FILE] [--check] [--allow-remote]\n  \
+persistant-migrate snapshot [--scratch --dir DIR] [--url URL] [--out FILE] [--check] [--allow-remote]\n       \
+persistant-migrate snapshot --from-files --dir DIR --dialect D [--out FILE] [--check]\n  \
 URL defaults to $PERSISTANT_DATABASE_URL; schemes postgres://, mysql://, mariadb://, sqlite:PATH";
 
 /// Where `snapshot` writes and `snapshot --check` reads, unless `--out` says otherwise.
@@ -38,6 +44,8 @@ const DEFAULT_SNAPSHOT: &str = "persistant-schema.json";
 
 struct Snap {
     scratch: bool,
+    from_files: bool,
+    dialect: Option<String>,
     check: bool,
     out: PathBuf,
 }
@@ -123,10 +131,22 @@ async fn derive(db: &Db, migrations: &[Migration], scratch: bool) -> Result<Snap
     .map_err(|e| e.to_string())
 }
 
-async fn snapshot(db: &Db, migrations: &[Migration], snap: &Snap) -> ExitCode {
-    let now = match derive(db, migrations, snap.scratch).await {
-        Ok(c) => c,
-        Err(e) => return fail(e, 7),
+async fn snapshot(db: Option<&Db>, migrations: &[Migration], snap: &Snap) -> ExitCode {
+    let now = match (db, &snap.dialect) {
+        (Some(db), _) => match derive(db, migrations, snap.scratch).await {
+            Ok(c) => c,
+            Err(e) => return fail(e, 7),
+        },
+        (None, Some(dialect)) => match snapshot_from_files(migrations, dialect) {
+            Ok((c, skipped)) => {
+                for s in &skipped {
+                    eprintln!("persistant-migrate: not read as DDL: {s}");
+                }
+                c
+            }
+            Err(e) => return fail(e, 2),
+        },
+        (None, None) => return fail(USAGE, 2),
     };
     if snap.check {
         let text = match std::fs::read_to_string(&snap.out) {
@@ -274,18 +294,29 @@ async fn main() -> ExitCode {
     let mut dir = None::<PathBuf>;
     let mut url = std::env::var("PERSISTANT_DATABASE_URL").ok();
     let mut allow_remote = false;
+    let mut url_given = false;
     let mut snap = Snap {
         scratch: false,
+        from_files: false,
+        dialect: None,
         check: false,
         out: PathBuf::from(DEFAULT_SNAPSHOT),
     };
     while let Some(a) = args.next() {
         match a.as_str() {
             "--dir" => dir = args.next().map(PathBuf::from),
-            "--url" => url = args.next(),
+            "--url" => {
+                url = args.next();
+                url_given = true;
+            }
             "--allow-remote" => allow_remote = true,
             "--scratch" if cmd == "snapshot" => snap.scratch = true,
             "--check" if cmd == "snapshot" => snap.check = true,
+            "--from-files" if cmd == "snapshot" => snap.from_files = true,
+            "--dialect" if cmd == "snapshot" => match args.next() {
+                Some(d) => snap.dialect = Some(d),
+                None => return fail(USAGE, 2),
+            },
             "--out" if cmd == "snapshot" => match args.next() {
                 Some(p) => snap.out = PathBuf::from(p),
                 None => return fail(USAGE, 2),
@@ -294,7 +325,21 @@ async fn main() -> ExitCode {
         }
     }
     // `snapshot` of the target itself reads no directory; every other use needs one.
-    let needs_dir = cmd != "snapshot" || snap.scratch;
+    let needs_dir = cmd != "snapshot" || snap.scratch || snap.from_files;
+    if snap.from_files {
+        // No database: the files alone, so no URL, no target line and no remote guard.
+        if cmd != "snapshot" || snap.scratch || url_given || snap.dialect.is_none() {
+            return fail(USAGE, 2);
+        }
+        let Some(d) = &dir else {
+            return fail(USAGE, 2);
+        };
+        let migrations = match load_dir(d).await {
+            Ok(m) => m,
+            Err(e) => return fail(e, 7),
+        };
+        return snapshot(None, &migrations, &snap).await;
+    }
     let Some(url) = url else {
         return fail(USAGE, 2);
     };
@@ -321,7 +366,7 @@ async fn main() -> ExitCode {
         Err(e) => return fail(e, 7),
     };
     if cmd == "snapshot" {
-        return snapshot(&db, &migrations, &snap).await;
+        return snapshot(Some(&db), &migrations, &snap).await;
     }
     run(&cmd, &db, &migrations).await
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.3
+
+### Added
+- **`persistant-migrate snapshot --from-files --dir DIR --dialect postgres|mysql|mariadb|sqlite`**: the schema snapshot read from the migration files alone, with no database, no URL and no remote guard (ROADMAP compile-time SQL row 3, the database-free source). UniSQL's `schema_from_ddl` reads the migrations in version order (`CREATE TABLE`, `ALTER TABLE .. ADD|DROP|ALTER COLUMN`, `DROP TABLE`); statements it cannot read are listed on stderr and can only leave a column unregistered. `meta` records `source = ddl`, the dialect and each migration's version and checksum, so `--from-files --check` fails with exit 8 and names a migration added or changed since (`stale: migration 3 is not in the snapshot`). It is not the catalog's answer: types keep the migration's spelling and nothing the DDL does not state (a key, a default) is assumed; a catalog snapshot (`--scratch`) remains the exact one. `--from-files` with `--url`, `--scratch`, a missing `--dialect`, or on another command is a usage error (exit 2).
+- Library: `persistant_migrate::snapshot_from_files(&[Migration], dialect)`.
+- Tests: `persistant-migrate/tests/cli_from_files.rs` runs the binary: write, check current, stale after a new migration, and the refusals.
+
 ## 0.9.2
 
 ### Added
