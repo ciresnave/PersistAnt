@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.15
+
+### Added
+- **`persistant-macros`: a reader for sqlx's offline query data** (`.sqlx/query-<sha256>.json`; internal, work order B of `docs/DESIGN-SQLX-BRIDGE.md`, no macro uses it yet). It finds a statement's file by the same hash sqlx uses, reads the column names, PostgreSQL types, nullability and parameter types, maps them to Rust types the way sqlx's PostgreSQL macros do (`chrono`, `uuid`, `json` on), honours the `"col!"`, `"col?"` and `"col: Type"` markers, and renders a record struct. A missing or foreign file is an error that says to run `cargo sqlx prepare`; a type without a default says what override to write. Checked against all 566 files of Humboldt's `.sqlx` (every file parses and every file name is the hash of its text; the test runs when `PERSISTANT_SQLX_SAMPLE_DIR` names such a directory).
+
 ## 0.9.14
 
 ### Added
