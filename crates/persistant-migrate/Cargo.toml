@@ -24,6 +24,6 @@ persistant-sqlx = { workspace = true, features = ["sqlite", "mysql"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["migrate"] }
 sha2 = "0.10"
 # `snapshot --from-files`: the migrations read as DDL, no database.
-unisql = "0.24.17"
+unisql = "0.25.1"
 tempfile = "3.27.0"
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros"] }

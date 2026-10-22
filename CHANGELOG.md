@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.16
+
+### Changed
+- **UniSQL 0.25.1** (`unisql`, `unisql-embed`, `unisql-core`, `unisql-macro-core`; was 0.24.17). It translates `LEFT JOIN LATERAL (subquery)` and the `::regclass` cast, the two statements Humboldt's `src/` had refused.
+
 ## 0.9.15
 
 ### Added

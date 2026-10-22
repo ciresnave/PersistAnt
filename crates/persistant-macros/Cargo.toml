@@ -15,9 +15,9 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1"
 # Published version only (portfolio rule 2026-10-07: no path or git dependencies across repos).
-unisql-macro-core = "0.24.17"
+unisql-macro-core = "0.25.1"
 # `schema = "x.sql"`: DDL read by UniSQL; the schema type is UniSQL's.
-unisql = "0.24.17"
+unisql = "0.25.1"
 # The sqlx bridge reads `.sqlx/query-<sha256>.json` (docs/DESIGN-SQLX-BRIDGE.md).
 serde_json = "1"
 sha2 = "0.10"
