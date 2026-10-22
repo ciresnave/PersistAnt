@@ -3,7 +3,7 @@
 ## 0.9.11
 
 ### Fixed
-- **Concurrent first opens of a PostgreSQL database with no tables no longer fail one opener** (found by Synapse, 4 threads on a fresh PG16). `CREATE TABLE IF NOT EXISTS` is not safe against an identical concurrent statement in PostgreSQL: the loser got `unique violation (pg_type_typname_nsp_index)`. `KvOnRelational::open` now runs each table statement again (up to 5 times) on a unique violation, which finds the table the winner made. Test `concurrent_first_opens_all_succeed`.
+- **Concurrent first opens of a PostgreSQL database with no tables no longer fail one opener** (found by Synapse, 4 threads on a fresh PG16). `CREATE TABLE IF NOT EXISTS` is not safe against an identical concurrent statement in PostgreSQL: the loser got `unique violation (pg_type_typname_nsp_index)` or `type "persistant_kv_batch" already exists`. `KvOnRelational::open` now creates its two tables in one transaction behind `pg_advisory_xact_lock`, so concurrent first opens take turns (other dialects are unchanged). Test `concurrent_first_opens_all_succeed` (4 openers, 5 rounds, from empty).
 
 ## 0.9.10
 
