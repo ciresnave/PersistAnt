@@ -77,6 +77,21 @@ fn upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+/// Run a `CREATE TABLE IF NOT EXISTS`. On PostgreSQL that statement is not safe against a
+/// concurrent identical one: the loser fails with a unique violation on a catalog index
+/// (`pg_type_typname_nsp_index`). The winner has made the table by then, so the statement is run
+/// again, which then finds it and does nothing.
+async fn create_table<R: RelationalBackend>(db: &R, ddl: &str) -> Result<(), KvError> {
+    let mut attempts = 0;
+    loop {
+        match db.execute(ddl, &[]).await {
+            Ok(_) => return Ok(()),
+            Err(RelError::UniqueViolation { .. }) if attempts < 5 => attempts += 1,
+            Err(e) => return Err(err(e)),
+        }
+    }
+}
+
 impl<R: RelationalBackend> KvOnRelational<R> {
     /// Check the dialect, create the table if it is missing, and return the store.
     pub async fn open(db: R) -> Result<Self, KvError> {
@@ -98,14 +113,13 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         let create = translate::ddl(tr.dialect()).ok_or_else(|| {
             KvError::Unsupported(format!("no table definition for {}", tr.dialect()))
         })?;
-        db.execute(create, &[]).await.map_err(err)?;
+        create_table(&db, create).await?;
         // The row every `batch` locks first (see `batch_once`). Plain SQL, the same on every dialect.
-        db.execute(
+        create_table(
+            &db,
             "CREATE TABLE IF NOT EXISTS persistant_kv_batch (id BIGINT NOT NULL PRIMARY KEY)",
-            &[],
         )
-        .await
-        .map_err(err)?;
+        .await?;
         match db
             .execute("INSERT INTO persistant_kv_batch (id) VALUES (1)", &[])
             .await

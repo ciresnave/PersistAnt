@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.11
+
+### Fixed
+- **Concurrent first opens of a PostgreSQL database with no tables no longer fail one opener** (found by Synapse, 4 threads on a fresh PG16). `CREATE TABLE IF NOT EXISTS` is not safe against an identical concurrent statement in PostgreSQL: the loser got `unique violation (pg_type_typname_nsp_index)`. `KvOnRelational::open` now runs each table statement again (up to 5 times) on a unique violation, which finds the table the winner made. Test `concurrent_first_opens_all_succeed`.
+
 ## 0.9.10
 
 ### Added
