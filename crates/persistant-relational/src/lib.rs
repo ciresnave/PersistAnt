@@ -37,7 +37,7 @@ pub use sweep::{SweepError, SweepReport, sweep};
 pub use value::{Dialect, Row, Value};
 
 #[cfg(feature = "sql")]
-pub use row::{Field, FieldKind, FromRow, FromValue, TypedSql};
+pub use row::{Field, FieldKind, FromRow, FromValue, ToValue, TypedSql};
 #[cfg(feature = "sql")]
 pub use sql_ext::{
     RelationalRowsExt, RelationalSqlExt, RelationalTxRowsExt, RelationalTxSqlExt, Sql,
