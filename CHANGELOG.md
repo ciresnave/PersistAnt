@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.12
+
+### Fixed
+- **Concurrent first opens of a PostgreSQL database with no tables: the 0.9.11 retry was not enough.** On a real PostgreSQL 16 the 0.9.11 test failed with `type "persistant_kv_batch" already exists`, a second form of the same catalog race that the retry on a unique violation does not see (CI had passed it by timing). `KvOnRelational::open` now creates its two tables in one transaction behind `pg_advisory_xact_lock`, so concurrent first opens take turns; the retry is gone. Other dialects are unchanged. Test `concurrent_first_opens_all_succeed` (4 openers, 5 rounds, from empty) passed 5 of 5 runs locally against PostgreSQL 16 with the lock.
+
 ## 0.9.11
 
 ### Fixed

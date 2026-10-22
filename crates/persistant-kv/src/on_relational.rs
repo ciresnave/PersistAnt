@@ -77,19 +77,34 @@ fn upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
-/// Run a `CREATE TABLE IF NOT EXISTS`. On PostgreSQL that statement is not safe against a
-/// concurrent identical one: the loser fails with a unique violation on a catalog index
-/// (`pg_type_typname_nsp_index`). The winner has made the table by then, so the statement is run
-/// again, which then finds it and does nothing.
-async fn create_table<R: RelationalBackend>(db: &R, ddl: &str) -> Result<(), KvError> {
-    let mut attempts = 0;
-    loop {
-        match db.execute(ddl, &[]).await {
-            Ok(_) => return Ok(()),
-            Err(RelError::UniqueViolation { .. }) if attempts < 5 => attempts += 1,
-            Err(e) => return Err(err(e)),
+/// Create the tables if they are missing. On PostgreSQL `CREATE TABLE IF NOT EXISTS` is not safe
+/// against an identical statement running at the same time: the loser fails inside the catalog with
+/// a unique violation on `pg_type_typname_nsp_index` or "type ... already exists". So the statements
+/// run in one transaction behind a transaction-scoped advisory lock (fixed key, released at commit),
+/// and concurrent first opens take turns; the later ones find the tables and do nothing. Other
+/// dialects need no lock.
+async fn create_tables<R: RelationalBackend>(
+    db: &R,
+    dialect: &Dialect,
+    statements: &[&str],
+) -> Result<(), KvError> {
+    if *dialect != Dialect::Postgres {
+        for sql in statements {
+            db.execute(sql, &[]).await.map_err(err)?;
         }
+        return Ok(());
     }
+    let mut tx = db.begin(Isolation::ReadCommitted).await.map_err(err)?;
+    tx.query(
+        "SELECT 1 FROM (SELECT pg_advisory_xact_lock(7077416010261)) AS l",
+        &[],
+    )
+    .await
+    .map_err(err)?;
+    for sql in statements {
+        tx.execute(sql, &[]).await.map_err(err)?;
+    }
+    tx.commit().await.map_err(err)
 }
 
 impl<R: RelationalBackend> KvOnRelational<R> {
@@ -113,11 +128,15 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         let create = translate::ddl(tr.dialect()).ok_or_else(|| {
             KvError::Unsupported(format!("no table definition for {}", tr.dialect()))
         })?;
-        create_table(&db, create).await?;
-        // The row every `batch` locks first (see `batch_once`). Plain SQL, the same on every dialect.
-        create_table(
+        // The second table holds the row every `batch` locks first (see `batch_once`). Plain SQL, the
+        // same on every dialect.
+        create_tables(
             &db,
-            "CREATE TABLE IF NOT EXISTS persistant_kv_batch (id BIGINT NOT NULL PRIMARY KEY)",
+            tr.dialect(),
+            &[
+                create,
+                "CREATE TABLE IF NOT EXISTS persistant_kv_batch (id BIGINT NOT NULL PRIMARY KEY)",
+            ],
         )
         .await?;
         match db
