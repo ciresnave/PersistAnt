@@ -249,6 +249,33 @@ async fn kv_on_postgres_declares_bounded_call_when_a_timeout_is_set() {
     assert!(rows[0].row.enabled, "{}", rows[0].row.note);
 }
 
+/// Concurrent first opens of a database with no tables: `CREATE TABLE IF NOT EXISTS` races in the
+/// PostgreSQL catalog, and every opener must still succeed.
+#[tokio::test]
+async fn concurrent_first_opens_all_succeed() {
+    let Some(db) = backend().await else { return };
+    let _serial = SERVER.lock().await;
+    for _ in 0..5 {
+        db.execute("DROP TABLE IF EXISTS persistant_kv", &[])
+            .await
+            .unwrap();
+        db.execute("DROP TABLE IF EXISTS persistant_kv_batch", &[])
+            .await
+            .unwrap();
+        let url = std::env::var("PERSISTANT_TEST_DATABASE_URL").unwrap();
+        let opens = (0..4).map(|_| {
+            let url = url.clone();
+            tokio::spawn(async move {
+                let db = PgBackend::connect(&url).await.expect("connect");
+                KvOnRelational::open(db).await.map(|_| ())
+            })
+        });
+        for h in opens.collect::<Vec<_>>() {
+            h.await.unwrap().expect("a concurrent first open failed");
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_text_key_column_orders_by_collation_and_the_adapter_does_not() {
     // The trap, shown on this server: with a collation-aware text column "a/a" sorts before
