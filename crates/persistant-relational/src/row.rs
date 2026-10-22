@@ -8,7 +8,9 @@
 //! The types are the intersection the engines share, and each is a documented loss against the
 //! engine's own (`docs/DECODER-AUDIT.md`): `i64` and `i32` (an integer column of any width), `f64`,
 //! `bool` (a boolean, or an integer 0 or 1: MySQL has no other), `String`, `Vec<u8>`, and `Option` of
-//! any of them for a column that can be NULL. Anything finer (UUID, decimal, timestamps) is read with
+//! any of them for a column that can be NULL. With the features `uuid`, `chrono` and `json`, also
+//! `uuid::Uuid`, `chrono::{DateTime<Utc>, NaiveDateTime, NaiveDate, NaiveTime}` and `serde_json::Value`,
+//! read from the canonical text the drivers return. Decimals and arrays are still read with
 //! the driver's own types, through `PgBackend::pool()` and friends.
 
 use crate::{RelError, Row, Value};
@@ -149,6 +151,196 @@ impl<T: FromValue> FromValue for Option<T> {
             Value::Null => Ok(None),
             other => T::from_value(other).map(Some),
         }
+    }
+}
+
+/// A value that can be bound as a statement parameter: the mirror of [`FromValue`]. The types the
+/// drivers carry as canonical text (`docs/DECODER-AUDIT.md`) are sent as that text, so a statement
+/// that compares such a column casts the placeholder (`CAST($1 AS uuid)`).
+pub trait ToValue {
+    /// The parameter.
+    fn to_value(&self) -> Value;
+}
+
+impl ToValue for Value {
+    fn to_value(&self) -> Value {
+        self.clone()
+    }
+}
+
+impl ToValue for i64 {
+    fn to_value(&self) -> Value {
+        Value::Int(*self)
+    }
+}
+
+impl ToValue for i32 {
+    fn to_value(&self) -> Value {
+        Value::Int(i64::from(*self))
+    }
+}
+
+impl ToValue for f64 {
+    fn to_value(&self) -> Value {
+        Value::Float(*self)
+    }
+}
+
+impl ToValue for bool {
+    fn to_value(&self) -> Value {
+        Value::Bool(*self)
+    }
+}
+
+impl ToValue for str {
+    fn to_value(&self) -> Value {
+        Value::Text(self.to_string())
+    }
+}
+
+impl ToValue for String {
+    fn to_value(&self) -> Value {
+        Value::Text(self.clone())
+    }
+}
+
+impl ToValue for [u8] {
+    fn to_value(&self) -> Value {
+        Value::Bytes(self.to_vec())
+    }
+}
+
+impl ToValue for Vec<u8> {
+    fn to_value(&self) -> Value {
+        Value::Bytes(self.clone())
+    }
+}
+
+impl<T: ToValue + ?Sized> ToValue for &T {
+    fn to_value(&self) -> Value {
+        (**self).to_value()
+    }
+}
+
+impl<T: ToValue> ToValue for Option<T> {
+    fn to_value(&self) -> Value {
+        self.as_ref().map_or(Value::Null, ToValue::to_value)
+    }
+}
+
+/// The text a cell must hold for a type read from canonical text.
+#[cfg(any(feature = "uuid", feature = "chrono", feature = "json"))]
+fn text_of<'a>(v: &'a Value, what: &str) -> Result<&'a str, String> {
+    match v {
+        Value::Text(s) => Ok(s),
+        other => Err(wrong(what, other)),
+    }
+}
+
+/// `uuid::Uuid`, read from the canonical text of a `uuid` column. Feature `uuid`.
+#[cfg(feature = "uuid")]
+impl FromValue for uuid::Uuid {
+    const KIND: FieldKind = FieldKind::Text;
+    fn from_value(v: &Value) -> Result<Self, String> {
+        let s = text_of(v, "a uuid as text")?;
+        uuid::Uuid::parse_str(s).map_err(|e| format!("{s:?} is not a uuid: {e}"))
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl ToValue for uuid::Uuid {
+    fn to_value(&self) -> Value {
+        Value::Text(self.hyphenated().to_string())
+    }
+}
+
+/// `chrono` types, read from the ISO 8601 text the drivers return (`timestamptz` in UTC with `Z`; a
+/// space for the `T` is accepted, as SQLite stores what the program wrote). Feature `chrono`.
+#[cfg(feature = "chrono")]
+mod chrono_values {
+    use super::{FieldKind, FromValue, ToValue, Value, text_of};
+    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, SecondsFormat, Utc};
+
+    impl FromValue for DateTime<Utc> {
+        const KIND: FieldKind = FieldKind::Text;
+        fn from_value(v: &Value) -> Result<Self, String> {
+            let s = text_of(v, "a timestamp as text")?.replacen(' ', "T", 1);
+            if let Ok(t) = DateTime::parse_from_rfc3339(&s) {
+                return Ok(t.with_timezone(&Utc));
+            }
+            // No offset: the text of a `timestamp` is read as UTC, as MySQL's TIMESTAMP is.
+            NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                .map(|n| n.and_utc())
+                .map_err(|e| format!("{s:?} is not a timestamp: {e}"))
+        }
+    }
+
+    impl ToValue for DateTime<Utc> {
+        fn to_value(&self) -> Value {
+            Value::Text(self.to_rfc3339_opts(SecondsFormat::AutoSi, true))
+        }
+    }
+
+    impl FromValue for NaiveDateTime {
+        const KIND: FieldKind = FieldKind::Text;
+        fn from_value(v: &Value) -> Result<Self, String> {
+            let s = text_of(v, "a timestamp as text")?.replacen(' ', "T", 1);
+            NaiveDateTime::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.f")
+                .map_err(|e| format!("{s:?} is not a timestamp: {e}"))
+        }
+    }
+
+    impl ToValue for NaiveDateTime {
+        fn to_value(&self) -> Value {
+            Value::Text(self.format("%Y-%m-%dT%H:%M:%S%.f").to_string())
+        }
+    }
+
+    impl FromValue for NaiveDate {
+        const KIND: FieldKind = FieldKind::Text;
+        fn from_value(v: &Value) -> Result<Self, String> {
+            let s = text_of(v, "a date as text")?;
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .map_err(|e| format!("{s:?} is not a date: {e}"))
+        }
+    }
+
+    impl ToValue for NaiveDate {
+        fn to_value(&self) -> Value {
+            Value::Text(self.format("%Y-%m-%d").to_string())
+        }
+    }
+
+    impl FromValue for NaiveTime {
+        const KIND: FieldKind = FieldKind::Text;
+        fn from_value(v: &Value) -> Result<Self, String> {
+            let s = text_of(v, "a time as text")?;
+            NaiveTime::parse_from_str(s, "%H:%M:%S%.f")
+                .map_err(|e| format!("{s:?} is not a time: {e}"))
+        }
+    }
+
+    impl ToValue for NaiveTime {
+        fn to_value(&self) -> Value {
+            Value::Text(self.format("%H:%M:%S%.f").to_string())
+        }
+    }
+}
+
+/// `serde_json::Value`, read from the text of a `json` / `jsonb` column. Feature `json`.
+#[cfg(feature = "json")]
+impl FromValue for serde_json::Value {
+    const KIND: FieldKind = FieldKind::Text;
+    fn from_value(v: &Value) -> Result<Self, String> {
+        let s = text_of(v, "json as text")?;
+        serde_json::from_str(s).map_err(|e| format!("not json: {e}"))
+    }
+}
+
+#[cfg(feature = "json")]
+impl ToValue for serde_json::Value {
+    fn to_value(&self) -> Value {
+        Value::Text(self.to_string())
     }
 }
 
@@ -335,5 +527,65 @@ mod tests {
         assert!(null_fits::<User>(1, false) && null_fits::<User>(2, false));
         // Evaluated at compile time too: a wrong answer here fails the build.
         const _: () = assert!(named::<User>(0, "id") && fields_are::<User>(3));
+    }
+
+    #[test]
+    fn parameters_convert_and_an_option_none_is_null() {
+        assert_eq!(7i64.to_value(), Value::Int(7));
+        assert_eq!(7i32.to_value(), Value::Int(7));
+        assert_eq!("a".to_value(), Value::Text("a".into()));
+        assert_eq!("a".to_string().to_value(), Value::Text("a".into()));
+        assert_eq!(vec![1u8, 2].to_value(), Value::Bytes(vec![1, 2]));
+        assert_eq!(Some(true).to_value(), Value::Bool(true));
+        assert_eq!(Option::<i64>::None.to_value(), Value::Null);
+    }
+
+    #[cfg(feature = "uuid")]
+    #[test]
+    fn a_uuid_is_read_from_and_sent_as_canonical_text() {
+        let text = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+        let id = uuid::Uuid::from_value(&Value::Text(text.into())).unwrap();
+        assert_eq!(id.to_value(), Value::Text(text.into()));
+        assert_eq!(
+            Option::<uuid::Uuid>::from_value(&Value::Null).unwrap(),
+            None
+        );
+        // Not text, or not a uuid: an error that says why, never a nil uuid.
+        assert!(uuid::Uuid::from_value(&Value::Int(1)).is_err());
+        assert!(uuid::Uuid::from_value(&Value::Text("nope".into())).is_err());
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn timestamps_dates_and_times_round_trip_through_their_text() {
+        use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+        // `timestamptz`: UTC with a Z, with or without fractional seconds.
+        for text in ["2026-10-17T12:34:56Z", "2026-10-17T12:34:56.789Z"] {
+            let t = DateTime::<Utc>::from_value(&Value::Text(text.into())).unwrap();
+            assert_eq!(t.to_value(), Value::Text(text.into()));
+        }
+        // An offset is converted; no offset is UTC; a space for the T is what SQLite stores.
+        let a =
+            DateTime::<Utc>::from_value(&Value::Text("2026-10-17T14:34:56+02:00".into())).unwrap();
+        let b = DateTime::<Utc>::from_value(&Value::Text("2026-10-17 12:34:56".into())).unwrap();
+        assert_eq!(a, b);
+        let n = NaiveDateTime::from_value(&Value::Text("2026-10-17T12:34:56.500".into())).unwrap();
+        assert_eq!(n.to_value(), Value::Text("2026-10-17T12:34:56.500".into()));
+        let d = NaiveDate::from_value(&Value::Text("2026-10-17".into())).unwrap();
+        assert_eq!(d.to_value(), Value::Text("2026-10-17".into()));
+        let t = NaiveTime::from_value(&Value::Text("12:34:56.789".into())).unwrap();
+        assert_eq!(t.to_value(), Value::Text("12:34:56.789".into()));
+        assert!(DateTime::<Utc>::from_value(&Value::Text("yesterday".into())).is_err());
+        assert!(NaiveDate::from_value(&Value::Int(1)).is_err());
+        assert!(NaiveDate::from_value(&Value::Text("2026-02-30".into())).is_err());
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    fn json_is_read_from_and_sent_as_text() {
+        let v = serde_json::Value::from_value(&Value::Text(r#"{"a":[1,2]}"#.into())).unwrap();
+        assert_eq!(v["a"][1], 2);
+        assert_eq!(v.to_value(), Value::Text(r#"{"a":[1,2]}"#.into()));
+        assert!(serde_json::Value::from_value(&Value::Text("{".into())).is_err());
     }
 }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.14
+
+### Added
+- **`FromValue` for `uuid::Uuid`, `chrono::{DateTime<Utc>, NaiveDateTime, NaiveDate, NaiveTime}` and `serde_json::Value`, and a new `ToValue` trait for statement parameters** (features `uuid`, `chrono`, `json` of `persistant-relational`; `sql-uuid`, `sql-chrono`, `sql-json` on the facade). They read the canonical text the drivers already return (`docs/DECODER-AUDIT.md`) and send it back as text, so a statement that compares such a column casts the placeholder. A query_as struct with `Uuid` or `DateTime<Utc>` fields can now `#[derive(FromRow)]` (Humboldt: 24 of 24 DTOs were blocked on these). PostgreSQL arrays and decimals are still not read.
+
 ## 0.9.13
 
 ### Added

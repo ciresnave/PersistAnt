@@ -28,7 +28,10 @@ sha2 = "0.10"
 persistant-kv = { workspace = true }
 # `persistant::sql!` end to end: the macro, and the `sql` feature of persistant-relational for its traits.
 persistant-macros = { workspace = true }
-persistant-relational = { workspace = true, features = ["sql"] }
+persistant-relational = { workspace = true, features = ["sql", "uuid", "chrono", "json"] }
+uuid = "1"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+serde_json = "1"
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
 
 [[example]]

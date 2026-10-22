@@ -14,9 +14,16 @@ categories = ["database-implementations"]
 sql = ["dep:unisql-embed"]
 # A schema snapshot: read a database's catalog and write it as deterministic JSON.
 catalog = ["dep:unisql-core"]
+# `FromValue` / `ToValue` for the types a driver carries as canonical text (needs `sql`).
+uuid = ["sql", "dep:uuid"]
+chrono = ["sql", "dep:chrono"]
+json = ["sql", "dep:serde_json"]
 
 [dependencies]
 persistant-core = { workspace = true }
 # Published version only (portfolio rule 2026-10-07). No dependencies of its own, `no_std`.
 unisql-embed = { version = "0.24.17", optional = true }
 unisql-core = { version = "0.24.17", features = ["serde"], optional = true }
+uuid = { version = "1", default-features = false, optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
+serde_json = { version = "1", optional = true }
