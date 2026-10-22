@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.13
+
+### Added
+- **`docs/DESIGN-SQLX-BRIDGE.md`** (docs only, board 230 option 3): a macro family that keeps sqlx's own PostgreSQL check and runs the same literal through UniSQL and PersistAnt, typed from sqlx's offline `.sqlx` data. With the Humboldt measurement behind it: 883 literals, 881 translate, 2 refused, and the catalog checker covers `INSERT` and `UPDATE` only.
+
 ## 0.9.12
 
 ### Fixed
