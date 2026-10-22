@@ -20,6 +20,7 @@
 mod checker;
 mod imp;
 mod rows;
+mod sqlx_offline;
 
 /// Check and translate a literal statement at build time. See the crate documentation.
 #[proc_macro]
