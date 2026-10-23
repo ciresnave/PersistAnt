@@ -28,16 +28,22 @@ async fn write_one(db: &SqliteBackend) {
         .unwrap();
 }
 
-fn owner_only(file: &Path, what: &str) {
+/// The database file, and the `-wal` and `-shm` files beside it: those must exist when `wal` (WAL mode
+/// keeps them while the database is open); any that exist are owner-only either way.
+fn owner_only(file: &Path, what: &str, wal: bool) {
     for suffix in ["", "-wal", "-shm"] {
         let mut name = file.as_os_str().to_owned();
         name.push(suffix);
         let p = std::path::PathBuf::from(name);
-        assert!(
-            p.exists(),
-            "{what}: {} should exist while open",
-            p.display()
-        );
+        if suffix.is_empty() || wal {
+            assert!(
+                p.exists(),
+                "{what}: {} should exist while open",
+                p.display()
+            );
+        } else if !p.exists() {
+            continue;
+        }
         assert_eq!(
             mode(&p) & 0o077,
             0,
@@ -54,7 +60,7 @@ async fn a_new_database_and_its_wal_files_are_owner_only() {
     let file = dir.join("tenant.sqlite");
     let db = SqliteBackend::open(&file).await.unwrap();
     write_one(&db).await;
-    owner_only(&file, "open");
+    owner_only(&file, "open", false);
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -65,7 +71,7 @@ async fn a_new_durable_database_and_its_wal_files_are_owner_only() {
     let file = dir.join("tenant.sqlite");
     let db = SqliteBackend::open_durable(&file).await.unwrap();
     write_one(&db).await;
-    owner_only(&file, "open_durable");
+    owner_only(&file, "open_durable", true);
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -104,17 +104,37 @@ pub struct SqliteBackend {
     full_sync: bool,
 }
 
+/// On Unix, create `path` empty and owner-only if it is not there, so SQLite finds an existing
+/// zero-length file (it treats that as a new database) and keeps its mode. `create_new` never touches
+/// an existing file; any failure (the directory is missing, no permission) is left for the open that
+/// follows to report in its own words. Does nothing elsewhere.
+fn owner_only_if_new(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path);
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 impl SqliteBackend {
-    /// Open (creating if missing) the database file at `path`, in WAL mode, with a bounded wait
-    /// for the write lock.
+    /// Open (creating if missing) the database file at `path`, with a bounded wait for the write lock.
+    /// The journal mode is SQLite's default (a rollback journal, measured: `delete`); [`open_durable`](Self::open_durable)
+    /// asks for WAL.
     ///
-    /// **Creating** means the file only: a missing parent directory is an error, not created. The
-    /// file's permissions are SQLite's own default, `0644` less the process `umask` (measured on
-    /// Linux: `-rw-r--r--` under a `022` umask, `-rw-------` under `077`; its `-wal` and `-shm` files
-    /// follow the database file), so a per-tenant database holding secrets should be opened under a
-    /// `077` umask or created beforehand with the mode wanted. On Windows the file inherits the
-    /// directory's ACL.
+    /// **Creating** means the file only: a missing parent directory is an error, not created. On Unix
+    /// a new file is created owner-only (`0600`, less the umask), and SQLite gives its `-wal` and
+    /// `-shm` files the database file's mode; SQLite's own default would be `0644` less the umask,
+    /// world-readable under the usual `022` (measured on Linux). A file that already exists keeps
+    /// the mode its owner gave it. On Windows the file inherits the directory's ACL: restrict the
+    /// directory the databases live in.
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, RelError> {
+        owner_only_if_new(path.as_ref());
         let opts = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
@@ -133,6 +153,7 @@ impl SqliteBackend {
     /// [`open`](Self::open) stays `sqlite` and declared `Process`. A pool built elsewhere and handed
     /// to [`from_pool`](Self::from_pool) is never assumed to have this setting.
     pub async fn open_durable(path: impl AsRef<Path>) -> Result<Self, RelError> {
+        owner_only_if_new(path.as_ref());
         let opts = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
