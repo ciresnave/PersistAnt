@@ -12,7 +12,9 @@
 pub mod crash;
 mod process_lock;
 
-pub use process_lock::ProcessLock;
+pub use process_lock::{
+    ProcessLock, certify as certify_process_lock, maybe_run_child as maybe_run_lock_child,
+};
 
 use persistant_blob::{BlobBackend, BlobError, Entry, Page};
 use persistant_core::Config;

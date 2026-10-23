@@ -1,9 +1,17 @@
 # Changelog
 
+## 0.9.27
+
+### Added
+- **A matrix row for `lock.process`** (`std-file-lock`, `File::try_lock`): `persistant_opendal::certify_process_lock` starts a child of the host's own executable that holds the lock, checks the parent is refused, kills the child hard and checks the parent is then granted it; the controls are the same observation on a live child and the known-bad marker file, which survives the same kill. `maybe_run_lock_child` is the child's entry; the `matrix` example calls both, so `matrix/opendal.tsv` now records it (it was implemented and tested but in no row).
+
+### Fixed
+- **A wrong claim in 0.9.26 / `docs/CONSUMERS.md`**: they said nothing in the vocabulary names encryption at rest. It is `storage.no_plaintext_at_rest` (a canary value written through the layer is not found as raw bytes in the data directory, log or temp files), reserved with no implementation or row. The search had been for the word "encrypt". Corrected in both places.
+
 ## 0.9.26
 
 ### Added
-- **`docs/CONSUMERS.md`** (docs only; PM [TASK] 2026-10-23, CireSnave's 2026-10-21 standing order): a survey of how twelve projects store things, read at their `origin/main` with the method, positive controls and limits stated. Per project: what it stores, the backend it names today (registry, `Store` + `Config`, or a backend directly), the needs it declares, the PersistAnt capability each maps to, and what blocks it; a ranked adoption list (auth-framework, commy, agentlife, lightbulb, synapse, Humboldt; five projects are not candidates) and what it asks of PersistAnt. Found on the way: agentlife's `"0.4.4"` pin cannot take 0.9.x; `lock.process` is implemented but has no matrix row; `blob` has no streamed or ranged I/O; nothing in the vocabulary names encryption at rest.
+- **`docs/CONSUMERS.md`** (docs only; PM [TASK] 2026-10-23, CireSnave's 2026-10-21 standing order): a survey of how twelve projects store things, read at their `origin/main` with the method, positive controls and limits stated. Per project: what it stores, the backend it names today (registry, `Store` + `Config`, or a backend directly), the needs it declares, the PersistAnt capability each maps to, and what blocks it; a ranked adoption list (auth-framework, commy, agentlife, lightbulb, synapse, Humboldt; five projects are not candidates) and what it asks of PersistAnt. Found on the way: agentlife's `"0.4.4"` pin cannot take 0.9.x; `lock.process` is implemented but has no matrix row; `blob` has no streamed or ranged I/O. (It first said nothing in the vocabulary names encryption at rest; that was wrong, see 0.9.27: the leaf is `storage.no_plaintext_at_rest`.)
 
 ## 0.9.25
 
