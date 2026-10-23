@@ -35,9 +35,12 @@ fn url_var(var: &str, require: &str) -> Option<String> {
     }
 }
 
-/// Put, read back and delete one key through the handle, using a key no other test touches.
+/// Put, read back and delete one key through the handle, using a key no other test (or call) touches.
 async fn roundtrip(h: &registry::Handle) {
-    let key = format!("registry-test/{}", std::process::id());
+    // One key per call: the tests of this binary run at the same time, against the same server, in one process.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let key = format!("registry-test/{}-{n}", std::process::id());
     h.kv().put(&key, b"v".to_vec(), None).await.unwrap();
     assert_eq!(h.kv().get(&key).await.unwrap(), Some(b"v".to_vec()));
     h.kv().delete(&key).await.unwrap();
