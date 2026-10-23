@@ -112,7 +112,7 @@ CireSnave's standing order (2026-10-21, `CIRESNAVE-EXPECTATIONS.md` 6.17): no pr
 
 | # | Ask | State |
 |---|---|---|
-| 1 | A registry example and a short guide for projects that still name a backend in code (`Store` + `Config::Fs`: commy, agentlife, lightbulb) | not started |
+| 1 | A registry example and a short guide for projects that still name a backend in code (`Store` + `Config::Fs`: commy, agentlife, lightbulb) | **built (0.9.29)**: `docs/REGISTRY-FOR-STORE-USERS.md` and `examples/registry_instead_of_config.rs`; what does not map (`CreateIfAbsent` on `fs`, append, locks, a blocking call) is stated there |
 | 2 | A matrix row for `lock.process` | **built (0.9.27)**: `std-file-lock`, decided by a killed child process |
 | 3 | Pool options on `PgBackend::connect` (lightbulb builds its own pool for an acquire timeout) | **closed, nothing to build** (checked 2026-10-23): `PgBackend::connect_with(&ConnectionSecret, &ConnectOptions { tls, max_connections, acquire_timeout })` has existed since 0.4.31; lightbulb's comment is stale. Its default TLS policy is `Require` |
 | 4 | Streamed or ranged blob I/O (`blob` is whole-value today) | design first; blocks mlmf |

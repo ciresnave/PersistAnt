@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.31
+
+### Added
+- **`docs/REGISTRY-FOR-STORE-USERS.md` and `examples/registry_instead_of_config.rs`** (ROADMAP "Portfolio adoption" ask 1): how a program that names its backend in code (`Store` + `Config::Fs`: commy, agentlife, lightbulb's disk tier) moves to `registry::providers` / `open_named`, with the mapping from each `Need` to a capability id measured against the matrices. What does not map is stated: `CreateIfAbsent` is off on the registry's `fs` (its scratch-directory configuration makes the exclusive create check-then-rename), `Stat` and `MaxValueSize` have no key-value counterpart, and the registry serves the key-value kind only, so append, locks and a blocking call stay outside it. Found by running the example: asking `fs` for `put_if_absent` lists no provider at all.
+
 ## 0.9.30
 
 ### Documented
