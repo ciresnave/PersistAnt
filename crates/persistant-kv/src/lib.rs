@@ -10,6 +10,7 @@
 //!   `(blob backend, version, config)`.
 //! - [`KvOnRelational`]: the same for any [`persistant_relational::RelationalBackend`] (D1, C+),
 //!   PostgreSQL SQL translated by UniSQL (PostgreSQL, SQLite), keys as bytes, tested per server and version.
+//! - [`index::Indexed`]: secondary-key lookup as a layer over `batch` and `ordered_scan_values` (leaf `kv.index`).
 //! - [`MemoryKv`]: a reference backend with injectable [`Defect`]s for known-bad controls.
 //! - [`choose`]: stage 4, "best backend for X": a ranked list with its evidence, from the contract,
 //!   a stated durability minimum and measurements in one environment; never a silent choice.
@@ -30,6 +31,7 @@ pub mod choose;
 pub mod conformance;
 pub mod contract;
 pub mod durability;
+pub mod index;
 mod lease;
 mod memory;
 mod on_blob;

@@ -9,8 +9,8 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        59,
-        "twenty kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and seventeen relational leaves (eleven contract, six migration) are certified"
+        61,
+        "twenty-one kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and seventeen relational leaves (eleven contract, six migration) are certified"
     );
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),

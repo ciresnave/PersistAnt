@@ -62,12 +62,14 @@ fn merged(blob: &Config, kv: &Config) -> Config {
 }
 
 /// The leaves a blob store cannot give at all (no compare-and-delete).
-const NEEDS_CAD: [&str; 12] = [
+const NEEDS_CAD: [&str; 13] = [
     "kv.compare_and_swap",
     "kv.compare_and_delete",
     "kv.take",
     // One-step count from a snapshot: a blob store can only page a listing.
     "kv.count",
+    // The index layer needs `batch`.
+    "kv.index",
     "lock.lease",
     "kv.purge_expired",
     // No multi-key transaction and no consistent snapshot on a blob store.

@@ -103,6 +103,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a live value equal to the expected one is removed for exactly one of any number of concurrent callers; any other value is left alone",
     ),
     (
+        "kv.index",
+        "a record and its secondary index entries are written, replaced and removed in one batch, so a lookup by index entry finds exactly the records that exist, a replace expecting a stale value changes nothing, and of concurrent replaces of one value exactly one wins and leaves its own entries",
+    ),
+    (
         "kv.take",
         "get-and-delete returns the value to exactly one of any number of concurrent callers",
     ),
