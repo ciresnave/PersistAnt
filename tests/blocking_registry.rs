@@ -26,8 +26,18 @@ fn basic() -> ProviderNeeds {
     )
 }
 
-fn open_fs(dir: &std::path::Path) -> KvHandle {
-    registry::open_named("fs", &Endpoint::path(dir.join("state")), &basic()).expect("fs opens")
+/// The blob-backed in-process store: it opens on every platform. (`fs` is refused on a directory whose
+/// filesystem ignores case, e.g. NTFS, so these tests do not depend on it.)
+fn open_memory() -> KvHandle {
+    registry::open_named(
+        "memory",
+        &Endpoint::None,
+        &needs(
+            &["kv.get", "kv.put", "kv.delete", "kv.prefix_list"],
+            Durability::Volatile,
+        ),
+    )
+    .expect("memory opens")
 }
 
 #[test]
@@ -35,9 +45,8 @@ fn the_list_is_the_async_one_and_a_plain_thread_can_use_a_handle() {
     let listed = registry::providers(&basic()).expect("something qualifies");
     assert!(listed.iter().any(|l| l.id == "fs"), "{listed:?}");
 
-    let dir = tempfile::tempdir().unwrap();
-    let kv = open_fs(dir.path());
-    assert_eq!(kv.id(), "fs");
+    let kv = open_memory();
+    assert_eq!(kv.id(), "memory");
     assert_eq!(kv.get("a").unwrap(), None);
     kv.put("svc/a", b"1".to_vec(), None).unwrap();
     kv.put("svc/b", b"2".to_vec(), None).unwrap();
@@ -50,9 +59,8 @@ fn the_list_is_the_async_one_and_a_plain_thread_can_use_a_handle() {
 
 #[test]
 fn what_the_backend_cannot_give_is_refused_not_approximated() {
-    let dir = tempfile::tempdir().unwrap();
-    let kv = open_fs(dir.path());
-    // `fs` has neither compare-and-delete nor a one-step count (a blob store): the matrix says no.
+    let kv = open_memory();
+    // `memory` is a blob store: neither compare-and-delete nor a one-step count (the matrix says no).
     kv.put("k", b"v".to_vec(), None).unwrap();
     assert!(matches!(kv.take("k"), Err(KvError::Unsupported(_))));
     assert!(matches!(kv.count("k"), Err(KvError::Unsupported(_))));
@@ -70,8 +78,13 @@ fn a_need_the_backend_does_not_meet_is_refused_at_open() {
     );
     let r = registry::open_named("fs", &Endpoint::path(dir.path().join("s")), &wants);
     assert!(matches!(r, Err(OpenError::Unmet(_))), "{r:?}");
-    // The control: the same call with needs it does meet opens.
-    assert!(registry::open_named("fs", &Endpoint::path(dir.path().join("s")), &basic()).is_ok());
+    // The control: the same call with needs it does meet is not refused for them. (On a directory whose
+    // filesystem ignores case it is refused for that reason instead, and says so.)
+    let r = registry::open_named("fs", &Endpoint::path(dir.path().join("s")), &basic());
+    assert!(
+        matches!(r, Ok(_) | Err(OpenError::CaseInsensitiveFilesystem { .. })),
+        "{r:?}"
+    );
 }
 
 #[test]
@@ -108,8 +121,7 @@ fn many_threads_share_one_handle_and_exactly_one_wins_a_race() {
 async fn a_call_from_inside_a_tokio_runtime_does_not_deadlock() {
     // The calling thread never drives the handle's runtime, so this is safe (it blocks this task's
     // thread for the duration, as any blocking call does).
-    let dir = tempfile::tempdir().unwrap();
-    let kv = open_fs(dir.path());
+    let kv = open_memory();
     kv.put("in/rt", b"x".to_vec(), None).unwrap();
     assert_eq!(kv.get("in/rt").unwrap().as_deref(), Some(&b"x"[..]));
 }
