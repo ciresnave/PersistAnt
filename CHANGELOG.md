@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.26
+
+### Added
+- **`docs/CONSUMERS.md`** (docs only; PM [TASK] 2026-10-23, CireSnave's 2026-10-21 standing order): a survey of how twelve projects store things, read at their `origin/main` with the method, positive controls and limits stated. Per project: what it stores, the backend it names today (registry, `Store` + `Config`, or a backend directly), the needs it declares, the PersistAnt capability each maps to, and what blocks it; a ranked adoption list (auth-framework, commy, agentlife, lightbulb, synapse, Humboldt; five projects are not candidates) and what it asks of PersistAnt. Found on the way: agentlife's `"0.4.4"` pin cannot take 0.9.x; `lock.process` is implemented but has no matrix row; `blob` has no streamed or ranged I/O; nothing in the vocabulary names encryption at rest.
+
 ## 0.9.25
 
 ### Documented
