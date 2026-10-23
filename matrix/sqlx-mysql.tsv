@@ -8,6 +8,7 @@ capability	kv.prefix_list	kv-on-relational:mysql	0.9+8.4.11	dialect=mysql	yes		a
 capability	kv.ordered_scan	kv-on-relational:mysql	0.9+8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;test=kv::kv.ordered_scan	
 capability	kv.compare_and_swap	kv-on-relational:mysql	0.9+8.4.11	dialect=mysql	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	
 capability	kv.compare_and_delete	kv-on-relational:mysql	0.9+8.4.11	dialect=mysql	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	
+capability	kv.take	kv-on-relational:mysql	0.9+8.4.11	dialect=mysql	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.take	
 capability	lock.lease	kv-on-relational:mysql	0.9+8.4.11	dialect=mysql	yes		arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	
 capability	kv.ttl_remaining	kv-on-relational:mysql	0.9+8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	
 capability	kv.purge_expired	kv-on-relational:mysql	0.9+8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	
