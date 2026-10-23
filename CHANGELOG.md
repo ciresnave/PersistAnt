@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.28
+
+### Documented
+- **`ROADMAP.md`: a "Portfolio adoption" section** (docs only) carrying the seven asks of `docs/CONSUMERS.md` section 5 as rows with their state (the `lock.process` row is built in 0.9.27; the rest unscheduled), and the adoption order the survey ranked.
+
 ## 0.9.27
 
 ### Added

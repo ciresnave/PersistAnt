@@ -106,6 +106,20 @@ CireSnave 2026-10-22: *"I like your option (3) that keeps the SQLx PostgreSQL ch
 
 Built and published as 0.9.24: `KvBackend::take` (`kv.take`, 0.9.20, over `compare_and_delete`), `KvBackend::count` (`kv.count`, 0.9.23, native on memory and the SQL engines) and `persistant_kv::index::Indexed` (`kv.index`, 0.9.24, secondary-key lookup over `batch` and `ordered_scan_values`). On memory, SQLite, PostgreSQL, MySQL and MariaDB; **not** on the OpenDAL blob stores, which have neither `compare_and_delete` nor `batch`. The auth-framework lane builds its `AuthStorage` on them (its work, not this repo's). Open: Redis is not a PersistAnt backend; throughput of the index layer against auth-framework's own SQL is unmeasured.
 
+## Portfolio adoption (survey: `docs/CONSUMERS.md`, 2026-10-23)
+
+CireSnave's standing order (2026-10-21, `CIRESNAVE-EXPECTATIONS.md` 6.17): no project is limited to one backend where PersistAnt offers several. The survey read twelve projects; adoption order: auth-framework, commy, agentlife, lightbulb, synapse, Humboldt (five are not candidates; mlmf waits on streamed blob I/O). Those are the lanes' own work. What it asks of this repo, in order of how many projects each unblocks; none is scheduled until the PM assigns it:
+
+| # | Ask | State |
+|---|---|---|
+| 1 | A registry example and a short guide for projects that still name a backend in code (`Store` + `Config::Fs`: commy, agentlife, lightbulb) | not started |
+| 2 | A matrix row for `lock.process` | **built (0.9.27)**: `std-file-lock`, decided by a killed child process |
+| 3 | Pool options on `PgBackend::connect` (lightbulb builds its own pool for an acquire timeout) | re-check against the current release first |
+| 4 | Streamed or ranged blob I/O (`blob` is whole-value today) | design first; blocks mlmf |
+| 5 | `storage.no_plaintext_at_rest` (reserved in the vocabulary: a canary value written through the layer is not found as raw bytes in the data directory, log or temp files) | reserved leaf, no implementation or row; no project states the need yet |
+| 6 | A Redis backend | only if auth-framework's operators need it |
+| 7 | Owner-only files on Windows | open with CireSnave (see File permissions) |
+
 ## File permissions
 
 SQLite databases are created owner-only (`0600`) on Unix since 0.9.21 (a new test fails without it). **Windows is open**: a new file inherits the directory's ACL; restricting it needs the Win32 security API or a call to `icacls`, and an OS-abstraction crate for owner-only files is a scope question the PM put to CireSnave (2026-10-23). Nothing is built for it.
