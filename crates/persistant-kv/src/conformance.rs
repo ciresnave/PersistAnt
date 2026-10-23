@@ -53,6 +53,8 @@ pub enum Leaf {
     CompareAndDelete,
     /// `kv.take`, by sampled concurrency
     Take,
+    /// `kv.count`, in real time (a time to live expires)
+    Count,
     /// `lock.lease`, by real time and sampled concurrency
     Lease,
     /// `kv.ttl_remaining`, in real time
@@ -80,7 +82,7 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 19] = [
+    pub const ALL: [Leaf; 20] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -91,6 +93,7 @@ impl Leaf {
         Leaf::CompareAndSwap,
         Leaf::CompareAndDelete,
         Leaf::Take,
+        Leaf::Count,
         Leaf::Lease,
         Leaf::TtlRemaining,
         Leaf::PurgeExpired,
@@ -115,6 +118,7 @@ impl Leaf {
             Leaf::CompareAndSwap => "kv.compare_and_swap",
             Leaf::CompareAndDelete => "kv.compare_and_delete",
             Leaf::Take => "kv.take",
+            Leaf::Count => "kv.count",
             Leaf::Lease => "lock.lease",
             Leaf::TtlRemaining => "kv.ttl_remaining",
             Leaf::PurgeExpired => "kv.purge_expired",
@@ -134,6 +138,7 @@ impl Leaf {
             Leaf::CompareAndSwap | Leaf::CompareAndDelete | Leaf::Take => "contenders=16;rounds=20",
             Leaf::Lease => "contenders=16;rounds=5;ttl_ms=200;sleep_ms=300",
             Leaf::TtlRemaining => "ttl_ms=10000;sleep_ms=150",
+            Leaf::Count => "ttl_ms=100;sleep_ms=250",
             Leaf::PurgeExpired => "ttl_ms=100;sleep_ms=250",
             Leaf::BatchRollback => "contenders=16;rounds=20",
             Leaf::BatchConcurrentRead => "readers=4;batches=60",
@@ -154,6 +159,7 @@ impl Leaf {
             | Leaf::PurgeExpired
             | Leaf::Lease
             | Leaf::PrefixList
+            | Leaf::Count
             | Leaf::ScanValues => true,
             Leaf::Get
             | Leaf::Put
@@ -191,6 +197,7 @@ impl Leaf {
             Leaf::CompareAndSwap => &[Defect::CasIgnoresExpected, Defect::CasNotAtomic],
             Leaf::CompareAndDelete => &[Defect::CadIgnoresExpected, Defect::CadNotAtomic],
             Leaf::Take => &[Defect::TakeNotExclusive, Defect::TakeLeavesValue],
+            Leaf::Count => &[Defect::CountIncludesExpired, Defect::CountIgnoresPrefix],
             Leaf::TtlRemaining => &[Defect::TtlRemainingIsConstant, Defect::TtlIgnored],
             Leaf::PurgeExpired => &[Defect::PurgeRemovesLive],
             Leaf::BatchRollback => &[Defect::BatchNotAtomic, Defect::BatchIgnoresRequire],
@@ -262,6 +269,7 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::CompareAndSwap => compare_and_swap(b, &base).await,
         Leaf::CompareAndDelete => compare_and_delete(b, &base).await,
         Leaf::Take => take(b, &base).await,
+        Leaf::Count => count(b, &base).await,
         Leaf::Lease => lease(b, &base).await,
         Leaf::TtlRemaining => ttl_remaining(b, &base).await,
         Leaf::PurgeExpired => purge_expired(b, &base).await,
@@ -674,6 +682,43 @@ async fn take<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
                 "round {round}: the value is still there after a take"
             ));
         }
+    }
+    Ok(())
+}
+
+async fn count<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    let ttl = Duration::from_millis(100);
+    let pre = format!("{base}a/");
+    if b.count(&pre).await? != 0 {
+        return wrong("an unused prefix counted keys");
+    }
+    for i in 0..5 {
+        b.put(&format!("{pre}{i}"), b"v".to_vec(), None).await?;
+    }
+    // Neighbours that share the first characters, and keys holding pattern characters.
+    for other in ["ab/0", "a%/0", "a_/0", "a[/0"] {
+        b.put(&format!("{base}{other}"), b"v".to_vec(), None)
+            .await?;
+    }
+    if b.count(&pre).await? != 5 {
+        return wrong("a prefix with 5 keys did not count 5 (neighbours counted, or keys missed)");
+    }
+    for pattern in ["a%/", "a_/", "a[/"] {
+        let n = b.count(&format!("{base}{pattern}")).await?;
+        if n != 1 {
+            return wrong(format!(
+                "the prefix {pattern:?} counted {n}, want 1: pattern characters are literal"
+            ));
+        }
+    }
+    b.delete(&format!("{pre}0")).await?;
+    if b.count(&pre).await? != 4 {
+        return wrong("a deleted key was still counted");
+    }
+    b.put(&format!("{pre}t"), b"v".to_vec(), Some(ttl)).await?;
+    std::thread::sleep(Duration::from_millis(250));
+    if b.count(&pre).await? != 4 {
+        return wrong("an expired key was counted");
     }
     Ok(())
 }
@@ -1619,6 +1664,7 @@ mod tests {
                 Leaf::CompareAndSwap
                     | Leaf::CompareAndDelete
                     | Leaf::Take
+                    | Leaf::Count
                     | Leaf::Lease
                     | Leaf::PurgeExpired
                     | Leaf::BatchRollback

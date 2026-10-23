@@ -9,6 +9,7 @@ capability	kv.ordered_scan	kv-on-relational:postgres	0.9+16.15	dialect=postgres	
 capability	kv.compare_and_swap	kv-on-relational:postgres	0.9+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_swap	
 capability	kv.compare_and_delete	kv-on-relational:postgres	0.9+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.compare_and_delete	
 capability	kv.take	kv-on-relational:postgres	0.9+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=20;test=kv::kv.take	
+capability	kv.count	kv-on-relational:postgres	0.9+16.15	dialect=postgres	yes		arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.count;ttl_ms=100	
 capability	lock.lease	kv-on-relational:postgres	0.9+16.15	dialect=postgres	yes		arch=x86_64;contenders=16;os=linux;rounds=5;sleep_ms=300;test=kv::lock.lease;ttl_ms=200	
 capability	kv.ttl_remaining	kv-on-relational:postgres	0.9+16.15	dialect=postgres	yes		arch=x86_64;os=linux;sleep_ms=150;test=kv::kv.ttl_remaining;ttl_ms=10000	
 capability	kv.purge_expired	kv-on-relational:postgres	0.9+16.15	dialect=postgres	yes		arch=x86_64;os=linux;sleep_ms=250;test=kv::kv.purge_expired;ttl_ms=100	

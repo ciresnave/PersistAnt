@@ -51,6 +51,10 @@ pub enum Defect {
     TakeNotExclusive,
     /// `take` returns the value and leaves it in place.
     TakeLeavesValue,
+    /// `count` counts expired entries too.
+    CountIncludesExpired,
+    /// `count` ignores the prefix and counts every live key.
+    CountIgnoresPrefix,
     /// A call blocked past its bound is never cut off: it finishes late, or not at all.
     BoundIgnored,
     /// A batch cut off by the timeout is applied anyway once the block is gone.
@@ -345,6 +349,16 @@ impl KvBackend for MemoryKv {
             map.retain(|_, e| live(e));
         }
         Ok((before - map.len()) as u64)
+    }
+
+    async fn count(&self, prefix: &str) -> Result<u64, KvError> {
+        let map = self.map();
+        let every = self.defect == Some(Defect::CountIgnoresPrefix);
+        let expired_too = self.defect == Some(Defect::CountIncludesExpired);
+        Ok(map
+            .iter()
+            .filter(|(k, e)| (every || k.starts_with(prefix)) && (expired_too || live(e)))
+            .count() as u64)
     }
 
     async fn batch(&self, ops: &[BatchOp]) -> Result<bool, KvError> {
