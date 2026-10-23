@@ -27,6 +27,9 @@ use crate::Store as AsyncStore;
 use crate::error::{Error, Result};
 use crate::store::{Config, Entry, Needs, Page, Record, decode_record, encode_record};
 
+#[cfg(feature = "registry")]
+pub mod registry;
+
 type Job = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 thread_local! {

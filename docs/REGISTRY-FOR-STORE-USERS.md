@@ -37,16 +37,17 @@ Measured against `origin/main` at 0.9.28 (`matrix/*.tsv`, `src/registry.rs`).
 | `CreateIfAbsent` | `kv.put_if_absent` | **not on `fs`**: with a scratch directory the exclusive create is check-then-rename, so the matrix has it off. Asking for it lists `mysql`, `postgres`, `sqlite` and `sqlite-full` at `Process` durability (`mariadb` and `memory` join at `Volatile`; run on 0.9.28) |
 | `Stat`, `MaxValueSize` | none | there is no key-value counterpart: values are whole `Vec<u8>`; if you need a size limit, check it yourself |
 
-And three things a program may use *beside* the `Store` API (the old `Store` has no append and no locks; these come from the blob driver and `persistant-opendal`) that the registry **does not serve today** (its handle is the key-value kind only):
+And three things a program may use *beside* the `Store` API (the old `Store` has no append and no locks; these come from the blob driver and `persistant-opendal`) that the registry **does not serve** (its handle is the key-value kind only), and one it now does:
 
 * **Append** (`blob.append`, certified on `opendal-fs`): agentlife's journal. Keep the file, or write one key per entry and read
   them back with `kv.ordered_scan`.
 * **Locks** (`lock.process`, `lock.lease`): not offered by the registry. `lock.process` has its own row from 0.9.27 and
   is used directly through `persistant_opendal::ProcessLock`.
-* **A synchronous call**: `registry::open_named` is `async`, and so is every `KvBackend` call. The older `persistant::blocking::Store`
-  exists for synchronous programs; there is no blocking registry yet. agentlife measured about 11 ms per write on that facade
-  (each write starts a worker thread and a runtime), so a synchronous program should hold one runtime and `block_on` it, not
-  open per call.
+* **A synchronous call** is served from 0.9.32 by `persistant::blocking::registry`: the same `providers`, and `open_named`
+  returns a `KvHandle` with blocking `get`, `put`, `delete`, `put_if_absent`, `prefix_list`, `take`, `count` and the rest. It
+  uses the worker of `blocking::Store` (one thread, a private single-threaded runtime), so it is safe from plain code, from many
+  threads and from inside another runtime. **Keep one handle for the life of the program**: agentlife measured about 11 ms per
+  write on the older facade because each write started a worker thread and a runtime, and opening per call would repeat that.
 
 ## Durability
 
