@@ -6,7 +6,7 @@
 
 use persistant::capability::{CapabilityId, choose::Durability, provider::ProviderNeeds};
 use persistant::kv::KvBackend;
-use persistant::registry::{self, Endpoint};
+use persistant::registry::{self, Endpoint, OpenError};
 
 fn needs() -> ProviderNeeds {
     ProviderNeeds::new(
@@ -22,8 +22,19 @@ fn needs() -> ProviderNeeds {
 async fn keys_that_differ_only_by_case_never_share_a_value() {
     let dir = tempfile::tempdir().unwrap();
     match registry::open_named("fs", &Endpoint::path(dir.path().join("s")), &needs()).await {
-        // Refused: correct wherever the filesystem ignores case.
-        Err(_) => {}
+        // Refused: correct wherever the filesystem ignores case, and it says why.
+        Err(e) => {
+            assert!(
+                matches!(e, OpenError::CaseInsensitiveFilesystem { id: "fs", .. }),
+                "{e:?}"
+            );
+            assert!(e.to_string().contains("ignores case"), "{e}");
+            // The positive control: this machine really is case-insensitive.
+            assert!(
+                cfg!(any(windows, target_os = "macos")),
+                "refused on a platform whose default filesystem keeps case: {e}"
+            );
+        }
         // Opened: the two keys must be two values.
         Ok(h) => {
             let kv = h.kv();
@@ -33,4 +44,22 @@ async fn keys_that_differ_only_by_case_never_share_a_value() {
             assert_eq!(kv.get("key").await.unwrap().as_deref(), Some(&b"lower"[..]));
         }
     }
+}
+
+#[tokio::test]
+async fn the_other_ids_are_not_probed() {
+    // `memory` has no directory; the control that the probe belongs to `fs` only.
+    let needs = ProviderNeeds::new(
+        ["kv.get", "kv.put"]
+            .iter()
+            .map(|s| CapabilityId::new(*s).expect("a literal id"))
+            .collect(),
+        Durability::Volatile,
+    );
+    let h = registry::open_named("memory", &Endpoint::None, &needs)
+        .await
+        .expect("memory opens everywhere");
+    h.kv().put("Key", b"a".to_vec(), None).await.unwrap();
+    h.kv().put("key", b"b".to_vec(), None).await.unwrap();
+    assert_eq!(h.kv().get("Key").await.unwrap().as_deref(), Some(&b"a"[..]));
 }
