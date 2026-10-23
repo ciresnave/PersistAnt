@@ -183,6 +183,6 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
-        assert_eq!(VERSION, "0.9.23");
+        assert_eq!(VERSION, "0.9.24");
     }
 }

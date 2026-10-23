@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.24
+
+### Added
+- **`persistant_kv::index::Indexed` (`kv.index`)**: secondary-key lookup as a layer over `batch` and `ordered_scan_values` (`docs/DESIGN-AUTH-STORAGE.md` section 4.3; last of its three steps). `insert`, `replace` (if the record still holds the expected value) and `remove` move a record and its index entries in one batch; `lookup` scans the entries under a prefix from one snapshot and reads each record, `lookup_one` follows a single entry. A backend without `batch` or `ordered_scan_values` (a blob store) returns `Unsupported` and the leaf is `no`: an index that can diverge from its records is worse than none. New conformance leaf (insert/replace/remove, stale expectations, eight contenders replacing one value ten times, entries matching the winner) with known-bad controls `BatchIgnoresRequire` and `BatchNotAtomic`; a vocabulary entry; one new matrix row per kv backend.
+
 ## 0.9.23
 
 ### Added

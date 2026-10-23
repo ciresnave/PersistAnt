@@ -55,6 +55,8 @@ pub enum Leaf {
     Take,
     /// `kv.count`, in real time (a time to live expires)
     Count,
+    /// `kv.index`: records with secondary index entries, by sampled concurrency
+    Index,
     /// `lock.lease`, by real time and sampled concurrency
     Lease,
     /// `kv.ttl_remaining`, in real time
@@ -82,7 +84,7 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 20] = [
+    pub const ALL: [Leaf; 21] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -94,6 +96,7 @@ impl Leaf {
         Leaf::CompareAndDelete,
         Leaf::Take,
         Leaf::Count,
+        Leaf::Index,
         Leaf::Lease,
         Leaf::TtlRemaining,
         Leaf::PurgeExpired,
@@ -119,6 +122,7 @@ impl Leaf {
             Leaf::CompareAndDelete => "kv.compare_and_delete",
             Leaf::Take => "kv.take",
             Leaf::Count => "kv.count",
+            Leaf::Index => "kv.index",
             Leaf::Lease => "lock.lease",
             Leaf::TtlRemaining => "kv.ttl_remaining",
             Leaf::PurgeExpired => "kv.purge_expired",
@@ -139,6 +143,7 @@ impl Leaf {
             Leaf::Lease => "contenders=16;rounds=5;ttl_ms=200;sleep_ms=300",
             Leaf::TtlRemaining => "ttl_ms=10000;sleep_ms=150",
             Leaf::Count => "ttl_ms=100;sleep_ms=250",
+            Leaf::Index => "contenders=8;rounds=10",
             Leaf::PurgeExpired => "ttl_ms=100;sleep_ms=250",
             Leaf::BatchRollback => "contenders=16;rounds=20",
             Leaf::BatchConcurrentRead => "readers=4;batches=60",
@@ -169,6 +174,7 @@ impl Leaf {
             | Leaf::CompareAndSwap
             | Leaf::CompareAndDelete
             | Leaf::Take
+            | Leaf::Index
             | Leaf::BatchRollback
             | Leaf::BatchConcurrentRead
             | Leaf::OptimisticSequence
@@ -198,6 +204,7 @@ impl Leaf {
             Leaf::CompareAndDelete => &[Defect::CadIgnoresExpected, Defect::CadNotAtomic],
             Leaf::Take => &[Defect::TakeNotExclusive, Defect::TakeLeavesValue],
             Leaf::Count => &[Defect::CountIncludesExpired, Defect::CountIgnoresPrefix],
+            Leaf::Index => &[Defect::BatchIgnoresRequire, Defect::BatchNotAtomic],
             Leaf::TtlRemaining => &[Defect::TtlRemainingIsConstant, Defect::TtlIgnored],
             Leaf::PurgeExpired => &[Defect::PurgeRemovesLive],
             Leaf::BatchRollback => &[Defect::BatchNotAtomic, Defect::BatchIgnoresRequire],
@@ -270,6 +277,7 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::CompareAndDelete => compare_and_delete(b, &base).await,
         Leaf::Take => take(b, &base).await,
         Leaf::Count => count(b, &base).await,
+        Leaf::Index => index(b, &base).await,
         Leaf::Lease => lease(b, &base).await,
         Leaf::TtlRemaining => ttl_remaining(b, &base).await,
         Leaf::PurgeExpired => purge_expired(b, &base).await,
@@ -719,6 +727,136 @@ async fn count<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     std::thread::sleep(Duration::from_millis(250));
     if b.count(&pre).await? != 4 {
         return wrong("an expired key was counted");
+    }
+    Ok(())
+}
+
+async fn index<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    use crate::index::Indexed;
+    const CONTENDERS: usize = 8;
+    const ROUNDS: usize = 10;
+    let ix = Indexed::new(b);
+    let user = format!("{base}user:7:");
+    let (p1, p2) = (format!("{base}rec:1"), format!("{base}rec:2"));
+    let (u1, u2) = (format!("{user}1"), format!("{user}2"));
+    let (a1, a2) = (format!("{base}at:A"), format!("{base}at:B"));
+
+    if !ix.insert(&p1, b"v1".to_vec(), &[&u1, &a1], None).await? {
+        return wrong("a new record was refused");
+    }
+    if ix.insert(&p1, b"other".to_vec(), &[&u1], None).await? {
+        return wrong("an insert over an existing record was accepted");
+    }
+    if b.get(&p1).await?.as_deref() != Some(&b"v1"[..]) {
+        return wrong("a refused insert changed the record");
+    }
+    if !ix.insert(&p2, b"v2".to_vec(), &[&u2], None).await? {
+        return wrong("a second new record was refused");
+    }
+    let found = ix.lookup(&user).await?;
+    if found != [(p1.clone(), b"v1".to_vec()), (p2.clone(), b"v2".to_vec())] {
+        return wrong(format!("a lookup under the user prefix returned {found:?}"));
+    }
+    if ix.lookup_one(&a1).await? != Some((p1.clone(), b"v1".to_vec())) {
+        return wrong("a lookup by access-token entry did not find the record");
+    }
+    if !ix.lookup(&format!("{base}nobody:")).await?.is_empty()
+        || ix.lookup_one(&a2).await?.is_some()
+    {
+        return wrong("a lookup of an absent index returned something");
+    }
+
+    // A replace expecting a value the record does not hold changes nothing.
+    if ix
+        .replace(
+            &p1,
+            b"stale",
+            b"v1b".to_vec(),
+            &[&u1, &a1],
+            &[&u1, &a2],
+            None,
+        )
+        .await?
+    {
+        return wrong("a replace expecting a stale value was accepted");
+    }
+    if ix.lookup_one(&a1).await?.is_none() || ix.lookup_one(&a2).await?.is_some() {
+        return wrong("a refused replace moved an index entry");
+    }
+    // A replace expecting the current value moves the record and its entries together.
+    if !ix
+        .replace(&p1, b"v1", b"v1b".to_vec(), &[&u1, &a1], &[&u1, &a2], None)
+        .await?
+    {
+        return wrong("a replace expecting the current value was refused");
+    }
+    if ix.lookup_one(&a1).await?.is_some() {
+        return wrong("a replace left the old index entry behind");
+    }
+    if ix.lookup_one(&a2).await? != Some((p1.clone(), b"v1b".to_vec())) {
+        return wrong("a replace did not create the new index entry");
+    }
+
+    // Concurrent replaces of one value: one winner, and the entries match the winner.
+    for round in 0..ROUNDS {
+        let key = format!("{base}race:{round}");
+        let key = key.as_str();
+        b.put(key, b"0".to_vec(), None).await?;
+        let entries: Vec<String> = (0..CONTENDERS)
+            .map(|i| format!("{base}by:{round}:{i}"))
+            .collect();
+        let values: Vec<Vec<u8>> = (0..CONTENDERS)
+            .map(|i| format!("w{i}").into_bytes())
+            .collect();
+        let tasks: Vec<Task<'_, Result<bool, KvError>>> = (0..CONTENDERS)
+            .map(|i| -> Task<'_, _> {
+                let (entry, value) = (entries[i].clone(), values[i].clone());
+                Box::pin(async move {
+                    ix.replace(key, b"0", value, &[], &[entry.as_str()], None)
+                        .await
+                })
+            })
+            .collect();
+        let mut winner = None;
+        for (i, r) in join_all(tasks).await.into_iter().enumerate() {
+            if r? && winner.replace(i).is_some() {
+                return wrong(format!(
+                    "round {round}: more than one concurrent replace won"
+                ));
+            }
+        }
+        let Some(w) = winner else {
+            return wrong(format!("round {round}: no concurrent replace won"));
+        };
+        if b.get(key).await?.as_deref() != Some(values[w].as_slice()) {
+            return wrong(format!(
+                "round {round}: the record is not the winner's value"
+            ));
+        }
+        for (i, entry) in entries.iter().enumerate() {
+            let present = b.get(entry).await?.is_some();
+            if present != (i == w) {
+                return wrong(format!(
+                    "round {round}: index entry {i} is {} but the winner is {w}",
+                    if present { "present" } else { "absent" }
+                ));
+            }
+        }
+    }
+
+    // A remove expecting a stale value changes nothing; the current one removes record and entries.
+    if ix.remove(&p1, b"stale", &[&u1, &a2]).await? {
+        return wrong("a remove expecting a stale value was accepted");
+    }
+    if !ix.remove(&p1, b"v1b", &[&u1, &a2]).await? {
+        return wrong("a remove expecting the current value was refused");
+    }
+    if b.get(&p1).await?.is_some() || ix.lookup_one(&a2).await?.is_some() {
+        return wrong("a remove left the record or an index entry behind");
+    }
+    let rest = ix.lookup(&user).await?;
+    if rest != [(p2.clone(), b"v2".to_vec())] {
+        return wrong(format!("after a remove, the user prefix returned {rest:?}"));
     }
     Ok(())
 }
@@ -1665,6 +1803,7 @@ mod tests {
                     | Leaf::CompareAndDelete
                     | Leaf::Take
                     | Leaf::Count
+                    | Leaf::Index
                     | Leaf::Lease
                     | Leaf::PurgeExpired
                     | Leaf::BatchRollback
