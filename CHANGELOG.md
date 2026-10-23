@@ -5,11 +5,6 @@
 ### Added
 - **`KvBackend::count` (`kv.count`)**: the number of live keys beginning with a literal prefix, from one consistent snapshot (`docs/DESIGN-AUTH-STORAGE.md` section 4.2). Native on `MemoryKv` and on the SQL engines (one `SELECT count(*)` over the same key range as `prefix_list`); the default, and a blob store, is `Unsupported`, so the matrix says `no` there. New conformance leaf (neighbouring prefixes, `%` `_` `[` as literal characters, a delete, an expiry) with two known-bad controls (`CountIncludesExpired`, `CountIgnoresPrefix`). `persistant_kv::count_prefix_paged` counts by paging `prefix_list` for a backend without it and is documented as not a snapshot; the matrix does not claim `kv.count` for it. One new matrix row per kv backend.
 
-## 0.9.21
-
-### Fixed
-- **`SqliteBackend::open` and `open_durable` create the database owner-only on Unix** (`0600`; its `-wal` and `-shm` files follow the database file). They were SQLite's default `0644` less the umask, world-readable under the usual `022`: found by the 0.9.20 check of the per-tenant open path. A file that already exists keeps the mode its owner gave it. On Windows nothing changes: the file inherits the directory's ACL, and restricting it needs the Win32 security API or a call to `icacls`, neither of which this crate takes on; restrict the directory the databases live in.
-
 ## 0.9.22
 
 ### Fixed
