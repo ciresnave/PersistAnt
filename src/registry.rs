@@ -176,6 +176,16 @@ pub enum OpenError {
         /// What the server turned out to be (the matrix backend name).
         found: String,
     },
+    /// The directory is on a filesystem that ignores case, so two keys that differ only by case
+    /// (`Key` and `key`) would be one file and one value. `fs` keeps a key as a file path and
+    /// refuses to open there; no key was written (the directory itself may have been created, and is left). Choose a backend that keeps keys
+    /// apart, or put the directory on a case-sensitive filesystem.
+    CaseInsensitiveFilesystem {
+        /// The id asked for.
+        id: &'static str,
+        /// The directory that was probed.
+        path: PathBuf,
+    },
     /// The backend failed to open.
     Open(String),
 }
@@ -207,6 +217,11 @@ impl fmt::Display for OpenError {
                     "backend `{id}` was asked for, but the server is `{found}`"
                 )
             }
+            OpenError::CaseInsensitiveFilesystem { id, path } => write!(
+                f,
+                "backend `{id}` cannot be used at {}: the filesystem there ignores case, so keys that differ only by case would share one file and one value. Choose `sqlite`, `sqlite-full`, `postgres`, `mysql` or `mariadb` (each needs its `registry-*` Cargo feature), or a directory on a case-sensitive filesystem",
+                path.display()
+            ),
             OpenError::Open(m) => write!(f, "could not open: {m}"),
         }
     }
@@ -271,6 +286,7 @@ fn specs() -> Vec<Spec> {
             notes: &[
                 "Opens from a directory path; writes go through a scratch directory beside it (`<dir>.persistant-atomic`) so a reader never sees a half-written value.",
                 "Survives the process exiting or crashing; no fsync is asserted, so a power cut can lose recent writes.",
+                "Refuses to open in a directory on a filesystem that ignores case (the Windows and macOS defaults): a key is a file path, so `Key` and `key` would be one value. The check is made at open, on the directory itself, not assumed from the operating system.",
             ],
         },
     ];
@@ -771,6 +787,40 @@ pub async fn open_named_with(
     Ok(Handle { id: spec.id, kv })
 }
 
+fn path_exists(p: &Path) -> bool {
+    p.symlink_metadata().is_ok()
+}
+
+/// Whether `dir` is on a filesystem that ignores case: create a probe file whose name has both cases
+/// in it, look for the same name with its case flipped, and remove the probe. `exists` is how the
+/// flipped name is looked up (the real filesystem in production; a stand-in in the tests). The probe
+/// is always removed, and a probe that cannot be created is an error, not "case-sensitive".
+fn directory_ignores_case(dir: &Path, exists: fn(&Path) -> bool) -> std::io::Result<bool> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let name = format!(".Persistant-Case-Probe-{}-{nanos}", std::process::id());
+    let flipped: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect();
+    debug_assert_ne!(name, flipped);
+    let probe = dir.join(&name);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)?;
+    let aliased = exists(&dir.join(&flipped));
+    std::fs::remove_file(&probe)?;
+    Ok(aliased)
+}
+
 /// Open the key-value store of provider `id`. With a `bound`, the database backends are opened
 /// through `Bounded`; the tables are created first through an unbounded connection, because the DDL
 /// of a first open can outlast any bound short enough to be useful and what is bounded is the
@@ -790,6 +840,12 @@ async fn open_kv(
             scratch.push(".persistant-atomic");
             let scratch = PathBuf::from(scratch);
             std::fs::create_dir_all(root).map_err(|e| open(&e))?;
+            if directory_ignores_case(root, path_exists).map_err(|e| open(&e))? {
+                return Err(OpenError::CaseInsensitiveFilesystem {
+                    id: "fs",
+                    path: root.clone(),
+                });
+            }
             std::fs::create_dir_all(&scratch).map_err(|e| open(&e))?;
             Ok(AnyKv::Blob(KvOnBlob::new(
                 OpendalBlob::fs(root, Some(&scratch)).map_err(|e| open(&e))?,
@@ -856,5 +912,49 @@ async fn open_kv(
             }
         }
         _ => Err(OpenError::Open(format!("no opener for `{id}`"))),
+    }
+}
+
+#[cfg(test)]
+mod case_probe_tests {
+    use super::*;
+
+    #[test]
+    fn a_stand_in_that_sees_the_flipped_name_means_case_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(directory_ignores_case(dir.path(), |_| true).unwrap());
+    }
+
+    #[test]
+    fn a_stand_in_that_does_not_see_it_means_case_is_kept_and_the_probe_is_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!directory_ignores_case(dir.path(), |_| false).unwrap());
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            0,
+            "the probe file is gone"
+        );
+        // And with a positive answer too.
+        assert!(directory_ignores_case(dir.path(), |_| true).unwrap());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_directory_that_cannot_be_written_is_an_error_not_case_sensitive() {
+        let missing = std::env::temp_dir().join("persistant-no-such-dir-for-the-probe/x");
+        assert!(directory_ignores_case(&missing, path_exists).is_err());
+    }
+
+    #[test]
+    fn the_real_lookup_agrees_with_the_operating_system_default() {
+        // The temporary directory is on the platform's default filesystem: NTFS ignores case, a
+        // Linux tmpfs or ext4 keeps it. macOS volumes can be either, so it is not asserted there.
+        let dir = tempfile::tempdir().unwrap();
+        let ignores = directory_ignores_case(dir.path(), path_exists).unwrap();
+        if cfg!(windows) {
+            assert!(ignores, "NTFS ignores case by default");
+        } else if cfg!(target_os = "linux") {
+            assert!(!ignores, "a Linux temp directory keeps case");
+        }
     }
 }

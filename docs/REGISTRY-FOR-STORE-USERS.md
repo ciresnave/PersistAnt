@@ -75,9 +75,14 @@ server to wait for. Without it, wrap each call in your own timeout.
 
 `fs` stores a key as a file path. On a case-insensitive filesystem (NTFS and APFS by default) two keys that differ only by case are
 **the same file**. Measured on Windows, 2026-10-23, through `open_named("fs", ..)`: `put("Key", "upper")` then `put("key", "lower")`
-then `get("Key")` returns `lower`. The registry lists `fs` on those machines all the same, because its gate reads rows recorded on
-Linux (`os` is metadata in a row, not part of the lookup). If your keys can differ only by case, either normalise them yourself
-(lower-case or hex-encode before `put`) or choose a SQL backend (the old `Store` also kept keys as paths; that was not re-measured). A guard in the registry is an open ROADMAP row.
+then `get("Key")` returned `lower`. **From 0.9.33 `open_named("fs", ..)` refuses such a directory** with
+`OpenError::CaseInsensitiveFilesystem { id, path }` (it creates a probe file whose name has both cases, looks the name up with the case
+flipped, and removes the probe), so the aliasing can no longer happen silently. `providers()` still lists `fs` there, because it has no
+directory to probe and the property belongs to the directory, not the operating system (macOS can have case-sensitive volumes, Linux
+case-insensitive directories): the listing says so in its notes, and `examples/registry_instead_of_config.rs` shows a program trying the
+next listed id. To use `fs` on such a machine anyway you would need keys that cannot differ only by case (lower-case or hex-encode them
+yourself before `put`), but the registry will still refuse the directory; choose a SQL backend or a case-sensitive directory. Making `fs`
+work there with a key encoding is an open ROADMAP row (the old `Store` also kept keys as paths; that was not re-measured).
 
 ## What to do with a configuration that already names a backend
 

@@ -22,7 +22,7 @@
 
 use persistant::capability::{CapabilityId, choose::Durability, provider::ProviderNeeds};
 use persistant::kv::KvBackend;
-use persistant::registry::{self, Endpoint};
+use persistant::registry::{self, Endpoint, OpenError};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,14 +50,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. The operator's choice, as the program would have read it from its own configuration.
     let mut args = std::env::args().skip(1);
-    let chosen = args.next().unwrap_or_else(|| "fs".to_string());
+    let requested = args.next();
     let scratch = tempfile::tempdir()?;
-    let dir = args
-        .next()
-        .map_or_else(|| scratch.path().join("state"), std::path::PathBuf::from);
+    let given = args.next().map(std::path::PathBuf::from);
 
     // 4. Open it. The gate is checked again here: a backend that no longer meets the needs is refused.
-    let handle = registry::open_named(&chosen, &Endpoint::path(&dir), &needs).await?;
+    let handle = match requested {
+        Some(chosen) => {
+            let dir = given.unwrap_or_else(|| scratch.path().join("state"));
+            registry::open_named(&chosen, &Endpoint::path(&dir), &needs).await?
+        }
+        // No id given: take the first listed backend that opens here. `fs` is refused on a directory
+        // whose filesystem ignores case (the Windows and macOS defaults), so the next one is tried.
+        None => {
+            let mut opened = None;
+            for l in &list {
+                let dir = scratch.path().join(l.id);
+                match registry::open_named(l.id, &Endpoint::path(&dir), &needs).await {
+                    Ok(h) => {
+                        opened = Some(h);
+                        break;
+                    }
+                    Err(OpenError::CaseInsensitiveFilesystem { id, .. }) => {
+                        println!(
+                            "{id}: refused here (the filesystem ignores case); trying the next"
+                        );
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            opened.ok_or("no listed backend opens here: build with `--features registry-sqlite`")?
+        }
+    };
     let kv = handle.kv();
 
     // 5. Backend-agnostic calls only, under a prefix that no other run and no existing data shares.

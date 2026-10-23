@@ -106,9 +106,20 @@ async fn open_named_gives_a_backend_agnostic_handle_for_memory_and_fs() {
 
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("kv");
-    let h = registry::open_named("fs", &Endpoint::path(&root), &basic(Durability::Process))
+    let h = match registry::open_named("fs", &Endpoint::path(&root), &basic(Durability::Process))
         .await
-        .unwrap();
+    {
+        Ok(h) => h,
+        // A filesystem that ignores case (NTFS, APFS by default) is refused by name, not opened.
+        Err(OpenError::CaseInsensitiveFilesystem { id, .. }) => {
+            assert_eq!(id, "fs");
+            #[cfg(not(any(windows, target_os = "macos")))]
+            panic!("refused on a platform whose default filesystem keeps case");
+            #[cfg(any(windows, target_os = "macos"))]
+            return;
+        }
+        Err(other) => panic!("{other:?}"),
+    };
     h.kv().put("a", b"1".to_vec(), None).await.unwrap();
     drop(h);
     // The same id and path opened again sees the data: this is what "stored in config" means.
