@@ -124,7 +124,7 @@ CireSnave's standing order (2026-10-21, `CIRESNAVE-EXPECTATIONS.md` 6.17): no pr
 
 ## CodeRipper baseline (advisory; first run 2026-10-23)
 
-The advisory `portfolio` job (0.9.34) swept this repository once: Actions run 40005822738, `portfolio.yml` at coderipper `789b0122` (CodeRipper 0.8.19), on this branch over `main` `becddd8`. Six rules reported, in 15 findings; **one row per failing rule**, none silenced, none scheduled. The job skips `ci-protection-presence` (it needs repository-admin read); the PM's sweep reports that one.
+The advisory `portfolio` job (0.9.34) swept this repository once: Actions run 40005822738, `portfolio.yml` at coderipper `c665210a` (CodeRipper 0.8.19; the job is now pinned to `789b0122`, which only fixes the Windows bash lookup, a compiler wrapper and the default-branch case), on this branch over `main` `becddd8`. Six rules reported, in 15 findings; **one row per failing rule**, none silenced, none scheduled. The job skips `ci-protection-presence` (it needs repository-admin read); the PM's sweep reports that one.
 
 | Rule | Severity | Where | What it says, and what I make of it | State |
 |---|---|---|---|---|
