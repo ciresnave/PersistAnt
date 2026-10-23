@@ -85,6 +85,10 @@ sql-json = ["sql-macros", "persistant-relational/json"]
 sqlx-query = ["sql-macros"]
 sqlx-query-checked = ["sqlx-query", "persistant-macros/sqlx-check"]
 
+[[example]]
+name = "registry_instead_of_config"
+required-features = ["registry"]
+
 [dev-dependencies]
 tempfile = "3.27.0"
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros"] }
