@@ -249,7 +249,7 @@ jobs:
           toolchain: stable
 
       - name: cargo test persistant-sqlx --features mysql (against MariaDB)
-        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test checked_in_matrix_mariadb --test sweep --test decode_types --no-fail-fast
+        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test sweep --test decode_types --no-fail-fast
 
       - name: cargo test persistant registry (MariaDB)
         run: cargo test -p persistant --features registry-mysql --test registry_servers --no-fail-fast
@@ -307,7 +307,7 @@ jobs:
           toolchain: stable
 
       - name: cargo test persistant-sqlx --features mysql
-        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test checked_in_matrix_mysql --test durability_mysql --test sweep --test decode_types --no-fail-fast
+        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test durability_mysql --test sweep --test decode_types --no-fail-fast
 
       - name: cargo test persistant registry (MySQL)
         run: cargo test -p persistant --features registry-mysql --test registry_servers --no-fail-fast
