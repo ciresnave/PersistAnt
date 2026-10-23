@@ -12,6 +12,8 @@
 //! resist it.
 
 mod backend;
+#[cfg(feature = "sql")]
+mod bound;
 #[cfg(feature = "catalog")]
 pub mod catalog;
 pub mod choose;
@@ -36,6 +38,8 @@ pub use secret::{ConnectionSecret, Redacted};
 pub use sweep::{SweepError, SweepReport, sweep};
 pub use value::{Dialect, Row, Value};
 
+#[cfg(feature = "sql")]
+pub use bound::{Bound, InTx, Runner};
 #[cfg(feature = "sql")]
 pub use row::{Field, FieldKind, FromRow, FromValue, ToValue, TypedSql};
 #[cfg(feature = "sql")]

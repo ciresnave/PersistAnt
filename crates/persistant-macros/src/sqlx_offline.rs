@@ -7,9 +7,6 @@
 //! text. The type mapping is sqlx's (PostgreSQL, with its `chrono`, `uuid` and `json` features), so a
 //! generated record has the field types `sqlx::query!` would have given it.
 
-// Used by the macros of work order C; until then only the tests call it.
-#![allow(dead_code)]
-
 use serde_json::Value as Json;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};

@@ -101,11 +101,24 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(feature = "sql-macros")]
 pub use persistant_macros::sql;
 
+/// The sqlx bridge (feature `sqlx-query`): `sqlx_query!("SELECT ..", args..)`, `sqlx_query_as!(Type,
+/// "SELECT ..", args..)` and `sqlx_query_scalar!("SELECT ..", args..)` take sqlx's arguments and return a
+/// [`Bound`] statement; `.fetch_one(&db)`, `.fetch_optional(&db)`, `.fetch_all(&db)` and `.execute(&db)`
+/// run it on a PersistAnt backend (or `InTx::new(&mut tx, db.dialect())` in a transaction). The result
+/// types are read from sqlx's offline data (`.sqlx/query-<sha256>.json`, from `cargo sqlx prepare`),
+/// never from a second schema, and the statement is translated by UniSQL for `targets = [..]`
+/// (default `[postgres]`). With feature `sqlx-query-checked` each literal is also checked by sqlx's own
+/// macro, in a closure that is never called. Options come first and are all optional: `targets = [..]`,
+/// `allow = [..]` (as for `sql!`), `crate = ..` and `sqlx = ..`.
+/// See `docs/DESIGN-SQLX-BRIDGE.md`.
+#[cfg(feature = "sqlx-query")]
+pub use persistant_macros::{sqlx_query, sqlx_query_as, sqlx_query_scalar};
+
 /// What `sql!` expands to, and the extension traits that run it (feature `sql-macros`).
 #[cfg(feature = "sql-macros")]
 pub use persistant_relational::{
-    RelationalRowsExt, RelationalSqlExt, RelationalTxRowsExt, RelationalTxSqlExt, Sql, TypedSql,
-    embed,
+    Bound, InTx, RelationalRowsExt, RelationalSqlExt, RelationalTxRowsExt, RelationalTxSqlExt,
+    Runner, Sql, TypedSql, embed,
 };
 
 /// Typed rows (feature `sql-macros`): `#[derive(FromRow)]` reads a struct from a result row by
@@ -170,6 +183,6 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
-        assert_eq!(VERSION, "0.9.16");
+        assert_eq!(VERSION, "0.9.17");
     }
 }
