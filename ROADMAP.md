@@ -120,6 +120,7 @@ CireSnave's standing order (2026-10-21, `CIRESNAVE-EXPECTATIONS.md` 6.17): no pr
 | 6 | A Redis backend | only if auth-framework's operators need it |
 | 7 | Owner-only files on Windows | open with CireSnave (see File permissions) |
 | 8 | **The registry's `fs` has `kv.put_if_absent` off** (found 2026-10-23 by running the guide's example): its `atomic_write_dir=set` configuration makes the exclusive create check-then-rename (`matrix/opendal.tsv`), so a program that needs CreateIfAbsent is offered only the SQL backends. Either the exclusive create gets a correct implementation under a scratch directory (a design question: hard link or `O_EXCL` on the target, then rename over it) or the registry offers `fs` in a second, non-atomic-put configuration | not scheduled |
+| 9 | **The registry's `fs` aliases keys that differ only by case on a case-insensitive filesystem** (measured on Windows/NTFS 2026-10-23 through `open_named("fs", ..)`: put `Key`=upper, put `key`=lower, get `Key` returns lower). The registry lists `fs` there anyway because its gate reads rows recorded on Linux (`os` is metadata in a row, not part of the lookup). Options: encode keys in `KvOnBlob` so distinct keys are distinct paths (a layout change, with a migration), or make the gate refuse `fs` where a case probe fails | not scheduled; documented in `docs/REGISTRY-FOR-STORE-USERS.md` |
 
 ## File permissions
 
