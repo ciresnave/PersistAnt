@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.35
+
+### Fixed
+- **The five checked-in matrix tests no longer read outside their crate** (CodeRipper `SUP-004`, PM decision 2026-10-23). `persistant-opendal/tests/checked_in_matrix.rs` and `persistant-sqlx/tests/checked_in_matrix{,_sqlite,_mysql,_mariadb}.rs` did `include_str!("../../../matrix/*.tsv")`, which a published crate cannot do. They now live in the root crate's `tests/` (`checked_in_matrix_{opendal,postgres,sqlite,mysql,mariadb}.rs`), which already carries `matrix/` in its package (`registry.rs` reads it), so there is still **one** copy of each file. They run under `cargo test -p persistant --all-features`; the two MariaDB and MySQL CI steps no longer name them. No test changed otherwise.
+
 ## 0.9.34
 
 ### Added

@@ -2,13 +2,14 @@
 //! The checked-in `matrix/opendal.tsv` is readable by the gate's own reader, and says what the
 //! findings in `conformance.rs` and `kv_on_fs.rs` say. This is the consumer's path: parse the
 //! file, ask a question by `(subject, backend, version, config)`.
+#![cfg(feature = "registry")]
 
-use persistant_blob::BlobBackend;
-use persistant_core::{CapabilityId, Config, Lookup, Matrix, Reason};
-use persistant_opendal::OpendalBlob;
+use persistant::blob::BlobBackend;
+use persistant::capability::{CapabilityId, Config, Lookup, Matrix, Reason};
+use persistant::opendal_driver::OpendalBlob;
 
 fn matrix() -> Matrix {
-    let text = include_str!("../../../matrix/opendal.tsv");
+    let text = include_str!("../matrix/opendal.tsv");
     Matrix::parse(text).expect("the checked-in matrix parses")
 }
 

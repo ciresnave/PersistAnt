@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The checked-in `matrix/sqlx-mariadb.tsv` parses and records every certified leaf on.
+//! The checked-in `matrix/sqlx-postgres.tsv` parses and records every certified leaf on.
+#![cfg(feature = "core")]
 
-use persistant_core::{Config, Lookup, Matrix};
+use persistant::capability::{Config, Lookup, Matrix};
 
 #[test]
-fn the_recorded_mariadb_rows_are_all_on_and_read_by_the_gate() {
-    let m = Matrix::parse(include_str!("../../../matrix/sqlx-mariadb.tsv"))
+fn the_recorded_postgres_rows_are_all_on_and_read_by_the_gate() {
+    let m = Matrix::parse(include_str!("../matrix/sqlx-postgres.tsv"))
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
@@ -25,26 +26,20 @@ fn the_recorded_mariadb_rows_are_all_on_and_read_by_the_gate() {
             );
             continue;
         }
-        // MariaDB commits DDL implicitly: that leaf is off.
-        assert_eq!(
-            r.enabled,
-            r.subject.as_str() != "rel.migrate.ddl_atomic",
-            "{}: {}",
-            r.subject,
-            r.note
-        );
+        assert!(r.enabled, "{}: {}", r.subject, r.note);
         // kv rows are keyed by the adapter, relational rows by the server itself.
         let want = if r.subject.as_str().starts_with("rel.") {
-            "mariadb"
+            "postgres"
         } else {
-            "kv-on-relational:mariadb"
+            "kv-on-relational:postgres"
         };
         assert_eq!(r.backend, want);
-        assert_eq!(r.config.get("dialect"), Some("mariadb"));
+        assert_eq!(r.config.get("dialect"), Some("postgres"));
         assert!(r.metadata.get("test").is_some());
     }
+    // The lookup the gate performs, with the row's own key.
     let first = &m.rows()[0];
-    let actual = Config::new().with("dialect", "mariadb");
+    let actual = Config::new().with("dialect", "postgres");
     assert_eq!(
         m.lookup(&first.subject, &first.backend, &first.version, &actual),
         Lookup::On

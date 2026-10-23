@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! The checked-in `matrix/sqlx-sqlite.tsv` parses and records every certified leaf on, except rel.row_lock (SQLite has no row locks).
+#![cfg(feature = "core")]
 
-use persistant_core::{Config, Lookup, Matrix};
+use persistant::capability::{Config, Lookup, Matrix};
 
 #[test]
 fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
-    let m = Matrix::parse(include_str!("../../../matrix/sqlx-sqlite.tsv"))
+    let m = Matrix::parse(include_str!("../matrix/sqlx-sqlite.tsv"))
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),

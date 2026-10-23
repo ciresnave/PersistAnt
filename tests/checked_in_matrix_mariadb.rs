@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! The checked-in `matrix/sqlx-mysql.tsv` parses and records every certified leaf on.
+//! The checked-in `matrix/sqlx-mariadb.tsv` parses and records every certified leaf on.
+#![cfg(feature = "core")]
 
-use persistant_core::{Config, Lookup, Matrix};
+use persistant::capability::{Config, Lookup, Matrix};
 
 #[test]
-fn the_recorded_mysql_rows_are_all_on_and_read_by_the_gate() {
-    let m = Matrix::parse(include_str!("../../../matrix/sqlx-mysql.tsv"))
+fn the_recorded_mariadb_rows_are_all_on_and_read_by_the_gate() {
+    let m = Matrix::parse(include_str!("../matrix/sqlx-mariadb.tsv"))
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
@@ -25,7 +26,7 @@ fn the_recorded_mysql_rows_are_all_on_and_read_by_the_gate() {
             );
             continue;
         }
-        // MySQL commits DDL implicitly: that leaf is off.
+        // MariaDB commits DDL implicitly: that leaf is off.
         assert_eq!(
             r.enabled,
             r.subject.as_str() != "rel.migrate.ddl_atomic",
@@ -35,16 +36,16 @@ fn the_recorded_mysql_rows_are_all_on_and_read_by_the_gate() {
         );
         // kv rows are keyed by the adapter, relational rows by the server itself.
         let want = if r.subject.as_str().starts_with("rel.") {
-            "mysql"
+            "mariadb"
         } else {
-            "kv-on-relational:mysql"
+            "kv-on-relational:mariadb"
         };
         assert_eq!(r.backend, want);
-        assert_eq!(r.config.get("dialect"), Some("mysql"));
+        assert_eq!(r.config.get("dialect"), Some("mariadb"));
         assert!(r.metadata.get("test").is_some());
     }
     let first = &m.rows()[0];
-    let actual = Config::new().with("dialect", "mysql");
+    let actual = Config::new().with("dialect", "mariadb");
     assert_eq!(
         m.lookup(&first.subject, &first.backend, &first.version, &actual),
         Lookup::On
