@@ -1,0 +1,17 @@
+# The waivers of this repository's CodeRipper runs (the advisory `portfolio` job of ci.yml; `--no-config` ignores every other
+# configuration file, so this one decides). A waiver carries its reason and its owner and is reviewed in the pull request that adds it.
+
+# `ci-security` reads "a self-hosted runner" as "a job that needs our hardware" with the GPU as its proxy (CodeRipper lane,
+# 2026-10-23: by design). These two jobs need the physical power-loss rig. Both run only on push to main, schedule and
+# workflow_dispatch, never on a pull request (checked 2026-10-22 and again 2026-10-23). Owner: the PersistAnt lane.
+[[allow]]
+check = "ci-security"
+file = ".github/workflows/machine-durability.yml"
+symbol = "power-loss:runner"
+reason = "needs the physical power-loss rig (a Hyper-V guest powered off by the self-hosted runner); cannot run on a hosted runner. The workflow has no pull_request trigger. Owner: PersistAnt lane."
+
+[[allow]]
+check = "ci-security"
+file = ".github/workflows/synapse-power-cut.yml"
+symbol = "power-loss:runner"
+reason = "needs the physical power-loss rig (the same Hyper-V guest, driven with Synapse's mailbox binary); cannot run on a hosted runner. workflow_dispatch only, from main, for a Synapse commit on its main (proved in the workflow). Owner: PersistAnt lane."
