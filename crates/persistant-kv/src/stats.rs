@@ -162,6 +162,10 @@ impl<K: KvBackend> KvBackend for Instrumented<'_, K> {
         )
     }
 
+    async fn take(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+        self.note("take", self.inner.take(key).await)
+    }
+
     async fn ttl_remaining(&self, key: &str) -> Result<Option<Duration>, KvError> {
         self.note("ttl_remaining", self.inner.ttl_remaining(key).await)
     }

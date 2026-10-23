@@ -107,6 +107,13 @@ pub struct SqliteBackend {
 impl SqliteBackend {
     /// Open (creating if missing) the database file at `path`, in WAL mode, with a bounded wait
     /// for the write lock.
+    ///
+    /// **Creating** means the file only: a missing parent directory is an error, not created. The
+    /// file's permissions are SQLite's own default, `0644` less the process `umask` (measured on
+    /// Linux: `-rw-r--r--` under a `022` umask, `-rw-------` under `077`; its `-wal` and `-shm` files
+    /// follow the database file), so a per-tenant database holding secrets should be opened under a
+    /// `077` umask or created beforehand with the mode wanted. On Windows the file inherits the
+    /// directory's ACL.
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, RelError> {
         let opts = SqliteConnectOptions::new()
             .filename(path)
