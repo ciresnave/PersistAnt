@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.19
+
+### Added
+- **`docs/DESIGN-AUTH-STORAGE.md`** (docs only; PM [TASK] 2026-10-23): what auth-framework's `AuthStorage` needs from persistant-kv, per backend (native, emulable, impossible). Corrects the lane's finding: compare-and-swap, atomic batch and `ttl_remaining` already exist on memory and the four SQL engines (matrix at `ccad2b4`); only `take` and `count` are missing, and secondary-key lookup is a layer over `batch`, not a backend method. Recommends three small PRs (`kv.take` with a default over `compare_and_delete`, `kv.count`, an `Indexed` layer) and says what is unverified (per-tenant file creation and permissions, throughput).
+
 ## 0.9.18
 
 ### Added
