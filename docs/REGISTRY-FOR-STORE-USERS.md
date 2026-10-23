@@ -20,7 +20,10 @@ A runnable version of the steps is `examples/registry_instead_of_config.rs`
 4. **Open it at start-up**: `registry::open_named(id, &endpoint, &needs).await`. The gate is checked again there; a backend that no
    longer meets the needs is `OpenError::Unmet`, naming the ids. Then use `handle.kv()` and nothing backend-specific.
 
-A backend PersistAnt gains later reaches the program when it upgrades `persistant` and rebuilds; there are no plug-ins.
+A backend PersistAnt gains later reaches the program when it upgrades `persistant` and rebuilds; there are no plug-ins. A provider
+is in `providers()` only if **its Cargo feature is compiled in**: `registry` gives `memory` and `fs`, `registry-sqlite` adds `sqlite`
+and `sqlite-full`, `registry-postgres` adds `postgres`, `registry-mysql` adds `mysql` and `mariadb`, `all-backends` is every one. Enable
+the feature of each backend you want an operator to be able to pick; upgrading alone adds none.
 
 ## What each `Need` becomes
 
@@ -29,19 +32,19 @@ Measured against `origin/main` at 0.9.28 (`matrix/*.tsv`, `src/registry.rs`).
 | `Need` | Capability id | In the registry |
 |---|---|---|
 | `Read`, `Write`, `Delete` | `kv.get`, `kv.put`, `kv.delete` | on every listed backend |
-| `List` | `kv.prefix_list` (or `kv.ordered_scan` if you need the order) | on every listed backend |
+| `List` | `kv.prefix_list` returns **keys only, in no promised order**; `kv.ordered_scan` returns keys in ascending bytewise order | on every listed backend. `Store::list` gave ascending order *and* an `Entry` (`len`, `modified`): use `ordered_scan` where order mattered, and note that **neither returns a length or a modification time**: if you used them, store them in the value or under a second key |
 | `AtomicReplace` | none: not a separate id | every listed backend replaces a value whole. `fs` is the registry's `atomic_write_dir=set; put_mode=atomic` configuration (writes through a scratch directory beside the target, the one the blob-level crash test certifies, `blob.replace_atomic` in `matrix/opendal.tsv`); the SQL backends write one row in one statement |
 | `CreateIfAbsent` | `kv.put_if_absent` | **not on `fs`**: with a scratch directory the exclusive create is check-then-rename, so the matrix has it off. Asking for it lists `mysql`, `postgres`, `sqlite` and `sqlite-full` at `Process` durability (`mariadb` and `memory` join at `Volatile`; run on 0.9.28) |
 | `Stat`, `MaxValueSize` | none | there is no key-value counterpart: values are whole `Vec<u8>`; if you need a size limit, check it yourself |
 
-And three things the old `Store` also gave that the registry **does not serve today** (the handle is the key-value kind only):
+And three things a program may use *beside* the `Store` API (the old `Store` has no append and no locks; these come from the blob driver and `persistant-opendal`) that the registry **does not serve today** (its handle is the key-value kind only):
 
 * **Append** (`blob.append`, certified on `opendal-fs`): agentlife's journal. Keep the file, or write one key per entry and read
   them back with `kv.ordered_scan`.
 * **Locks** (`lock.process`, `lock.lease`): not offered by the registry. `lock.process` has its own row from 0.9.27 and
   is used directly through `persistant_opendal::ProcessLock`.
 * **A synchronous call**: `registry::open_named` is `async`, and so is every `KvBackend` call. The older `persistant::blocking::Store`
-  exists for synchronous programs; there is no blocking registry. agentlife measured about 11 ms per write on that facade
+  exists for synchronous programs; there is no blocking registry yet. agentlife measured about 11 ms per write on that facade
   (each write starts a worker thread and a runtime), so a synchronous program should hold one runtime and `block_on` it, not
   open per call.
 
@@ -52,12 +55,46 @@ And three things the old `Store` also gave that the registry **does not serve to
 `sqlite-full` (run on 0.9.28) with their recorded basis (`Listing::why()` prints it); `fs` is not listed there because no fsync is
 asserted for it.
 
+## Server backends: bound every call
+
+A server can stall rather than fail. The registry says so for MySQL on a full disk: the call gets no answer and no error. A
+program that opens `mysql`, `mariadb` or `postgres` with `open_named` and nothing else makes unbounded calls. Ask for
+`kv.bounded_call` in the needs and pass a bound:
+
+```rust
+let options = OpenOptions::new().call_bound(std::time::Duration::from_secs(10));
+let handle = registry::open_named_with(id, &endpoint, &needs, &options).await?;
+```
+
+A call that exceeds the bound returns `KvError::TimedOut` and a batch that timed out applied nothing; a single write that timed
+out may or may not have taken effect. A bound is refused (`OpenError::BoundUnsupported`) for `memory` and `fs`, which have no
+server to wait for. Without it, wrap each call in your own timeout.
+
+## `fs` and keys that differ only by case
+
+`fs` stores a key as a file path. On a case-insensitive filesystem (NTFS and APFS by default) two keys that differ only by case are
+**the same file**. Measured on Windows, 2026-10-23, through `open_named("fs", ..)`: `put("Key", "upper")` then `put("key", "lower")`
+then `get("Key")` returns `lower`. The registry lists `fs` on those machines all the same, because its gate reads rows recorded on
+Linux (`os` is metadata in a row, not part of the lookup). If your keys can differ only by case, either normalise them yourself
+(lower-case or hex-encode before `put`) or choose a SQL backend (the old `Store` also kept keys as paths; that was not re-measured). A guard in the registry is an open ROADMAP row.
+
 ## What to do with a configuration that already names a backend
 
-Keep the old value working for one release: read the stored id if there is one; if there is none, map the old `Config`
-to the nearest id (`Config::Fs` to `fs`), say so in the log, and write the id back. Do not guess at the endpoint: a
-directory that held `Store` data holds `fs` data in the layout `KvOnBlob` uses (`kv/<key>` with a small envelope), not the
-files `Store` wrote, so **existing data is not read by the new backend**. A migration is a one-time copy by the program.
+Do not guess at the endpoint: a directory that held `Store` data holds `fs` data in the layout `KvOnBlob` uses (`kv/<key>` with a
+small envelope), not the files `Store` wrote, so **existing data is not read by the new backend**. Moving is a one-time copy by the
+program, and its order matters:
+
+1. **Drain the old writers first.** A rolling upgrade, with old and new instances running together, loses writes: an old instance
+   writes to the old layout after the copy, and new instances read only the new one. Stop every old instance (or make each write go
+   to both stores until none is left), then copy.
+2. **Copy, then verify, then switch.** Read every key from the old `Store`, `put` it through the registry, and compare the counts
+   and the values (or a digest) before going on. The copy can be repeated: a `put` overwrites.
+3. **Write the new id to your configuration last.** If the id is stored before the copy ends and the program stops, the next start
+   opens the new layout and sees a store that is missing data. With the id written last, an interrupted migration simply runs again.
+4. **Keep the old data** until the new store has been used for a while; delete it by a separate, deliberate step.
+
+Between those, keep the old configuration value readable for one release: if no id is stored, map the old `Config` to the nearest id
+(`Config::Fs` to `fs`), say so in the log, and do not write the id back until the copy has been verified.
 
 ## Why a program should do this at all
 

@@ -12,8 +12,13 @@
 //! operator's choice (an id and an endpoint) in its own configuration, and opens that. A backend
 //! PersistAnt gains later reaches the program on its next rebuild against a newer `persistant`.
 //!
-//! `cargo run --example registry_instead_of_config -- [id [directory]]` (default: `fs` in a temporary
-//! directory). See `docs/REGISTRY-FOR-STORE-USERS.md` for the mapping from `Need` to capability ids.
+//! `cargo run --example registry_instead_of_config --features registry -- [id [path]]`: default `fs` in a temporary
+//! directory. `path` is a directory for `fs` and a database file for `sqlite`; the `sqlite`, `sqlite-full`, `postgres`,
+//! `mysql` and `mariadb` ids exist only in a build with `registry-sqlite` (or `registry-postgres`, `registry-mysql`).
+//!
+//! The example is safe on a store that already holds data: every key it writes is under a prefix of its own (process id and
+//! time), it reads back only that prefix, and it deletes only what it wrote. See
+//! `docs/REGISTRY-FOR-STORE-USERS.md` for the mapping from `Need` to capability ids.
 
 use persistant::capability::{CapabilityId, choose::Durability, provider::ProviderNeeds};
 use persistant::kv::KvBackend;
@@ -55,13 +60,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handle = registry::open_named(&chosen, &Endpoint::path(&dir), &needs).await?;
     let kv = handle.kv();
 
-    // 5. Backend-agnostic calls only.
-    kv.put("services/a", b"one".to_vec(), None).await?;
-    kv.put("services/b", b"two".to_vec(), None).await?;
-    let keys = kv.prefix_list("services/", None, 100).await?.keys;
-    assert_eq!(keys.len(), 2);
-    println!("{} keys under services/ on {}", keys.len(), handle.id());
-    kv.delete("services/a").await?;
-    assert_eq!(kv.get("services/a").await?, None);
+    // 5. Backend-agnostic calls only, under a prefix that no other run and no existing data shares.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let prefix = format!("registry-example/{}-{nanos}/", std::process::id());
+    let (a, b) = (format!("{prefix}a"), format!("{prefix}b"));
+    kv.put(&a, b"one".to_vec(), None).await?;
+    kv.put(&b, b"two".to_vec(), None).await?;
+    let keys = kv.prefix_list(&prefix, None, 100).await?.keys;
+    assert_eq!(
+        keys.len(),
+        2,
+        "our prefix holds exactly what this run wrote"
+    );
+    println!("{} keys under {prefix} on {}", keys.len(), handle.id());
+    // Remove only what was written here.
+    kv.delete(&a).await?;
+    kv.delete(&b).await?;
+    assert_eq!(kv.get(&a).await?, None);
+    assert!(kv.prefix_list(&prefix, None, 100).await?.keys.is_empty());
     Ok(())
 }
