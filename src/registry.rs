@@ -178,7 +178,7 @@ pub enum OpenError {
     },
     /// The directory is on a filesystem that ignores case, so two keys that differ only by case
     /// (`Key` and `key`) would be one file and one value. `fs` keeps a key as a file path and
-    /// refuses to open there; nothing was written to the store. Choose a backend that keeps keys
+    /// refuses to open there; no key was written (the directory itself may have been created, and is left). Choose a backend that keeps keys
     /// apart, or put the directory on a case-sensitive filesystem.
     CaseInsensitiveFilesystem {
         /// The id asked for.
