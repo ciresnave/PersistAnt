@@ -61,10 +61,10 @@ read 2026-10-17. Ruling it cites (board 196, relayed by the PM): all projects ad
 |---|---|---|
 | Advisory-lock-guarded migration apply | Built: `Migrates::migrate` holds the lock; `rel.migrate.concurrent` proves two simultaneous migrators (PostgreSQL, MySQL, MariaDB) | none |
 | Per-migration checksums | Built: ledger is sqlx's own (SHA-384 of the text), a changed applied migration is `ChecksumMismatch`; but `MigrateReport` lists versions only | **C1, built (0.8.0):** `MigrateReport.checksums` carries each applied migration's checksum |
-| Fresh-install check | Not built | **C2.** `verify_fresh(&[Migration])`: apply to an empty schema, return the ledger, no side effects elsewhere |
-| Load Humboldt's 36 `migrations/*.sql` | `Migration { version, description, sql }` built by hand | **C3.** a loader from `sqlx::migrate!` / a directory, so a consumer does not copy files into code |
+| Fresh-install check | Built | **C2, built (0.8.x):** `verify_fresh(&[Migration])`: apply to an empty schema, return the ledger, no side effects elsewhere; `persistant-migrate verify-fresh` |
+| Load Humboldt's 36 `migrations/*.sql` | Built | **C3, built (0.8.x):** `migrations_from_sqlx` and the directory loader of `persistant-migrate`, so a consumer does not copy files into code |
 | Row expiry sweep over its own tables | `kv.purge_expired` sweeps the kv table only | **C4, built (0.7.13):** `persistant_relational::sweep(db, table, column, cutoff, batch, max_batches)`; the consumer owns the retention policy (PM, 2026-10-17) |
-| 399 `sqlx::query!` calls, 29 transactions | `PgBackend::pool()` hands back the concrete `PgPool`; the relational trait is deliberately small | **none, by design (D1)**: typed queries stay with the consumer |
+| 399 `sqlx::query!` calls, 29 transactions | `PgBackend::pool()` hands back the concrete `PgPool`; the relational trait is deliberately small | **Board 230, ruled option 3 (CireSnave 2026-10-22): the sqlx bridge**, see the section below. Typed queries keep sqlx's own check |
 | Encrypted dump, per-table digest, restore check | Not built, no consumer outside Humboldt measured | **C5, only if a second consumer wants it** |
 
 Open (CireSnave, via the PM): what "adopt" means for a project whose value is compile-time-checked SQL. Reading A (wrap
@@ -72,7 +72,7 @@ the pool, take migrations and expiry) needs C1-C4 only. Reading B (queries throu
 compile-time check and is not offered. Recommendation: A. C4 also needs the owner of retention policy named: PersistAnt
 provides the mechanism, the consumer names tables and ages.
 
-Order if approved: C3, C1, C2 (one PR each, small), then C4. Nothing here is scheduled until the PM answers.
+C1 to C4 are built (above). Reading A is what Humboldt takes; C5 stays "only if a second consumer wants it".
 
 ## Migration CLI (queued by the PM 2026-10-17; first cut built, 0.8.2)
 
@@ -89,6 +89,26 @@ A command-line tool over `Migrates`: apply, status (ledger with checksums, C1) a
 - **Node binding** is later and out of this row; **hosted mode** is later still and not designed here.
 
 Not scheduled until the PM assigns it.
+
+## The sqlx bridge (board 230 option 3; design `docs/DESIGN-SQLX-BRIDGE.md`)
+
+CireSnave 2026-10-22: *"I like your option (3) that keeps the SQLx PostgreSQL checks in place but transitions everything to use the resulting SQL through UniSQL/PersistAnt."* Work orders, each a PR:
+
+- **A, built (0.9.14):** `FromValue` / `ToValue` for `Uuid`, `chrono` and `serde_json::Value` (features `sql-uuid`, `sql-chrono`, `sql-json`).
+- **B, built (0.9.15):** the reader for sqlx's offline data (`.sqlx/query-<sha256>.json`), checked against all 566 of Humboldt's files.
+- **C, built (0.9.17):** `sqlx_query!`, `sqlx_query_as!`, `sqlx_query_scalar!` (feature `sqlx-query`; `sqlx-query-checked` also runs sqlx's own check in a closure that is never called), `Bound`, `Runner`, `InTx`.
+- **D, built (0.9.18):** `persistant_sqlx::OnPool` / `OnConn`, so the macros run on the sqlx pool or transaction a program already holds.
+- **E, not scheduled (PM 2026-10-23: skip):** name checks for `SELECT` / `DELETE` in our catalog checker. Its value is for consumers that do not have sqlx's check; Humboldt does.
+- **F:** the Humboldt option-A items (migration loader, fresh-install verifier, expiry sweeps) were already built (C2 to C4 above).
+- UniSQL asks (`LATERAL`, `::regclass`) landed in UniSQL 0.25.1; 0.25.8 (0.9.22) fixes the SQLite rowid-alias false positive.
+
+## Key-value additions for auth-framework (PM [TASK] 2026-10-23; design `docs/DESIGN-AUTH-STORAGE.md`)
+
+Built and published as 0.9.24: `KvBackend::take` (`kv.take`, 0.9.20, over `compare_and_delete`), `KvBackend::count` (`kv.count`, 0.9.23, native on memory and the SQL engines) and `persistant_kv::index::Indexed` (`kv.index`, 0.9.24, secondary-key lookup over `batch` and `ordered_scan_values`). On memory, SQLite, PostgreSQL, MySQL and MariaDB; **not** on the OpenDAL blob stores, which have neither `compare_and_delete` nor `batch`. The auth-framework lane builds its `AuthStorage` on them (its work, not this repo's). Open: Redis is not a PersistAnt backend; throughput of the index layer against auth-framework's own SQL is unmeasured.
+
+## File permissions
+
+SQLite databases are created owner-only (`0600`) on Unix since 0.9.21 (a new test fails without it). **Windows is open**: a new file inherits the directory's ACL; restricting it needs the Win32 security API or a call to `icacls`, and an OS-abstraction crate for owner-only files is a scope question the PM put to CireSnave (2026-10-23). Nothing is built for it.
 
 ## Compile-time SQL checks (PM [TASK] 2026-10-18)
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.25
+
+### Documented
+- **`ROADMAP.md` brought up to date** (docs only): the fresh-install check and the migration loader (C2, C3) are marked built; new sections for the sqlx bridge (work orders A to D built, E not scheduled, F already built), the key-value additions for auth-framework (`take`, `count`, `Indexed`) and file permissions (SQLite `0600` on Unix; Windows open, with the scope question at CireSnave).
+
 ## 0.9.24
 
 ### Added
