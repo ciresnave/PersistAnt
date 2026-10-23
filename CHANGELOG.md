@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.32
+
+### Added
+- **`persistant::blocking::registry`** (feature `registry`; ROADMAP "Portfolio adoption", the blocking wrapper): the registry for synchronous callers. `providers` is re-exported; `open_named` / `open_named_with` return a `KvHandle` whose methods (`get`, `put`, `delete`, `put_if_absent`, `prefix_list`, `ordered_scan`, `ordered_scan_values`, `compare_and_swap`, `compare_and_delete`, `take`, `count`, `ttl_remaining`, `purge_expired`, `batch`) block instead of returning futures. It uses the worker of `blocking::Store` (one thread, a private single-threaded runtime), so it is safe from plain code, from many threads at once, and from inside another runtime; keep one handle for the life of the program. A backend that cannot give a method returns `Unsupported` as the async handle does, and a need the backend does not meet is `OpenError::Unmet` at open. Tests: a plain thread, `Unsupported` kept honest on `fs`, `Unmet`, 8 threads racing `put_if_absent` (memory) and `take` (SQLite), a call from inside a tokio runtime.
+
 ## 0.9.31
 
 ### Added
