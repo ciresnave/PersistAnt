@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.34
+
+### Added
+- **The advisory CodeRipper portfolio check in CI** (`portfolio` job of `.github/workflows/ci.yml`; PM [TASK] 2026-10-23, CireSnave: "Roll out advisory-only, non-blocking CodeRipper checks everywhere."). It calls `ciresnave/coderipper`'s reusable `portfolio.yml` at a pinned commit (`789b0122`) with a read-only token and no secrets. It is not a required check and no rule is silenced; its first run's findings (six rules, 15 findings) are recorded as ROADMAP rows, one per failing rule, in the new "CodeRipper baseline" section; none is silenced or scheduled.
+
 ## 0.9.33
 
 ### Fixed
