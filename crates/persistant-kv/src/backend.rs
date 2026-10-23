@@ -247,6 +247,33 @@ pub trait KvBackend: Send + Sync {
         async { Err(KvError::Unsupported("compare_and_delete".to_string())) }
     }
 
+    /// Remove `key` and return the **live** value it held, to exactly one of any number of concurrent
+    /// callers; `None` if the key is absent or expired (`kv.take`). A single-use token is consumed
+    /// with this, not with `get` then `delete`.
+    ///
+    /// The provided body is `get`, then `compare_and_delete` of what was read: exactly one winner is
+    /// inherited from `compare_and_delete`'s own guarantee, a value that changed in between is read
+    /// again, and a backend without `compare_and_delete` therefore has no `take` (it returns
+    /// [`KvError::Unsupported`] for a present key). A backend may override it with one native
+    /// operation (`DELETE .. RETURNING`); the conformance test is the same.
+    fn take(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>, KvError>> + Send {
+        async move {
+            // Another caller rewriting the key between the two calls is rare; a key rewritten this
+            // many times in a row is not a single-use token, so say so rather than spin.
+            for _ in 0..16 {
+                let Some(value) = self.get(key).await? else {
+                    return Ok(None);
+                };
+                if self.compare_and_delete(key, &value).await? {
+                    return Ok(Some(value));
+                }
+            }
+            Err(KvError::Backend(
+                "take: the value changed on every attempt".to_string(),
+            ))
+        }
+    }
+
     /// The time to live left on a **live** entry: `Some(d)` with `0 < d <= ttl` and `d` falling as
     /// time passes; `None` for an absent or expired entry or one written without a time to live
     /// (`kv.ttl_remaining`).

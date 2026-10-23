@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.20
+
+### Added
+- **`KvBackend::take` (`kv.take`)**: remove a key and return the live value it held, to exactly one of any number of concurrent callers (`docs/DESIGN-AUTH-STORAGE.md` section 4.1). The provided body is `get` then `compare_and_delete` of what was read, so a backend has `take` exactly when it has `compare_and_delete` (memory and the SQL engines: on; the OpenDAL blob stores: off, as for compare-and-swap); a backend may override it natively. New conformance leaf with two known-bad controls (`TakeNotExclusive`, `TakeLeavesValue`) on `MemoryKv`, a native `MemoryKv::take`, delegation in `Instrumented` and the registry's `AnyKv`. One new matrix row per kv backend.
+
+### Documented
+- **`SqliteBackend::open` on a path that is not there yet** (the per-tenant case; new test `sqlite_open_path`): it creates the file and not the directory; the file's mode is SQLite's own default, `0644` less the umask (measured on Linux: `-rw-r--r--` under umask 022, `-rw-------` under 077), so a database that holds secrets should be opened under `077` or created beforehand. The docs of `open` say so.
+
 ## 0.9.19
 
 ### Added

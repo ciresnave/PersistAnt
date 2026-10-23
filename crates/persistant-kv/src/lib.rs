@@ -20,9 +20,9 @@
 //!   contract get a number, and nothing is ranked across machines.
 //! - [`stats`]: stage 2, how often each leaf passes and what each operation did (no timing).
 //!
-//! Not offered yet, so off everywhere: `kv.compare_and_swap`, `kv.take`, `kv.batch_atomic`,
-//! `kv.ttl_remaining`, `kv.count`. `KvOnBlob` cannot give the first three on a blob store without
-//! compare-and-delete; see its docs.
+//! `kv.take` (get-and-delete, one winner) is built on `compare_and_delete`, so a backend has it
+//! exactly when it has that. `kv.count` is not offered yet, so off everywhere. `KvOnBlob` cannot give
+//! `compare_and_swap`, `take` or `batch_atomic` on a blob store without compare-and-delete; see its docs.
 
 mod backend;
 pub mod choose;

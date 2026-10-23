@@ -9,8 +9,8 @@ fn the_recorded_postgres_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        36,
-        "eighteen kv/lock leaves (kv.bounded_call twice: unset and set) and seventeen relational leaves (eleven contract, six migration) are certified"
+        37,
+        "nineteen kv/lock leaves (kv.bounded_call twice: unset and set) and seventeen relational leaves (eleven contract, six migration) are certified"
     );
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),

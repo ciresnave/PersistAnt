@@ -651,6 +651,9 @@ impl KvBackend for AnyKv {
     async fn compare_and_delete(&self, key: &str, expected: &[u8]) -> Result<bool, KvError> {
         each!(self, k => k.compare_and_delete(key, expected).await)
     }
+    async fn take(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+        each!(self, k => k.take(key).await)
+    }
     async fn ttl_remaining(&self, key: &str) -> Result<Option<Duration>, KvError> {
         each!(self, k => k.ttl_remaining(key).await)
     }

@@ -51,6 +51,8 @@ pub enum Leaf {
     CompareAndSwap,
     /// `kv.compare_and_delete`, by sampled concurrency
     CompareAndDelete,
+    /// `kv.take`, by sampled concurrency
+    Take,
     /// `lock.lease`, by real time and sampled concurrency
     Lease,
     /// `kv.ttl_remaining`, in real time
@@ -78,7 +80,7 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 18] = [
+    pub const ALL: [Leaf; 19] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -88,6 +90,7 @@ impl Leaf {
         Leaf::OrderedScan,
         Leaf::CompareAndSwap,
         Leaf::CompareAndDelete,
+        Leaf::Take,
         Leaf::Lease,
         Leaf::TtlRemaining,
         Leaf::PurgeExpired,
@@ -111,6 +114,7 @@ impl Leaf {
             Leaf::OrderedScan => "kv.ordered_scan",
             Leaf::CompareAndSwap => "kv.compare_and_swap",
             Leaf::CompareAndDelete => "kv.compare_and_delete",
+            Leaf::Take => "kv.take",
             Leaf::Lease => "lock.lease",
             Leaf::TtlRemaining => "kv.ttl_remaining",
             Leaf::PurgeExpired => "kv.purge_expired",
@@ -127,7 +131,7 @@ impl Leaf {
         match self {
             Leaf::PutIfAbsent => "contenders=16;rounds=20;value_bytes=1024",
             Leaf::Ttl => "ttl_ms=1000;sleep_ms=1200",
-            Leaf::CompareAndSwap | Leaf::CompareAndDelete => "contenders=16;rounds=20",
+            Leaf::CompareAndSwap | Leaf::CompareAndDelete | Leaf::Take => "contenders=16;rounds=20",
             Leaf::Lease => "contenders=16;rounds=5;ttl_ms=200;sleep_ms=300",
             Leaf::TtlRemaining => "ttl_ms=10000;sleep_ms=150",
             Leaf::PurgeExpired => "ttl_ms=100;sleep_ms=250",
@@ -158,6 +162,7 @@ impl Leaf {
             | Leaf::OrderedScan
             | Leaf::CompareAndSwap
             | Leaf::CompareAndDelete
+            | Leaf::Take
             | Leaf::BatchRollback
             | Leaf::BatchConcurrentRead
             | Leaf::OptimisticSequence
@@ -185,6 +190,7 @@ impl Leaf {
             ],
             Leaf::CompareAndSwap => &[Defect::CasIgnoresExpected, Defect::CasNotAtomic],
             Leaf::CompareAndDelete => &[Defect::CadIgnoresExpected, Defect::CadNotAtomic],
+            Leaf::Take => &[Defect::TakeNotExclusive, Defect::TakeLeavesValue],
             Leaf::TtlRemaining => &[Defect::TtlRemainingIsConstant, Defect::TtlIgnored],
             Leaf::PurgeExpired => &[Defect::PurgeRemovesLive],
             Leaf::BatchRollback => &[Defect::BatchNotAtomic, Defect::BatchIgnoresRequire],
@@ -255,6 +261,7 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::OrderedScan => ordered_scan(b, &base).await,
         Leaf::CompareAndSwap => compare_and_swap(b, &base).await,
         Leaf::CompareAndDelete => compare_and_delete(b, &base).await,
+        Leaf::Take => take(b, &base).await,
         Leaf::Lease => lease(b, &base).await,
         Leaf::TtlRemaining => ttl_remaining(b, &base).await,
         Leaf::PurgeExpired => purge_expired(b, &base).await,
@@ -618,6 +625,53 @@ async fn compare_and_delete<K: KvBackend>(b: &K, base: &str) -> Result<(), Failu
         if winners != 1 {
             return wrong(format!(
                 "round {round}: {winners} of {CONTENDERS} concurrent deletes won, want exactly 1"
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn take<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 20;
+    let k = format!("{base}seq");
+    if b.take(&k).await?.is_some() {
+        return wrong("take on an absent key returned a value");
+    }
+    b.put(&k, b"v".to_vec(), None).await?;
+    match b.take(&k).await? {
+        Some(v) if v == b"v" => {}
+        other => return wrong(format!("take returned {other:?}, want the stored value")),
+    }
+    if b.get(&k).await?.is_some() {
+        return wrong("take left the value in place");
+    }
+    if b.take(&k).await?.is_some() {
+        return wrong("a second take returned the value again");
+    }
+    for round in 0..ROUNDS {
+        let key = format!("{base}r{round}");
+        let key = key.as_str();
+        b.put(key, b"v".to_vec(), None).await?;
+        let tasks: Vec<Task<'_, Result<Option<Vec<u8>>, KvError>>> = (0..CONTENDERS)
+            .map(|_| -> Task<'_, _> { Box::pin(b.take(key)) })
+            .collect();
+        let mut winners = 0;
+        for r in join_all(tasks).await {
+            match r? {
+                Some(v) if v == b"v" => winners += 1,
+                Some(other) => return wrong(format!("round {round}: a take returned {other:?}")),
+                None => {}
+            }
+        }
+        if winners != 1 {
+            return wrong(format!(
+                "round {round}: {winners} of {CONTENDERS} concurrent takes got the value, want exactly 1"
+            ));
+        }
+        if b.get(key).await?.is_some() {
+            return wrong(format!(
+                "round {round}: the value is still there after a take"
             ));
         }
     }
@@ -1564,6 +1618,7 @@ mod tests {
                 c.leaf,
                 Leaf::CompareAndSwap
                     | Leaf::CompareAndDelete
+                    | Leaf::Take
                     | Leaf::Lease
                     | Leaf::PurgeExpired
                     | Leaf::BatchRollback

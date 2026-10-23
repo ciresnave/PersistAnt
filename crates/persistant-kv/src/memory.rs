@@ -47,6 +47,10 @@ pub enum Defect {
     CadIgnoresExpected,
     /// `compare_and_delete` checks, lets others run, then deletes: two callers can both win.
     CadNotAtomic,
+    /// `take` reads, lets others run, then removes: two callers can both get the value.
+    TakeNotExclusive,
+    /// `take` returns the value and leaves it in place.
+    TakeLeavesValue,
     /// A call blocked past its bound is never cut off: it finishes late, or not at all.
     BoundIgnored,
     /// A batch cut off by the timeout is applied anyway once the block is gone.
@@ -301,6 +305,24 @@ impl KvBackend for MemoryKv {
         } else {
             Ok(false)
         }
+    }
+
+    async fn take(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+        if self.defect == Some(Defect::TakeLeavesValue) {
+            return Ok(self.get(key).await?);
+        }
+        if self.defect == Some(Defect::TakeNotExclusive) {
+            let value = self.get(key).await?;
+            yield_now().await;
+            self.map().remove(&self.k(key));
+            return Ok(value);
+        }
+        let mut map = self.map();
+        let k = self.k(key);
+        if map.get(&k).is_some_and(live) {
+            return Ok(map.remove(&k).map(|e| e.0));
+        }
+        Ok(None)
     }
 
     async fn ttl_remaining(&self, key: &str) -> Result<Option<Duration>, KvError> {

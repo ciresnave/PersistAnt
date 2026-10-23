@@ -212,6 +212,7 @@ async fn the_concurrency_leaves_are_exact_on_every_run() {
         Leaf::PutIfAbsent,
         Leaf::CompareAndSwap,
         Leaf::CompareAndDelete,
+        Leaf::Take,
         Leaf::BatchRollback,
         Leaf::BatchConcurrentRead,
         Leaf::OptimisticSequence,
