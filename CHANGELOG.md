@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.17
+
+### Added
+- **`sqlx_query!`, `sqlx_query_as!` and `sqlx_query_scalar!`** (feature `sqlx-query` of `persistant`; work order C of `docs/DESIGN-SQLX-BRIDGE.md`). They take sqlx's arguments, read the result types from sqlx's offline data (`.sqlx/query-<sha256>.json`: a missing or stale file is a build error that says `cargo sqlx prepare`), translate the literal through UniSQL for `targets = [..]` (default PostgreSQL), cast each `Uuid`, `chrono` or `json` placeholder from sqlx's recorded parameter types, and return a `Bound` statement: `.fetch_one(&db)`, `.fetch_optional`, `.fetch_all`, `.execute`. `sqlx_query!` generates the record struct, `sqlx_query_as!` checks the caller's `FromRow` struct against the described columns (names, count, nullability) at build time. New in `persistant-relational` (feature `sql`): `Bound`, the `Runner` trait (implemented for `&backend`) and `InTx` for a transaction. With feature `sqlx-query-checked` every literal is also checked by sqlx's own macro in a closure that is never called, and when our side fails sqlx's error is emitted beside ours. Checked on SQLite and PostgreSQL (`crates/persistant-sqlx/tests/sqlx_query.rs`, with hand-made `.sqlx` files), and by hand against a live PostgreSQL with sqlx's check on (wrong column, wrong argument type, renamed field). Not yet: running on a sqlx pool or transaction (work order D).
+
 ## 0.9.16
 
 ### Changed

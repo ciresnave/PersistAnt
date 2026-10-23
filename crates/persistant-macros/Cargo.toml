@@ -12,6 +12,10 @@ categories = ["database", "development-tools::procedural-macro-helpers"]
 [lib]
 proc-macro = true
 
+[features]
+# The sqlx bridge macros also run sqlx's own check of each literal (the caller depends on sqlx).
+sqlx-check = []
+
 [dependencies]
 proc-macro2 = "1"
 # Published version only (portfolio rule 2026-10-07: no path or git dependencies across repos).

@@ -20,6 +20,7 @@
 mod checker;
 mod imp;
 mod rows;
+mod sqlx_bridge;
 mod sqlx_offline;
 
 /// Check and translate a literal statement at build time. See the crate documentation.
@@ -35,4 +36,23 @@ pub fn sql(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 #[proc_macro_derive(FromRow, attributes(persistant))]
 pub fn derive_from_row(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     imp::derive_from_row(input.into()).into()
+}
+
+/// `sqlx_query!`: sqlx's argument shape, run through UniSQL and PersistAnt (`docs/DESIGN-SQLX-BRIDGE.md`).
+/// Result types come from sqlx's offline data (`.sqlx`).
+#[proc_macro]
+pub fn sqlx_query(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    sqlx_bridge::expand(sqlx_bridge::Form::Record, input.into()).into()
+}
+
+/// `sqlx_query_as!(Type, "SELECT ..", args..)`: as `sqlx_query!`, read into the caller's `FromRow` struct.
+#[proc_macro]
+pub fn sqlx_query_as(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    sqlx_bridge::expand(sqlx_bridge::Form::As, input.into()).into()
+}
+
+/// `sqlx_query_scalar!("SELECT ..", args..)`: as `sqlx_query!`, the single column.
+#[proc_macro]
+pub fn sqlx_query_scalar(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    sqlx_bridge::expand(sqlx_bridge::Form::Scalar, input.into()).into()
 }

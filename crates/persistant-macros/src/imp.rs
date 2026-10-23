@@ -12,12 +12,12 @@ use unisql_macro_core::{Input, Kind, Snapshot, expand_with};
 /// The path the expansion names `Query`, `Rendered`, `Target` and `Binding` through.
 const DEFAULT_CRATE: &str = "::persistant::relational::embed";
 
-struct Error {
-    span: Span,
-    message: String,
+pub(crate) struct Error {
+    pub(crate) span: Span,
+    pub(crate) message: String,
 }
 
-fn err(span: Span, message: impl Into<String>) -> Error {
+pub(crate) fn err(span: Span, message: impl Into<String>) -> Error {
     Error {
         span,
         message: message.into(),
@@ -83,7 +83,7 @@ pub(crate) fn derive_from_row(input: TokenStream) -> TokenStream {
     }
 }
 
-fn compile_errors(errors: Vec<Error>) -> TokenStream {
+pub(crate) fn compile_errors(errors: Vec<Error>) -> TokenStream {
     let mut body = TokenStream::new();
     for e in &errors {
         let mut call: TokenStream = "::core::compile_error!".parse().expect("fixed tokens");
@@ -338,7 +338,7 @@ fn render(path: &str, e: &unisql_macro_core::Expansion) -> String {
 
 // ---- argument parsing ----------------------------------------------------------------------
 
-fn split_commas(tokens: Vec<TokenTree>) -> Vec<Vec<TokenTree>> {
+pub(crate) fn split_commas(tokens: Vec<TokenTree>) -> Vec<Vec<TokenTree>> {
     let mut out = vec![Vec::new()];
     for t in tokens {
         match &t {
@@ -493,7 +493,7 @@ fn one_name(tokens: &[TokenTree], what: &str) -> Result<String, Error> {
     }
 }
 
-fn name_list(tokens: &[TokenTree]) -> Result<Vec<String>, Error> {
+pub(crate) fn name_list(tokens: &[TokenTree]) -> Result<Vec<String>, Error> {
     let [TokenTree::Group(g)] = tokens else {
         let span = tokens.first().map_or_else(Span::call_site, TokenTree::span);
         return Err(err(
@@ -518,7 +518,7 @@ fn name_list(tokens: &[TokenTree]) -> Result<Vec<String>, Error> {
 }
 
 /// The value of a plain or raw string literal; `None` for anything else (numbers, chars, byte strings).
-fn string_value(lit: &Literal) -> Option<String> {
+pub(crate) fn string_value(lit: &Literal) -> Option<String> {
     unescape(&lit.to_string())
 }
 

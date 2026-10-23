@@ -1,0 +1,1 @@
+{"db_name":"PostgreSQL","query":"SELECT count(*) AS \"n!\" FROM persistant_sqlxq","describe":{"columns":[{"ordinal":0,"name":"n!","type_info":"Int8","origin":"Expression"}],"parameters":{"Left":[]},"nullable":[null]},"hash":"4a9f710e2950b295f25f15ab0f9b488ae02687153c35b32b7388f3b4ffe1e126"}
