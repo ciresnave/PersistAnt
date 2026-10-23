@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.30
+
+### Documented
+- **Pool options on `PgBackend` are not a gap** (`docs/CONSUMERS.md`, `ROADMAP.md` ask 3): lightbulb builds its own pool because its `Cargo.toml` says `PgBackend::connect` offers no acquire timeout, but `PgBackend::connect_with(&ConnectionSecret, &ConnectOptions { tls, max_connections, acquire_timeout })` has existed since 0.4.31. Its default TLS policy is `Require`.
+- **A roadmap row for the registry's `fs` having `kv.put_if_absent` off** (ask 8): found by running the registry guide's example; the configuration with a scratch directory makes the exclusive create check-then-rename.
+
 ## 0.9.28
 
 ### Documented
