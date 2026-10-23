@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.22
+
+### Fixed
+- **UniSQL 0.25.8** (was 0.25.1; `unisql`, `unisql-embed`, `unisql-core`, `unisql-macro-core`). Its SQLite schema reader gave `INTEGER PRIMARY KEY` (SQLite's rowid alias) no default, so `sql!` rejected a valid `INSERT` that left the key out (`column `id` of `t` is NOT NULL with no default`). New test `a_sqlite_rowid_alias_may_be_left_out_of_an_insert`, red on 0.25.1 and green on 0.25.8, with a control that a NOT NULL column without a default is still caught. 0.25.8 also rejects a literal `NULL` into a NOT NULL column in UniSQL's own checker (not duplicated here).
+
 ## 0.9.21
 
 ### Fixed
