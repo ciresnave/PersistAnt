@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.18
+
+### Added
+- **`persistant_sqlx::OnPool` and `OnConn`** (feature `bridge`; work order D of `docs/DESIGN-SQLX-BRIDGE.md`): `Runner`s for an sqlx `PgPool` and `PgConnection`, so `sqlx_query!` statements run on the pool or inside the sqlx transaction a program already holds (`.fetch_all(OnConn(&mut *tx))`), and a module can move to the macros one statement at a time. The translated PostgreSQL text runs with sqlx's own binds and decodes like `PgBackend`; a `Uuid` or `timestamptz` placeholder is cast from sqlx's recorded type. Tested on PostgreSQL: pool, in-transaction (seen by a plain sqlx query in the same transaction, undone by its rollback). `persistant_relational::prepare` is now public for driver crates.
+
 ## 0.9.17
 
 ### Added

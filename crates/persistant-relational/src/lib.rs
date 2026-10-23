@@ -44,7 +44,7 @@ pub use bound::{Bound, InTx, Runner};
 pub use row::{Field, FieldKind, FromRow, FromValue, ToValue, TypedSql};
 #[cfg(feature = "sql")]
 pub use sql_ext::{
-    RelationalRowsExt, RelationalSqlExt, RelationalTxRowsExt, RelationalTxSqlExt, Sql,
+    RelationalRowsExt, RelationalSqlExt, RelationalTxRowsExt, RelationalTxSqlExt, Sql, prepare,
 };
 /// `Query`, `Rendered`, `Target` and `Binding`: what `persistant::sql!` expands to (UniSQL's
 /// `unisql-embed`, re-exported so a consumer depends on neither).
