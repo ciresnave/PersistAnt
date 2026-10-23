@@ -309,7 +309,7 @@ impl KvBackend for MemoryKv {
 
     async fn take(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
         if self.defect == Some(Defect::TakeLeavesValue) {
-            return Ok(self.get(key).await?);
+            return self.get(key).await;
         }
         if self.defect == Some(Defect::TakeNotExclusive) {
             let value = self.get(key).await?;
