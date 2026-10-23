@@ -15,3 +15,9 @@ check = "ci-security"
 file = ".github/workflows/synapse-power-cut.yml"
 symbol = "power-loss:runner"
 reason = "needs the physical power-loss rig (the same Hyper-V guest, driven with Synapse's mailbox binary); cannot run on a hosted runner. workflow_dispatch only, from main, for a Synapse commit on its main (proved in the workflow). Owner: PersistAnt lane."
+
+# `reachability` for the root package (a member crate reads its own file).
+[reachability]
+public_api = [
+  { file = "src/lib.rs", symbol = "VERSION", reason = "`persistant::VERSION` is the crate version for consumers, asserted equal to Cargo.toml by the `version_is_the_manifest_version` test. Owner: PersistAnt lane." },
+]

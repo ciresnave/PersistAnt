@@ -596,13 +596,23 @@ mod tests {
         sql_in(src.parse().expect("test tokens parse"), Some(dir)).to_string()
     }
 
-    fn ok(src: &str) -> String {
-        let out = run(src);
+    fn assert_clean(out: &str) {
         assert!(
             !out.contains("compile_error"),
             "expected a clean expansion: {out}"
         );
+    }
+
+    /// Assert the call expands cleanly and return the expansion.
+    fn expansion(src: &str) -> String {
+        let out = run(src);
+        assert_clean(&out);
         out
+    }
+
+    /// Assert the call expands cleanly.
+    fn ok(src: &str) {
+        assert_clean(&run(src));
     }
 
     fn fails(src: &str, needle: &str) {
@@ -616,7 +626,7 @@ mod tests {
 
     #[test]
     fn a_clean_call_embeds_the_text_of_every_target() {
-        let out = ok(r#"source = postgres, targets = [sqlite, mysql], "SELECT $1 + $1""#);
+        let out = expansion(r#"source = postgres, targets = [sqlite, mysql], "SELECT $1 + $1""#);
         // `TokenStream::to_string` puts spaces between tokens; compare without them.
         let flat = out.replace(' ', "");
         assert!(
@@ -793,7 +803,8 @@ mod tests {
 
     #[test]
     fn the_expansion_path_can_be_overridden() {
-        let out = ok(r#"source = postgres, targets = [sqlite], crate = ::my::embed, "SELECT 1""#);
+        let out =
+            expansion(r#"source = postgres, targets = [sqlite], crate = ::my::embed, "SELECT 1""#);
         assert!(out.contains(":: my :: embed :: Query"), "{out}");
         assert!(!out.contains("persistant"), "{out}");
     }
@@ -817,7 +828,7 @@ mod tests {
 
     #[test]
     fn a_multi_line_statement_keeps_its_text() {
-        let out = ok("source = postgres, targets = [sqlite], \"SELECT 1\n  FROM t\"");
+        let out = expansion("source = postgres, targets = [sqlite], \"SELECT 1\n  FROM t\"");
         // the translator normalises whitespace and quoting; the newline in the source is not a problem
         assert!(out.replace(' ', "").contains(r#"FROM\"t\""#), "{out}");
     }
@@ -839,13 +850,16 @@ mod tests {
         format!("source = postgres, targets = [sqlite], {schema}, \"{sql}\"")
     }
 
-    fn ok_in(src: &str, dir: &Path) -> String {
+    /// As [`expansion`], with the crate directory given.
+    fn expansion_in(src: &str, dir: &Path) -> String {
         let out = run_in(src, dir);
-        assert!(
-            !out.contains("compile_error"),
-            "expected a clean expansion: {out}"
-        );
+        assert_clean(&out);
         out
+    }
+
+    /// Assert the call expands cleanly with this crate directory.
+    fn ok_in(src: &str, dir: &Path) {
+        assert_clean(&run_in(src, dir));
     }
 
     fn fails_in(src: &str, dir: &Path, needle: &str) {
@@ -872,7 +886,7 @@ mod tests {
             empty.path(),
         );
         let with_default = dir_with(&[("persistant-schema.json", &snapshot_json())]);
-        let out = ok_in(plain, with_default.path());
+        let out = expansion_in(plain, with_default.path());
         assert!(
             out.contains("include_bytes"),
             "the file is tracked by cargo: {out}"
@@ -905,7 +919,7 @@ mod tests {
             r#"schema = "s.sql""#,
             "INSERT INTO users (id, email) VALUES ($1, $2)",
         );
-        let out = ok_in(&good, d.path());
+        let out = expansion_in(&good, d.path());
         assert!(
             out.contains("Target :: Sqlite") || out.contains("Target::Sqlite"),
             "{out}"
@@ -1059,7 +1073,7 @@ mod tests {
     #[test]
     fn as_t_builds_a_typed_statement_with_assertions_for_each_column() {
         let d = dir_with(&[("s.sql", DDL)]);
-        let out = ok_in(
+        let out = expansion_in(
             &typed(
                 r#"schema = "s.sql""#,
                 "SELECT id, email, note FROM users WHERE id = $1",

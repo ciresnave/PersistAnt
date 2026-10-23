@@ -7,6 +7,7 @@ edition = "2024"
 rust-version = "1.94"
 description = "PersistAnt's relational driver over sqlx: implements RelationalBackend for PostgreSQL, with typed error classification."
 license = "MIT OR Apache-2.0"
+exclude = [".coderipper.toml"]
 repository = "https://github.com/ciresnave/PersistAnt"
 keywords = ["sql", "postgres", "sqlx", "persistence"]
 categories = ["database"]

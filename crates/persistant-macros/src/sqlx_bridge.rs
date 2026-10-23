@@ -26,7 +26,13 @@ pub(crate) enum Form {
 }
 
 impl Form {
-    #[cfg_attr(not(feature = "sqlx-check"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "sqlx-check"),
+        allow(
+            dead_code,
+            reason = "only the expansion built with feature sqlx-check names the sqlx macro"
+        )
+    )]
     fn sqlx_macro(self) -> &'static str {
         match self {
             Form::Record => "query",
@@ -63,7 +69,13 @@ struct Call {
     krate: String,
     /// `sqlx = ::path`: the crate holding sqlx's macros (default `::sqlx`; `sqlx = none` skips the check). `targets = [..]` and
     /// `allow = [..]` are as for `sql!`.
-    #[cfg_attr(not(feature = "sqlx-check"), allow(dead_code))]
+    #[cfg_attr(
+        not(feature = "sqlx-check"),
+        allow(
+            dead_code,
+            reason = "only the expansion built with feature sqlx-check reads the sqlx path"
+        )
+    )]
     sqlx: Option<String>,
     targets: Vec<String>,
     allow: Vec<String>,

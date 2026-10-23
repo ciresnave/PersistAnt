@@ -1,0 +1,7 @@
+# Public items of this published crate that nothing inside it calls (CodeRipper `reachability`, read per member crate).
+# Each is declared with its reason; none is waived.
+
+[reachability]
+public_api = [
+  { file = "src/bounded.rs", symbol = "call_bound_from_env", reason = "`call_bound_from_env` reads a per-call bound from an environment variable for `Bounded`; re-exported from the crate root and named in the module docs. Documented public API of a published crate, kept: no caller in this crate and none in the portfolio's projects read at origin/main on 2026-10-23 (git grep), but removing a public item is a breaking change, which here means 0.10 and a rewrite of every matrix row's version column. Owner: PersistAnt lane. Revisit at the next breaking release." },
+]
