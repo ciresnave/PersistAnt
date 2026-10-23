@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.37
+
+### Added
+- **`.coderipper.toml`: two `ci-security` waivers, each with its reason and owner** (PM decision 2026-10-23; CodeRipper lane: by design). The `power-loss` jobs of `machine-durability.yml` and `synapse-power-cut.yml` run on `[self-hosted, Windows, X64]` because they need the physical power-loss rig, which the rule reads, with the GPU as its proxy, as hardware only we have; they cannot run on a hosted runner. Neither workflow has a `pull_request` trigger. A waiver with a reason is the designed mechanism, not a silencing: the findings are still printed as `waived`. Checked locally with `coderipper sweep --profile portfolio --no-config` (0.8.19): both findings change from `Medium` to `waived`, nothing else changes.
+- **The portfolio job is re-pinned to coderipper `a48fc6cc`** (was `789b0122`; PM notice 2026-10-23): that commit sweeps workspace members, which the earlier pin probably did not (this repository is a real package with eight member crates). New findings, if any, become ROADMAP rows, one per rule.
+
 ## 0.9.36
 
 ### Added
