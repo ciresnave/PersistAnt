@@ -28,6 +28,7 @@ capability	blob.append	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;o
 capability	blob.append.concurrent_whole	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;contenders=16;os=linux;records=10;test=blob::blob.append.concurrent_whole;value_bytes=64	
 capability	blob.replace_atomic	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;test=crash::replace_atomic	replace_atomic without atomic_write_dir writes in place
 capability	blob.replace_atomic	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;kill=hard;os=linux;rounds=12;test=crash::replace_atomic;value_bytes=16777216	
+capability	lock.process	std-file-lock	File::try_lock		yes		arch=x86_64;kill=hard;os=linux;test=process_lock::lock.process	
 capability	kv.get	kv-on-blob:opendal-memory	0.9+0.59.5	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.get	
 capability	kv.put	kv-on-blob:opendal-memory	0.9+0.59.5	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.put	
 capability	kv.delete	kv-on-blob:opendal-memory	0.9+0.59.5	put_mode=atomic	yes		arch=x86_64;os=linux;test=kv::kv.delete	

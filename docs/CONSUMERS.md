@@ -69,7 +69,7 @@ Ranked by what the next step buys, not by size.
 3. **agentlife.** Fix the pin first (`0.4.4` cannot take 0.9.x: a standing-rule breach, a one-line change), then replace
    `Config::Fs` with a registry listing for the atomic-write path. The journal could move to `blob.append` (certified on
    `opendal-fs`), but it is a deliberate file format with a torn-line repair; that is a design question for the lane, not a
-   mechanical port. `lock.process` has no matrix row: a PersistAnt follow-up if agentlife is to depend on it.
+   mechanical port. `lock.process` had no matrix row when surveyed; it has one from 0.9.27.
 4. **lightbulb.** Two pins to raise; the PostgreSQL side is level 3 only because `PgTx` is named in `admin.rs`; the counters and
    sessions it wants are kv leaves that now exist. The pool-timeout gap should be re-checked against 0.9.24 first.
 5. **synapse.** The model consumer. Remaining work is its own: close gaps 2 and 5 and drop the redb fall-back for fresh
@@ -85,11 +85,15 @@ In order of how many projects each unblocks. None is started.
 
 1. **Documentation and an example for the registry path** for level-2 users (`Store` + `Config`): commy, agentlife and
    lightbulb all named a backend in code because that is what the older API showed.
-2. **A matrix row for `lock.process`** (implemented and tested, but not in any `matrix/*.tsv`): agentlife's `FileLock`.
+2. **A matrix row for `lock.process`** (implemented and tested, but not in any `matrix/*.tsv` when this was surveyed; **added in
+   0.9.27** as `std-file-lock`, decided by a killed child process with a marker-file control): agentlife's `FileLock`.
 3. **Pool options on `PgBackend::connect`** (lightbulb's stated reason for building its own pool), after re-checking 0.9.24.
 4. **Streamed / ranged blob I/O** (mlmf, and any large-object user). A new capability and a trait change; a design first.
-5. **Encryption at rest.** Nothing in the vocabulary names it (`grep` for "encrypt" in `persistant-core/src/vocabulary.rs`
-   finds nothing); only connection TLS exists. No project above *states* it as a need, so it is listed as a gap, not a request.
+5. **Encryption at rest.** The vocabulary reserves it as `storage.no_plaintext_at_rest` ("a canary value written through the
+   layer is not found as raw bytes in the data directory, log or temp files"), with no implementation, test or matrix row
+   (`DESIGN-KINDS.md` lists it among the capabilities that "have no row, so they are off"); only connection TLS exists. No
+   project above *states* it as a need, so it stays a reserved leaf, not a request. *(Corrected 2026-10-23: this item first
+   said the vocabulary names nothing, from a search for the word "encrypt"; the leaf is spelled differently.)*
 6. **A Redis backend** only if auth-framework's operators need it; it would be native for every kv leaf in
    `DESIGN-AUTH-STORAGE.md` and is not proposed here.
 7. **Windows owner-only files** (open with CireSnave through the PM; `ROADMAP.md`, "File permissions").

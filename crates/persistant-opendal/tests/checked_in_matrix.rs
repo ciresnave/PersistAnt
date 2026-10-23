@@ -87,3 +87,27 @@ fn every_row_carries_its_test_and_environment() {
         assert_eq!(r.enabled, r.reason.is_none(), "{}", r.subject);
     }
 }
+
+#[test]
+fn the_gate_reads_the_process_lock_row() {
+    let m = matrix();
+    assert_eq!(
+        m.lookup(
+            &id("lock.process"),
+            "std-file-lock",
+            "File::try_lock",
+            &Config::new()
+        ),
+        Lookup::On
+    );
+    // The control: a backend nobody certified is not on.
+    assert_ne!(
+        m.lookup(
+            &id("lock.process"),
+            "marker-file",
+            "File::try_lock",
+            &Config::new()
+        ),
+        Lookup::On
+    );
+}
