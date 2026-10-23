@@ -113,10 +113,9 @@ async fn open_named_gives_a_backend_agnostic_handle_for_memory_and_fs() {
         // A filesystem that ignores case (NTFS, APFS by default) is refused by name, not opened.
         Err(OpenError::CaseInsensitiveFilesystem { id, .. }) => {
             assert_eq!(id, "fs");
-            assert!(
-                cfg!(any(windows, target_os = "macos")),
-                "refused on a platform whose default filesystem keeps case"
-            );
+            #[cfg(not(any(windows, target_os = "macos")))]
+            panic!("refused on a platform whose default filesystem keeps case");
+            #[cfg(any(windows, target_os = "macos"))]
             return;
         }
         Err(other) => panic!("{other:?}"),

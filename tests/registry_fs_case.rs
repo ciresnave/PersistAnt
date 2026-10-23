@@ -30,10 +30,8 @@ async fn keys_that_differ_only_by_case_never_share_a_value() {
             );
             assert!(e.to_string().contains("ignores case"), "{e}");
             // The positive control: this machine really is case-insensitive.
-            assert!(
-                cfg!(any(windows, target_os = "macos")),
-                "refused on a platform whose default filesystem keeps case: {e}"
-            );
+            #[cfg(not(any(windows, target_os = "macos")))]
+            panic!("refused on a platform whose default filesystem keeps case: {e}");
         }
         // Opened: the two keys must be two values.
         Ok(h) => {
