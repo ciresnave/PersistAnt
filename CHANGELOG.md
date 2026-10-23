@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.21
+
+### Fixed
+- **`SqliteBackend::open` and `open_durable` create the database owner-only on Unix** (`0600`; its `-wal` and `-shm` files follow the database file). They were SQLite's default `0644` less the umask, world-readable under the usual `022`: found by the 0.9.20 check of the per-tenant open path. A file that already exists keeps the mode its owner gave it. On Windows nothing changes: the file inherits the directory's ACL, and restricting it needs the Win32 security API or a call to `icacls`, neither of which this crate takes on; restrict the directory the databases live in.
+
 ## 0.9.20
 
 ### Added
