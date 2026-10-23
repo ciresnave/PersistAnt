@@ -292,6 +292,16 @@ pub trait KvBackend: Send + Sync {
         async { Err(KvError::Unsupported("purge_expired".to_string())) }
     }
 
+    /// The number of **live** keys beginning with the literal `prefix`, from one consistent snapshot
+    /// (`kv.count`): expired entries are not counted, and `%`, `_` and `[` in the prefix are plain
+    /// characters. The default is [`KvError::Unsupported`]; a backend that cannot count in one step
+    /// says so rather than page through a listing that may change under it
+    /// ([`count_prefix_paged`] is that, named for what it is).
+    fn count(&self, prefix: &str) -> impl Future<Output = Result<u64, KvError>> + Send {
+        let _ = prefix;
+        async { Err(KvError::Unsupported("count".to_string())) }
+    }
+
     /// Apply `ops` as one unit. `Ok(true)`: every `Put` and `Delete` took effect together;
     /// `Ok(false)`: a `Require` was not met and **nothing changed**; `Err`: an operation failed
     /// and nothing changed. Of concurrent batches requiring the same value, exactly one applies
@@ -313,5 +323,43 @@ pub trait KvBackend: Send + Sync {
     ) -> impl Future<Output = Result<ValuePage, KvError>> + Send {
         let _ = (prefix, after, limit);
         async { Err(KvError::Unsupported("ordered_scan_values".to_string())) }
+    }
+}
+
+/// The number of live keys beginning with `prefix`, counted by paging [`KvBackend::prefix_list`].
+///
+/// **Not a snapshot**: a key written or expiring during the walk may or may not be counted, and the
+/// cost is one call per page. It is for a backend without [`KvBackend::count`] and a caller that can
+/// live with that; it is not the `kv.count` capability and the matrix does not claim it for anyone.
+pub async fn count_prefix_paged<K: KvBackend>(kv: &K, prefix: &str) -> Result<u64, KvError> {
+    const PAGE: usize = 1000;
+    let (mut n, mut after) = (0_u64, None::<String>);
+    loop {
+        let page = kv.prefix_list(prefix, after.as_deref(), PAGE).await?;
+        n += page.keys.len() as u64;
+        match page.next {
+            Some(cursor) => after = Some(cursor),
+            None => return Ok(n),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MemoryKv;
+
+    #[tokio::test]
+    async fn the_paged_count_agrees_with_the_native_one_when_nothing_changes() {
+        let kv = MemoryKv::new();
+        for i in 0..2500 {
+            kv.put(&format!("p/{i:04}"), b"v".to_vec(), None)
+                .await
+                .unwrap();
+        }
+        kv.put("q/0", b"v".to_vec(), None).await.unwrap();
+        assert_eq!(count_prefix_paged(&kv, "p/").await.unwrap(), 2500);
+        assert_eq!(kv.count("p/").await.unwrap(), 2500);
+        assert_eq!(count_prefix_paged(&kv, "none/").await.unwrap(), 0);
     }
 }

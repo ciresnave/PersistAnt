@@ -623,6 +623,23 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         .map_err(err)
     }
 
+    async fn count(&self, prefix: &str) -> Result<u64, KvError> {
+        // The same key range as `list`, in one statement, so it is one snapshot.
+        let mut sql = format!(
+            "SELECT count(*) FROM persistant_kv WHERE k >= $1 AND (expires_ms IS NULL OR expires_ms > {NOW})"
+        );
+        let mut params = vec![Value::Bytes(prefix.as_bytes().to_vec())];
+        if let Some(upper) = upper_bound(prefix.as_bytes()) {
+            params.push(Value::Bytes(upper));
+            sql.push_str(" AND k < $2");
+        }
+        let rows = self.qry(&sql, &params).await.map_err(err)?;
+        rows.first()
+            .and_then(|r| r.int(0))
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or_else(|| KvError::Corrupt("count did not return a number".to_string()))
+    }
+
     async fn batch(&self, ops: &[BatchOp]) -> Result<bool, KvError> {
         // A deadlock or serialisation victim was rolled back whole, so the batch changed nothing and
         // running it again is the same as having started a moment later: the racer then reads the

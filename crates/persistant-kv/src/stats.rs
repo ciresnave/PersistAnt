@@ -162,6 +162,10 @@ impl<K: KvBackend> KvBackend for Instrumented<'_, K> {
         )
     }
 
+    async fn count(&self, prefix: &str) -> Result<u64, KvError> {
+        self.note("count", self.inner.count(prefix).await)
+    }
+
     async fn take(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
         self.note("take", self.inner.take(key).await)
     }

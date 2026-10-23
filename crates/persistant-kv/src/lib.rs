@@ -21,8 +21,9 @@
 //! - [`stats`]: stage 2, how often each leaf passes and what each operation did (no timing).
 //!
 //! `kv.take` (get-and-delete, one winner) is built on `compare_and_delete`, so a backend has it
-//! exactly when it has that. `kv.count` is not offered yet, so off everywhere. `KvOnBlob` cannot give
-//! `compare_and_swap`, `take` or `batch_atomic` on a blob store without compare-and-delete; see its docs.
+//! exactly when it has that. `kv.count` (live keys under a prefix, from one snapshot) is native on
+//! memory and the SQL engines and off on a blob store. `KvOnBlob` cannot give `compare_and_swap`, `take`
+//! or `batch_atomic` on a blob store without compare-and-delete; see its docs.
 
 mod backend;
 pub mod choose;
@@ -37,7 +38,9 @@ pub mod speed;
 pub mod stats;
 mod translate;
 
-pub use backend::{BatchOp, BoundedProbe, KeyPage, KvBackend, KvError, ValuePage};
+pub use backend::{
+    BatchOp, BoundedProbe, KeyPage, KvBackend, KvError, ValuePage, count_prefix_paged,
+};
 pub use lease::Lease;
 pub use memory::{Defect, MemoryKv};
 pub use on_blob::KvOnBlob;
