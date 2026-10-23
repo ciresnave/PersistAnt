@@ -57,6 +57,10 @@ name = "machine_vm"
 required-features = ["sqlite", "mysql"]
 
 [[test]]
+name = "sqlite_file_mode"
+required-features = ["sqlite"]
+
+[[test]]
 name = "sqlite_open_path"
 required-features = ["sqlite"]
 

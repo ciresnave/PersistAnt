@@ -19,6 +19,9 @@ async fn a_missing_file_is_created_and_a_missing_directory_is_not() {
     db.execute("INSERT INTO t VALUES ($1)", &[Value::Int(7)])
         .await
         .unwrap();
+    // `open` leaves SQLite's journal mode alone (a rollback journal); `open_durable` asks for WAL.
+    let mode = db.query("PRAGMA journal_mode", &[]).await.unwrap();
+    assert_eq!(mode[0].text(0), Some("delete"));
     drop(db);
 
     let again = SqliteBackend::open(&file).await.unwrap();
