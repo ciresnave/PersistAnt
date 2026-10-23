@@ -39,10 +39,10 @@ pub use persistant_opendal as opendal_driver;
 #[cfg(feature = "sqlx-driver")]
 pub use persistant_sqlx as sqlx_driver;
 
-/// The crate version, as declared in `Cargo.toml`.
 #[cfg(feature = "registry")]
 pub mod registry;
 
+/// The crate version, as declared in `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Compile-time SQL (feature `sql-macros`): `sql!` checks a literal statement and translates it for
@@ -183,6 +183,6 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
-        assert_eq!(VERSION, "0.9.37");
+        assert_eq!(VERSION, "0.9.38");
     }
 }

@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.94"
 description = "PersistAnt's capability vocabulary, boolean capability sets, matrix row schema and conformance verdicts. No I/O."
 license = "MIT OR Apache-2.0"
+exclude = [".coderipper.toml"]
 repository = "https://github.com/ciresnave/PersistAnt"
 keywords = ["storage", "persistence", "capabilities", "conformance"]
 categories = ["development-tools::testing", "database-implementations"]

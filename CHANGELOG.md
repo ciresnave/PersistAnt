@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.38
+
+### Fixed
+- **The CodeRipper findings of the member crates, resolved** (the pin `a48fc6cc` sweeps each workspace member; PM decision 2026-10-23: resolve, not only record).
+  - `lint-suppression` (4): every `allow` now carries a `reason` (`sqlx_bridge.rs` x2, `registry.rs` x2).
+  - `unused-return-values` (2): the `persistant-macros` test helpers `ok` and `ok_in` returned the expansion that 10 of 13 callers threw away. The helpers that return it are now `expansion` and `expansion_in` (their six users), and `ok` / `ok_in` assert and return nothing.
+  - `reachability` (9): nothing was removed. All nine are documented, tested, public items of published crates that nothing inside their own crate calls, and no portfolio project calls them either (`git grep` of eight repositories at `origin/main`, 2026-10-23); removing a public item is a breaking change, which here means 0.10 and a rewrite of every matrix row's version column. They are declared as public API with a reason and an owner, in `.coderipper.toml` for the root package (`VERSION`) and in a `.coderipper.toml` inside each member (`persistant-core`: `is_under`, `rank`, `SEED`, `seed`; `persistant-kv`: `count_prefix_paged`, `is_eligible`, `precision`; `persistant-sqlx`: `call_bound_from_env`), because CodeRipper reads a member's declarations from the member's own directory (tested with 0.8.19: a root file is ignored for a member). The three member files are excluded from the published packages. A crate-level form is being built by the CodeRipper lane and would replace them.
+  - The `/// The crate version` doc comment of `persistant::VERSION` sat above `pub mod registry;`; it is above `VERSION` now.
+
 ## 0.9.37
 
 ### Added

@@ -267,7 +267,10 @@ struct Spec {
 }
 
 fn specs() -> Vec<Spec> {
-    #[allow(unused_mut)]
+    #[allow(
+        unused_mut,
+        reason = "v is pushed to only when a registry-sqlite, -postgres or -mysql feature is enabled"
+    )]
     let mut v = vec![
         Spec {
             id: "memory",
@@ -372,7 +375,10 @@ pub fn known_ids() -> Vec<&'static str> {
 fn matrix() -> &'static Matrix {
     static M: OnceLock<Matrix> = OnceLock::new();
     M.get_or_init(|| {
-        #[allow(unused_mut)]
+        #[allow(
+            unused_mut,
+            reason = "m is merged into only when a registry-sqlite, -postgres or -mysql feature is enabled"
+        )]
         let mut m = Matrix::parse(include_str!("../matrix/opendal.tsv"))
             .expect("embedded matrix/opendal.tsv");
         #[cfg(feature = "registry-sqlite")]
