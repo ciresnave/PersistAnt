@@ -141,7 +141,7 @@ jobs:
           PERSISTANT_TEST_TLS_DATABASE_URL: postgres://postgres:persistant-test@localhost:5433/persistant
           PERSISTANT_TEST_TLS_CA: ${{ runner.temp }}/pg-tls-ca.pem
           PERSISTANT_REQUIRE_TLS_DATABASE: "1"
-        run: cargo test -p persistant-sqlx --no-fail-fast
+        run: cargo test -p persistant-sqlx --features bridge --no-fail-fast
 
       - name: cargo test persistant registry (real PostgreSQL)
         run: cargo test -p persistant --features registry-postgres --test registry_servers --no-fail-fast

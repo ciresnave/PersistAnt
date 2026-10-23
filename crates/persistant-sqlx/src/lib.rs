@@ -8,6 +8,8 @@
 //! Failures are classified from the server's SQLSTATE into [`persistant_relational::RelError`].
 
 mod bounded;
+#[cfg(feature = "bridge")]
+mod bridge;
 mod decode;
 mod migrate;
 #[cfg(feature = "mysql")]
@@ -17,6 +19,8 @@ mod options;
 mod sqlite;
 
 pub use bounded::{Bounded, BoundedTx, call_bound_from_env, parse_bound};
+#[cfg(feature = "bridge")]
+pub use bridge::{OnConn, OnPool};
 pub use migrate::{FromSqlxError, migrations_from_sqlx};
 #[cfg(feature = "mysql")]
 pub use mysql::{MysqlBackend, MysqlTx};

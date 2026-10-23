@@ -24,8 +24,9 @@ fn target_of(dialect: &Dialect) -> Option<Target> {
     }
 }
 
-/// The text for `dialect` and the parameters in the order that text wants them.
-fn prepare(
+/// The text for `dialect` and the parameters in the order that text wants them. Public for driver
+/// crates that run a [`Sql`] on a connection of their own (`persistant-sqlx`'s sqlx bridge).
+pub fn prepare(
     sql: &Sql,
     dialect: &Dialect,
     params: &[Value],

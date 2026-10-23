@@ -16,6 +16,8 @@ categories = ["database"]
 sqlite = ["sqlx/sqlite"]
 # MySQL and MariaDB (pure Rust driver).
 mysql = ["sqlx/mysql"]
+# `OnPool` and `OnConn`: run `persistant::sqlx_query!` statements on an sqlx pool or connection (docs/DESIGN-SQLX-BRIDGE.md section 6).
+bridge = ["persistant-relational/sql"]
 
 [dependencies]
 persistant-core = { workspace = true }
@@ -67,6 +69,10 @@ harness = false
 name = "durability_mysql"
 harness = false
 required-features = ["mysql"]
+
+[[test]]
+name = "sqlx_bridge"
+required-features = ["bridge"]
 
 [[test]]
 name = "tls_mysql"

@@ -1,0 +1,1 @@
+{"db_name":"PostgreSQL","query":"INSERT INTO persistant_sqlxb (id, at, label) VALUES ($1, $2, $3)","describe":{"columns":[],"parameters":{"Left":["Uuid","Timestamptz","Text"]},"nullable":[]},"hash":"743d87a2f761929eb018bcb241b28cdd8b5397a7a177b676781e6fa30528143f"}
