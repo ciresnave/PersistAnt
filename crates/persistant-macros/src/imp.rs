@@ -596,19 +596,23 @@ mod tests {
         sql_in(src.parse().expect("test tokens parse"), Some(dir)).to_string()
     }
 
-    /// Assert the call expands cleanly and return the expansion.
-    fn expansion(src: &str) -> String {
-        let out = run(src);
+    fn assert_clean(out: &str) {
         assert!(
             !out.contains("compile_error"),
             "expected a clean expansion: {out}"
         );
+    }
+
+    /// Assert the call expands cleanly and return the expansion.
+    fn expansion(src: &str) -> String {
+        let out = run(src);
+        assert_clean(&out);
         out
     }
 
     /// Assert the call expands cleanly.
     fn ok(src: &str) {
-        expansion(src);
+        assert_clean(&run(src));
     }
 
     fn fails(src: &str, needle: &str) {
@@ -849,16 +853,13 @@ mod tests {
     /// As [`expansion`], with the crate directory given.
     fn expansion_in(src: &str, dir: &Path) -> String {
         let out = run_in(src, dir);
-        assert!(
-            !out.contains("compile_error"),
-            "expected a clean expansion: {out}"
-        );
+        assert_clean(&out);
         out
     }
 
     /// Assert the call expands cleanly with this crate directory.
     fn ok_in(src: &str, dir: &Path) {
-        expansion_in(src, dir);
+        assert_clean(&run_in(src, dir));
     }
 
     fn fails_in(src: &str, dir: &Path, needle: &str) {
