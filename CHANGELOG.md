@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.33
+
+### Fixed
+- **`open_named("fs")` no longer aliases keys that differ only by case** (found while answering a review of the registry guide; measured on Windows/NTFS: `put("Key")`, `put("key")`, `get("Key")` returned the second value). See the entries below once the fix lands.
+
 ## 0.9.32
 
 ### Added
