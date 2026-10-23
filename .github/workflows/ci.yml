@@ -33,21 +33,21 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: cargo build
-        run: cargo build --workspace --all-targets
+        run: cargo build --locked --workspace --all-targets
 
       - name: cargo test
-        run: cargo test --workspace --no-fail-fast
+        run: cargo test --locked --workspace --no-fail-fast
 
       # The opt-in re-exports of the facade (needs the 1.94 compiler this job installs).
-      - name: cargo test persistant --all-features
-        run: cargo test -p persistant --all-features --no-fail-fast
+      - name: cargo test --locked persistant --all-features
+        run: cargo test --locked -p persistant --all-features --no-fail-fast
 
       # A build with only the base registry (memory, fs): no SQLite, no server driver.
-      - name: cargo test persistant --features registry
-        run: cargo test -p persistant --features registry --test registry --no-fail-fast
+      - name: cargo test --locked persistant --features registry
+        run: cargo test --locked -p persistant --features registry --test registry --no-fail-fast
 
   msrv:
     name: MSRV (rust-version in Cargo.toml)
@@ -68,10 +68,10 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
 
-      - name: cargo check on the MSRV toolchain
+      - name: cargo check --locked on the MSRV toolchain
         run: |
           rustc --version
-          cargo check --workspace --exclude persistant-sqlx --exclude persistant-migrate --all-targets
+          cargo check --locked --workspace --exclude persistant-sqlx --exclude persistant-migrate --all-targets
 
   msrv-sqlx:
     name: MSRV persistant-sqlx (its own rust-version)
@@ -92,10 +92,10 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
 
-      - name: cargo check on the persistant-sqlx floor
+      - name: cargo check --locked on the persistant-sqlx floor
         run: |
           rustc --version
-          cargo check -p persistant-sqlx -p persistant-migrate --all-targets
+          cargo check --locked -p persistant-sqlx -p persistant-migrate --all-targets
 
   relational:
     name: Relational (PostgreSQL 16 service container)
@@ -136,26 +136,26 @@ jobs:
       - name: Start a PostgreSQL with TLS
         run: bash .github/scripts/postgres-tls.sh pg-tls 5433 "${{ runner.temp }}/pg-tls-ca.pem"
 
-      - name: cargo test persistant-sqlx (real PostgreSQL, plain and TLS)
+      - name: cargo test --locked persistant-sqlx (real PostgreSQL, plain and TLS)
         env:
           PERSISTANT_TEST_TLS_DATABASE_URL: postgres://postgres:persistant-test@localhost:5433/persistant
           PERSISTANT_TEST_TLS_CA: ${{ runner.temp }}/pg-tls-ca.pem
           PERSISTANT_REQUIRE_TLS_DATABASE: "1"
-        run: cargo test -p persistant-sqlx --features bridge --no-fail-fast
+        run: cargo test --locked -p persistant-sqlx --features bridge --no-fail-fast
 
-      - name: cargo test persistant registry (real PostgreSQL)
-        run: cargo test -p persistant --features registry-postgres --test registry_servers --no-fail-fast
+      - name: cargo test --locked persistant registry (real PostgreSQL)
+        run: cargo test --locked -p persistant --features registry-postgres --test registry_servers --no-fail-fast
 
       # The migrate binary end to end on this server: up, status, verify-fresh and the exit codes.
-      - name: cargo test persistant-migrate (real PostgreSQL)
-        run: cargo test -p persistant-migrate --no-fail-fast
+      - name: cargo test --locked persistant-migrate (real PostgreSQL)
+        run: cargo test --locked -p persistant-migrate --no-fail-fast
 
       - name: Regenerate matrix/sqlx-postgres.tsv
         # Also after a failed test step: the regenerated file is what a matrix change needs to be read from.
         if: ${{ !cancelled() }}
         run: |
           mkdir -p generated
-          cargo run -q -p persistant-sqlx --example matrix > generated/sqlx-postgres.tsv
+          cargo run --locked -q -p persistant-sqlx --example matrix > generated/sqlx-postgres.tsv
 
       - name: Upload what was generated
         if: always()
@@ -178,13 +178,13 @@ jobs:
         with:
           toolchain: stable
 
-      - name: cargo test persistant-sqlx --features sqlite
-        run: cargo test -p persistant-sqlx --features sqlite --no-fail-fast
+      - name: cargo test --locked persistant-sqlx --features sqlite
+        run: cargo test --locked -p persistant-sqlx --features sqlite --no-fail-fast
 
       - name: Regenerate matrix/sqlx-sqlite.tsv
         run: |
           mkdir -p generated
-          cargo run -q -p persistant-sqlx --features sqlite --example matrix_sqlite > generated/sqlx-sqlite.tsv
+          cargo run --locked -q -p persistant-sqlx --features sqlite --example matrix_sqlite > generated/sqlx-sqlite.tsv
 
       - name: Upload what was generated
         if: always()
@@ -200,13 +200,13 @@ jobs:
       # command that re-runs it, uploaded, and printed. Nothing compares it to a constant.
       - name: Time the key-value workloads on SQLite
         run: |
-          cargo run -q --release -p persistant-sqlx --features sqlite --example speed > generated/sqlx-speed.tsv
-          cargo run -q -p persistant-kv --example speed_report -- generated/sqlx-speed.tsv
+          cargo run --locked -q --release -p persistant-sqlx --features sqlite --example speed > generated/sqlx-speed.tsv
+          cargo run --locked -q -p persistant-kv --example speed_report -- generated/sqlx-speed.tsv
 
       - name: Time the relational workloads on SQLite
         run: |
-          cargo run -q --release -p persistant-sqlx --features sqlite --example rel_speed > generated/sqlx-rel-speed.tsv
-          cargo run -q -p persistant-kv --example speed_report -- generated/sqlx-rel-speed.tsv
+          cargo run --locked -q --release -p persistant-sqlx --features sqlite --example rel_speed > generated/sqlx-rel-speed.tsv
+          cargo run --locked -q -p persistant-kv --example speed_report -- generated/sqlx-rel-speed.tsv
 
       - name: Upload the speed data
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -248,21 +248,21 @@ jobs:
         with:
           toolchain: stable
 
-      - name: cargo test persistant-sqlx --features mysql (against MariaDB)
-        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test sweep --test decode_types --no-fail-fast
+      - name: cargo test --locked persistant-sqlx --features mysql (against MariaDB)
+        run: cargo test --locked -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test sweep --test decode_types --no-fail-fast
 
-      - name: cargo test persistant registry (MariaDB)
-        run: cargo test -p persistant --features registry-mysql --test registry_servers --no-fail-fast
+      - name: cargo test --locked persistant registry (MariaDB)
+        run: cargo test --locked -p persistant --features registry-mysql --test registry_servers --no-fail-fast
 
-      - name: cargo test persistant-migrate (against MariaDB)
-        run: cargo test -p persistant-migrate --no-fail-fast
+      - name: cargo test --locked persistant-migrate (against MariaDB)
+        run: cargo test --locked -p persistant-migrate --no-fail-fast
 
       - name: Regenerate matrix/sqlx-mariadb.tsv
         # Also after a failed test step: the regenerated file is what a matrix change needs to be read from.
         if: ${{ !cancelled() }}
         run: |
           mkdir -p generated
-          cargo run -q -p persistant-sqlx --features mysql --example matrix_mysql > generated/sqlx-mariadb.tsv
+          cargo run --locked -q -p persistant-sqlx --features mysql --example matrix_mysql > generated/sqlx-mariadb.tsv
 
       - name: Upload what was generated
         if: always()
@@ -306,34 +306,34 @@ jobs:
         with:
           toolchain: stable
 
-      - name: cargo test persistant-sqlx --features mysql
-        run: cargo test -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test durability_mysql --test sweep --test decode_types --no-fail-fast
+      - name: cargo test --locked persistant-sqlx --features mysql
+        run: cargo test --locked -p persistant-sqlx --features mysql --test kv_on_mysql --test sql_macro --test catalog --test durability_mysql --test sweep --test decode_types --no-fail-fast
 
-      - name: cargo test persistant registry (MySQL)
-        run: cargo test -p persistant --features registry-mysql --test registry_servers --no-fail-fast
+      - name: cargo test --locked persistant registry (MySQL)
+        run: cargo test --locked -p persistant --features registry-mysql --test registry_servers --no-fail-fast
 
-      - name: cargo test persistant-migrate (against MySQL)
-        run: cargo test -p persistant-migrate --no-fail-fast
+      - name: cargo test --locked persistant-migrate (against MySQL)
+        run: cargo test --locked -p persistant-migrate --no-fail-fast
 
       # Two more servers from the same pinned image: one with TLS (its own private CA), one without.
       # SUP-008 waiver reason as above: CI-only, no credential of ours reaches them.
       - name: Start a MySQL with TLS and one without
         run: bash .github/scripts/mysql-tls.sh my-tls 3307 my-plain 3308 "${{ runner.temp }}/my-tls-ca.pem"
 
-      - name: cargo test persistant-sqlx --features mysql --test tls_mysql
+      - name: cargo test --locked persistant-sqlx --features mysql --test tls_mysql
         env:
           PERSISTANT_TEST_MYSQL_TLS_URL: mysql://root:persistant-test@127.0.0.1:3307/persistant
           PERSISTANT_TEST_MYSQL_TLS_CA: ${{ runner.temp }}/my-tls-ca.pem
           PERSISTANT_TEST_MYSQL_PLAIN_URL: mysql://root:persistant-test@127.0.0.1:3308/persistant
           PERSISTANT_REQUIRE_MYSQL_TLS: "1"
-        run: cargo test -p persistant-sqlx --features mysql --test tls_mysql
+        run: cargo test --locked -p persistant-sqlx --features mysql --test tls_mysql
 
       - name: Regenerate matrix/sqlx-mysql.tsv
         # Also after a failed test step: the regenerated file is what a matrix change needs to be read from.
         if: ${{ !cancelled() }}
         run: |
           mkdir -p generated
-          cargo run -q -p persistant-sqlx --features mysql --example matrix_mysql > generated/sqlx-mysql.tsv
+          cargo run --locked -q -p persistant-sqlx --features mysql --example matrix_mysql > generated/sqlx-mysql.tsv
 
       - name: Upload what was generated
         if: always()
@@ -359,7 +359,7 @@ jobs:
       - name: Regenerate matrix/opendal.tsv
         run: |
           mkdir -p generated
-          cargo run -q -p persistant-opendal --example matrix > generated/opendal.tsv
+          cargo run --locked -q -p persistant-opendal --example matrix > generated/opendal.tsv
 
       - name: Upload what was generated
         if: always()
@@ -376,8 +376,8 @@ jobs:
       # Stage 3 (speed): data with its environment, not a gate. See the SQLite job.
       - name: Time the key-value workloads
         run: |
-          cargo run -q --release -p persistant-opendal --example speed > generated/opendal-speed.tsv
-          cargo run -q -p persistant-kv --example speed_report -- generated/opendal-speed.tsv
+          cargo run --locked -q --release -p persistant-opendal --example speed > generated/opendal-speed.tsv
+          cargo run --locked -q -p persistant-kv --example speed_report -- generated/opendal-speed.tsv
 
       - name: Upload the speed data
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

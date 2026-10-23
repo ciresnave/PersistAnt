@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.36
+
+### Added
+- **`Cargo.lock` is committed, and CI builds with `--locked`** (CodeRipper `SUP-001`, PM decision 2026-10-23: the `persistant-migrate` binary is an application, and every other repository of the portfolio commits its lock). `/Cargo.lock` leaves `.gitignore`; every `cargo build|test|clippy|check|run` step of `ci.yml` and the build of `machine-durability.yml` and `synapse-power-cut.yml` (Synapse commits its own lock) takes `--locked`. "Newest versions at all times" is kept by updating the lock (`cargo update`, then the tests), not by leaving it out. **A version bump now also moves the nine workspace packages in `Cargo.lock`** (`cargo update --workspace`, or any unlocked `cargo check`), or `--locked` fails.
+
+
+### Fixed
+- **A race between two tests of `tests/registry_servers.rs`**, found by the first CI run with `--locked`: every round trip used the key `registry-test/<pid>`, so two tests of one binary, against the same PostgreSQL, could delete each other's key between a put and a get. Each call now takes its own key.
 ## 0.9.35
 
 ### Fixed

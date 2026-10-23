@@ -66,7 +66,7 @@ jobs:
           toolchain: stable
       - name: Build the guest binary
         working-directory: synapse
-        run: cargo build --release -p synapse-mailbox-persistant --example mailbox_vm
+        run: cargo build --locked --release -p synapse-mailbox-persistant --example mailbox_vm
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mailbox_vm
