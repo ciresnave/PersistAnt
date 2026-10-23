@@ -913,6 +913,27 @@ mod tests {
     }
 
     #[test]
+    fn a_sqlite_rowid_alias_may_be_left_out_of_an_insert() {
+        // `INTEGER PRIMARY KEY` is SQLite's rowid alias: it takes the next number when omitted, so an
+        // insert that leaves it out is valid (UniSQL's SQLite reader once reported it as having no
+        // default, which made this a false positive).
+        let d = dir_with(&[(
+            "s.sql",
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+        )]);
+        let stmt = |sql: &str| {
+            format!("source = sqlite, targets = [sqlite], schema = \"s.sql\", \"{sql}\"")
+        };
+        ok_in(&stmt("INSERT INTO t (name) VALUES ($1)"), d.path());
+        // The control: a NOT NULL column with no default is still caught, so the check ran.
+        fails_in(
+            &stmt("INSERT INTO t (id) VALUES ($1)"),
+            d.path(),
+            "column `name` of `t` is NOT NULL with no default",
+        );
+    }
+
+    #[test]
     fn on_conflict_must_name_a_stated_unique_key() {
         let d = dir_with(&[("s.sql", DDL)]);
         let stmt = |target: &str| {
