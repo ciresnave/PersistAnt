@@ -155,3 +155,33 @@ CireSnave 2026-10-18 (`CIRESNAVE-EXPECTATIONS.md` 6.16): *"have PersistAnt re-ex
 
 `KvOnRelational` written once in PostgreSQL SQL and translated by UniSQL (`DESIGN-KINDS.md` §5).
 Depends on UniSQL 0.24.4 or later from crates.io.
+
+## Spec-to-roadmap audit (PM [TASK] 2026-10-24, CireSnave's idea; read at `dabef6c`, 0.9.46)
+
+Read: `README.md`, `ROADMAP.md`, `SECURITY.md`, `bench/README.md`, `matrix/README.md`, `scripts/machine-durability/README.md` and `docs/` (`COMPILE-TIME-SQL`, `CONSUMERS`, `DECODER-AUDIT`, `DESIGN-AUTH-STORAGE`, `DESIGN-DURABILITY-MACHINE`, `DESIGN-KINDS`, `DESIGN-SQLX-BRIDGE`, `FACADE-MIGRATION`, `REGISTRY-FOR-STORE-USERS`): 15 files. `DESIGN-KINDS.md` section 11 is a snapshot at 0.4.24, so most of its "not built" text is stale; the rows below are only what the code still lacks (a name absent from `crates/`, `matrix/`, `src/` at `dabef6c`: `kv.in_relational_transaction`, `persist.kind`, `rel.trigger`, `rel.advisory_lock`, `rel.skip_locked` have 0 hits, while `lock.lease` and `ops.pitr` are present, so the search works). **None of these is started by this PR.** State: *open* (nobody holds it), *held* (by whom), *done* (PR or version).
+
+| # | Work | Source | State |
+|---|---|---|---|
+| 1 | Typed-error vocabulary beyond SQLSTATE classes (only `rel.error.unique` exists) | `DESIGN-KINDS` 11.3 | open |
+| 2 | A test for `blob.max_value_size` (`Need::MaxValueSize` is refused only where a backend reports a limit; the leaf is untested, so off) | `DESIGN-KINDS` 2.2, 11.3 | open |
+| 3 | `blob.file_mode` (file permissions of the `fs` blob driver; SQLite is done, see File permissions) | `DESIGN-KINDS` 2.2 | open |
+| 4 | `blob.replace_atomic` crash test (kill a writer mid-replace, read whole old or whole new; known-bad control: in-place write) and `blob.durable` | `FACADE-MIGRATION` 3, `DESIGN-KINDS` 11.3 | open |
+| 5 | `ops.pitr` test (restore to instant *t*, compare with a snapshot taken at *t*) | `DESIGN-KINDS` 2.2 | open, needs infrastructure the PM provides |
+| 6 | `kv.in_relational_transaction`: `kv` operations inside a relational transaction | `DESIGN-KINDS` 4.4 | open, design first |
+| 7 | Fault injection (`Masked`, `Faulty`) for every kind, not only blob | `DESIGN-KINDS` 5 | open |
+| 8 | One set of `tracing` span and field names (`persist.kind`, `persist.backend`, `persist.op`, `persist.capability`) | `DESIGN-KINDS` 5 | open |
+| 9 | Secret handle for connection config beyond `ConnectionSecret` (env var, file or `with-secret` reference, redacted `Debug`) | `DESIGN-KINDS` 5, 10 | open, design first |
+| 10 | Opt-in live test at open (rolled-back `TEMP` objects), per program through its `Needs` (D3, ruled 2026-10-14) | `DESIGN-KINDS` 2.3, 9 | open |
+| 11 | The registry `Handle` serves the kv kind only; blob and relational ids are reported unmet | `DESIGN-KINDS` 3 | open |
+| 12 | Unrowed `rel.*` and `kv.*` seed leaves: `rel.trigger`, `rel.advisory_lock`, `rel.skip_locked`, `rel.json`, `rel.array`, `rel.bulk_copy`, `rel.session_setting`, `rel.catalog`, `rel.unique_index.expression` / `.partial`, `rel.dialect`, `kv.prefix_list.exactly_once`. Untested is off; each is a leaf plus a test when a consumer needs it | `DESIGN-KINDS` 2.2 | open, on demand |
+| 13 | Survey the SQL standard feature-code coverage of SQLite and MySQL (only PostgreSQL's was read) | `DESIGN-KINDS` 2.2, 10 | open, low |
+| 14 | A `tokio-postgres` driver crate | `DESIGN-KINDS` 9 (D4) | held: only if a consumer shows the need |
+| 15 | Non-Rust (TypeScript) bindings | `DESIGN-KINDS` 6, non-goal 11 | held: later, not this phase |
+| 16 | Consumers' hand-written locks, append and atomic-replace sites moved onto PersistAnt (OverMind consent, fuel x4, mlmf x2, coderipper tool cache, synapse x3) and the `blob.append` torn-line repair | `DESIGN-KINDS` 7 | held: each consumer's lane |
+| 17 | A relational audit backend for auth-framework | `DESIGN-KINDS` 7 | held: auth-framework lane |
+| 18 | A consumer-CI recipe: the same suite against the consumer's own production backend, beyond Synapse's `run_all` (stage 1, item 3) | `DESIGN-KINDS` 2.3 | open, after item 3 |
+| 19 | Migrations, lock helpers and expiry helpers for **non-SQL** stores (OpenDAL has no TTL or locks; emulated, with the limits documented). `lock.process` is done (0.9.27); `kv.lease` and `kv.purge_expired` are on the kv backends, not the blob stores | `README` "Not yet" | open |
+| 20 | `Store` reimplemented over `BlobBackend` (so `Needs` become matrix lookups), then deprecated. D7 option A is **done** (the facade re-exports the kind crates behind features); B and C are not ruled | `FACADE-MIGRATION` 4-6 | held: **a CireSnave call** (breaking for lightbulb and agentlife); not proposed |
+| 21 | Stale text that contradicts the code: `README` ("Nothing in it is implemented yet", "relational support ... is not built"), `DESIGN-KINDS` 11.1-11.3 and the 2.2 `blob.create_exclusive_atomic` row ("not OpenDAL", done by the driver since 0.9.41), `FACADE-MIGRATION` 2 (`create_if_absent` gap), and this file's own "main is 0.7.8" / "0.7.9" | all of the above | open, docs only |
+
+Counts: 15 files read, 21 rows added, 1 needs a CireSnave call (row 20). Rows 14, 15, 16 and 17 are held by design, not by a person who is blocked.

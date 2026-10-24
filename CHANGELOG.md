@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.47
+
+### Changed
+- Docs: spec-to-roadmap audit (PM [TASK] 2026-10-24): `ROADMAP.md` gains a section with 21 rows for work that a design doc or the README names and the roadmap did not (15 files read, one needs a CireSnave call). Nothing started.
+
 ## 0.9.46
 
 ### Changed
