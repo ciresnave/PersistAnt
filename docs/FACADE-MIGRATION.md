@@ -18,7 +18,7 @@ use sites, and whether either uses `Record`, are **UNVERIFIED**.
 | `persistant` item | New equivalent | Gap |
 |---|---|---|
 | `Store::read/replace/delete/stat/list` | `BlobBackend::read/write/delete/stat/list` | `list` takes `NonZeroUsize` and returns `modified`; `BlobBackend::list` takes `usize` and `Entry` has no `modified` |
-| `create_if_absent` | `BlobBackend::create_exclusive` | none (same refusal on fs with `atomic_write_dir`) |
+| `create_if_absent` | `BlobBackend::create_exclusive` | none for the blob driver (0.9.41: `fs` with `atomic_write_dir` links a finished scratch file to the key). `Store::create_if_absent` still refuses that configuration |
 | `replace` with crash safety | `BlobBackend::replace_atomic` | **the leaf `blob.replace_atomic` (concurrent reader *and* crash) has no crash test, so no row says it is on** (§3) |
 | `Need`/`Needs`, `Error::Refused` at open | `persistant_core::Matrix` lookup | needs are *claimed* from OpenDAL's declared capability struct today; the new gate reads *tested* rows |
 | `Record` (schema versions, upgrade) | none | not ported; a codec concern, not a backend one |

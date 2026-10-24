@@ -19,12 +19,19 @@ pub use process_lock::{
 use persistant_blob::{BlobBackend, BlobError, Entry, Page};
 use persistant_core::Config;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use opendal::{ErrorKind, Operator};
 
 fn backend(e: opendal::Error) -> BlobError {
     BlobError::Backend(e.to_string())
+}
+
+#[derive(Debug)]
+struct FsDirs {
+    root: PathBuf,
+    scratch: Option<PathBuf>,
 }
 
 /// A blob store on OpenDAL's `fs` or `memory` service.
@@ -33,9 +40,10 @@ pub struct OpendalBlob {
     op: Operator,
     name: &'static str,
     config: Config,
-    /// False for `fs` under `atomic_write_dir`: OpenDAL checks for the key and then renames, so
-    /// two creators can both pass (README 0.4.6, 0.4.7). The driver says so instead of claiming it.
-    exclusive_create: bool,
+    /// Where `fs` keeps its files and, when `atomic_write_dir` is set, its scratch files. Exclusive
+    /// create under a scratch directory is done here, not by OpenDAL (whose own is
+    /// check-then-rename, README 0.4.6, 0.4.7): see [`OpendalBlob::create_exclusive`].
+    fs: Option<FsDirs>,
     /// False for `fs` without `atomic_write_dir`: the target is written in place.
     atomic_replace: bool,
 }
@@ -48,7 +56,7 @@ impl OpendalBlob {
             op,
             name: "opendal-memory",
             config: Config::new(),
-            exclusive_create: true,
+            fs: None,
             atomic_replace: true,
         })
     }
@@ -74,7 +82,10 @@ impl OpendalBlob {
             op,
             name: "opendal-fs",
             config,
-            exclusive_create: atomic_write_dir.is_none(),
+            fs: Some(FsDirs {
+                root: root.to_path_buf(),
+                scratch: atomic_write_dir.map(Path::to_path_buf),
+            }),
             atomic_replace: atomic_write_dir.is_some(),
         })
     }
@@ -180,10 +191,12 @@ impl BlobBackend for OpendalBlob {
     }
 
     async fn create_exclusive(&self, key: &str, bytes: Vec<u8>) -> Result<bool, BlobError> {
-        if !self.exclusive_create {
-            return Err(BlobError::Unsupported(
-                "create_exclusive under atomic_write_dir is check-then-rename".to_string(),
-            ));
+        if let Some(FsDirs {
+            root,
+            scratch: Some(scratch),
+        }) = &self.fs
+        {
+            return create_by_hard_link(root, scratch, key, &bytes).await;
         }
         match self.op.write_with(key, bytes).if_not_exists(true).await {
             Ok(_) => Ok(true),
@@ -212,5 +225,67 @@ impl BlobBackend for OpendalBlob {
             }
             Err(e) => Err(backend(e)),
         }
+    }
+}
+
+static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Exclusive create for `fs` with a scratch directory: write the whole value to a new file in the
+/// scratch directory, then `hard_link` it to the target. The link is atomic and fails if the target
+/// exists, so exactly one of several creators succeeds, and the value is complete the moment the
+/// key exists. The scratch directory must be on the same filesystem as the root and the filesystem
+/// must support hard links; where it does not, the answer is an error, never a silent fallback to
+/// check-then-write, so the conformance run records the leaf off.
+async fn create_by_hard_link(
+    root: &Path,
+    scratch: &Path,
+    key: &str,
+    bytes: &[u8],
+) -> Result<bool, BlobError> {
+    use tokio::io::AsyncWriteExt;
+    let rel = Path::new(key.trim_start_matches('/'));
+    if rel.as_os_str().is_empty() || rel.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err(BlobError::Backend(format!(
+            "create_exclusive: {key:?} is not a path under the root"
+        )));
+    }
+    let io = |what: &str, e: std::io::Error| BlobError::Backend(format!("{what}: {e}"));
+    let target = root.join(rel);
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| io("create the key's directory", e))?;
+    }
+    tokio::fs::create_dir_all(scratch)
+        .await
+        .map_err(|e| io("create the scratch directory", e))?;
+    let temp = scratch.join(format!(
+        ".persistant-create-{}-{}",
+        std::process::id(),
+        SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let written = async {
+        let mut f = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .await?;
+        f.write_all(bytes).await?;
+        f.sync_all().await
+    }
+    .await;
+    if let Err(e) = written {
+        let _ = tokio::fs::remove_file(&temp).await;
+        return Err(io("write the scratch file", e));
+    }
+    let linked = tokio::fs::hard_link(&temp, &target).await;
+    let _ = tokio::fs::remove_file(&temp).await;
+    match linked {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => Err(BlobError::Unsupported(
+            format!("create_exclusive needs hard links on the root's filesystem: {e}"),
+        )),
+        Err(e) => Err(io("link the scratch file to the key", e)),
     }
 }

@@ -71,9 +71,9 @@ fn what_the_backend_cannot_give_is_refused_not_approximated() {
 #[test]
 fn a_need_the_backend_does_not_meet_is_refused_at_open() {
     let dir = tempfile::tempdir().unwrap();
-    // The registry's `fs` has put_if_absent off (see docs/REGISTRY-FOR-STORE-USERS.md).
+    // The registry's `fs` has no compare-and-swap: a blob store has no compare-and-delete.
     let wants = needs(
-        &["kv.get", "kv.put", "kv.put_if_absent"],
+        &["kv.get", "kv.put", "kv.compare_and_swap"],
         Durability::Process,
     );
     let r = registry::open_named("fs", &Endpoint::path(dir.path().join("s")), &wants);

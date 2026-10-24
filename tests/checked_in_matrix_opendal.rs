@@ -38,10 +38,12 @@ fn the_gate_reads_the_recorded_findings() {
         ),
         Lookup::Off(Reason::Missing)
     );
-    // ... and with one, the reverse (README 0.4.7).
+    // ... and with one it replaces atomically and also creates exclusively: OpenDAL's own create
+    // there is check-then-rename (README 0.4.7), so the driver links a finished scratch file to the
+    // key instead (0.9.41, crates/persistant-opendal/tests/fs_create_exclusive.rs).
     assert_eq!(
         m.lookup(&id("blob.create_exclusive"), "opendal-fs", &version, &set),
-        Lookup::Off(Reason::Missing)
+        Lookup::On
     );
     assert_eq!(
         m.lookup(
