@@ -267,8 +267,9 @@ review tests, never "verify" a capability by assertion):
 - **Concurrency** (`blob.create_exclusive`, `kv.put_if_absent`, `lock.*`): a stress test with recorded
   trial parameters (threads, iterations, duration). A race that did not occur in N trials is "no
   failure seen", which is what a passing test is; the parameters go in the row. Known-bad control:
-  OpenDAL `fs` with `atomic_write_dir` set, where exclusive create is check-then-rename (README 0.4.6
-  and 0.4.7), must fail the test.
+  OpenDAL's own create on `fs` with `atomic_write_dir` set, which is check-then-rename (README 0.4.6
+  and 0.4.7), must fail the test (the driver's create there is a hard link since 0.9.41; the control
+  is kept in `crates/persistant-opendal/tests/fs_create_exclusive.rs`).
 - **Point-in-time recovery** (`ops.pitr`): base backup, archived WAL, restore to an instant, compare.
 - **Encryption at rest**: raw-bytes canary search above.
 - **Retention** (`kv.ttl`): a short TTL and a real sleep suffice (no clock manipulation); known-bad
@@ -719,9 +720,13 @@ Written 2026-10-14 at main 0.4.24 (0.4.23 is on crates.io: `persistant`, `persis
 
 ### 11.2 What building found (each is asserted in a test, not argued)
 
-1. **`fs` cannot give an atomic replace and an exclusive create together** (OpenDAL's atomic path
-   checks, then renames). So `KvOnBlob` over `fs` gives an atomic `kv.put` *or* `kv.put_if_absent`,
-   never both. The native relational backend gives both, which is what C+ needed.
+1. **`fs` could not give an atomic replace and an exclusive create together** (OpenDAL's atomic path
+   checks, then renames). So `KvOnBlob` over `fs` gave an atomic `kv.put` *or* `kv.put_if_absent`,
+   never both. **Since 0.9.41 it gives both**: with a scratch directory the driver writes the whole
+   value to a scratch file and `hard_link`s it to the key, which is atomic and fails if the key exists;
+   it needs the scratch directory on the root's filesystem and a filesystem with hard links, and says
+   `Unsupported` where it has none. The native relational backend gave both from the start, which is
+   what C+ needed.
 2. **A silent downgrade was in my own adapter.** `KvOnBlob::put` fell back to a plain write where the
    blob store had no atomic replace; a reader could see half a record and nothing in the row said
    so. It is now strict, with `with_in_place_put` as an explicit choice recorded as `put_mode`.

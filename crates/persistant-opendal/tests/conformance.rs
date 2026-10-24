@@ -110,7 +110,7 @@ async fn fs_without_atomic_write_dir_creates_exclusively_but_replaces_in_place()
 }
 
 #[tokio::test]
-async fn fs_with_atomic_write_dir_replaces_atomically_but_cannot_create_exclusively() {
+async fn fs_with_atomic_write_dir_replaces_atomically_and_creates_exclusively() {
     let root = tempfile::tempdir().unwrap();
     let ci = case_insensitive(root.path());
     let scratch = tempfile::tempdir().unwrap();
@@ -125,10 +125,12 @@ async fn fs_with_atomic_write_dir_replaces_atomically_but_cannot_create_exclusiv
         "{}",
         summary(&rows)
     );
+    // OpenDAL's own create here is check-then-rename (README 0.4.7); the driver links a finished
+    // scratch file to the key instead (tests/fs_create_exclusive.rs), and the trial finds one winner.
     assert_eq!(
         state(&rows, "blob.create_exclusive"),
-        Some(Reason::Missing),
-        "README 0.4.7: check-then-rename; {}",
+        None,
+        "{}",
         summary(&rows)
     );
     assert!(

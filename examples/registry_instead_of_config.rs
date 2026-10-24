@@ -30,8 +30,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. What the program needs. Read, Write and Delete are get, put and delete; List is
     //    prefix_list. AtomicReplace has no id of its own: every backend the registry lists replaces a
-    //    value whole. CreateIfAbsent is `kv.put_if_absent`, which the registry's `fs` does not offer
-    //    (asking for it lists only the SQL backends); see the guide.
+    //    value whole. CreateIfAbsent is `kv.put_if_absent`, which the registry's `fs` offers since 0.9.41; see the
+    //    guide.
     let needs = ProviderNeeds::new(
         vec![
             id("kv.get"),

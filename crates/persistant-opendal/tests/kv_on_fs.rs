@@ -2,8 +2,10 @@
 //! `KvOnBlob` over real OpenDAL services: what the key-value leaves find, by blob configuration.
 //!
 //! The assertions are findings. They follow from the blob findings (`tests/conformance.rs`):
-//! `fs` has `replace_atomic` only under `atomic_write_dir` and `create_exclusive` only without it,
-//! so a strict `KvOnBlob` over `fs` gives either `kv.put` or `kv.put_if_absent`, never both.
+//! `fs` has `replace_atomic` only under `atomic_write_dir`; `create_exclusive` it has both with and
+//! without one (under one, by linking a finished scratch file). So a strict `KvOnBlob` over `fs`
+//! gives `kv.put` and `kv.put_if_absent` together when a scratch directory is set, and only
+//! `kv.put_if_absent` when it is not.
 
 use persistant_core::{Config, Reason};
 use persistant_kv::KvOnBlob;
@@ -172,7 +174,7 @@ async fn over_fs_without_atomic_write_dir_in_place_put_gives_put_if_absent_and_s
 }
 
 #[tokio::test]
-async fn over_fs_with_atomic_write_dir_put_is_atomic_but_put_if_absent_is_missing() {
+async fn over_fs_with_atomic_write_dir_put_is_atomic_and_put_if_absent_is_on() {
     let root = tempfile::tempdir().unwrap();
     let ci = case_insensitive(root.path());
     let scratch = tempfile::tempdir().unwrap();
@@ -188,6 +190,7 @@ async fn over_fs_with_atomic_write_dir_put_is_atomic_but_put_if_absent_is_missin
         "kv.put",
         "kv.delete",
         "kv.ttl",
+        "kv.put_if_absent",
         "kv.prefix_list",
         "kv.ordered_scan",
     ] {
@@ -198,12 +201,6 @@ async fn over_fs_with_atomic_write_dir_put_is_atomic_but_put_if_absent_is_missin
             summary(&rows)
         );
     }
-    assert_eq!(
-        state(&rows, "kv.put_if_absent"),
-        Some(Reason::Missing),
-        "{}",
-        summary(&rows)
-    );
     assert_eq!(rows[0].row.config.get("put_mode"), Some("atomic"));
     assert_eq!(rows[0].row.config.get("atomic_write_dir"), Some("set"));
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.41
+
+### Added
+- **`fs` with `atomic_write_dir` now creates exclusively** (PM [TASK] 2026-10-24, ROADMAP consumer row 8). `OpendalBlob::create_exclusive` under a scratch directory writes the whole value to a new scratch file, fsyncs it, and `hard_link`s it to the key: the link is atomic and fails if the key exists, so of many concurrent creators exactly one wins, and the value is whole the moment the key exists. OpenDAL's own create there is check-then-rename (README 0.4.6, 0.4.7). So `blob.create_exclusive` and, over `KvOnBlob`, `kv.put_if_absent` are on for the registry's `fs` (`atomic_write_dir=set; put_mode=atomic`), which now meets `CreateIfAbsent` together with an atomic `kv.put`.
+  - Needs the scratch directory on the root's filesystem and a filesystem with hard links; where the link is refused the answer is `Unsupported` (the leaf is recorded off), never a fallback to check-then-write. A key that is not a plain relative path (`..`, empty) is refused.
+  - Tests: `crates/persistant-opendal/tests/fs_create_exclusive.rs` (16 contenders x 30 rounds on a multi-thread runtime, the value checked whole, no scratch file left; a control where check-then-write lets all 16 win), and the two `fs` conformance tests that said `create_exclusive` was missing now say it is on.
+  - `matrix/opendal.tsv` is regenerated for this (the `opendal-fs` `atomic_write_dir=set` rows of `blob.create_exclusive` and `kv.put_if_absent`).
+  - Unchanged: `Store::create_if_absent` (the old facade) still refuses `atomic_write_dir`.
+
 ## 0.9.40
 
 ### Changed
