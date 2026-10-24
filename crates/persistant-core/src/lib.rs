@@ -23,7 +23,7 @@ pub mod vocabulary;
 
 pub use config::{Config, ConfigError};
 pub use id::{CapabilityId, IdError};
-pub use matrix::{Lookup, Matrix};
+pub use matrix::{Lookup, Matrix, capant_provider};
 pub use row::{ParseError, Reason, Row};
 pub use verdict::{Controls, ControlsNotRun, Verdict};
 
