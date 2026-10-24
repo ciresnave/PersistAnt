@@ -22,8 +22,8 @@ json = ["sql", "dep:serde_json"]
 [dependencies]
 persistant-core = { workspace = true }
 # Published version only (portfolio rule 2026-10-07). No dependencies of its own, `no_std`.
-unisql-embed = { version = "0.25.8", optional = true }
-unisql-core = { version = "0.25.8", features = ["serde"], optional = true }
+unisql-embed = { version = "0.26.0", optional = true }
+unisql-core = { version = "0.26.0", features = ["serde"], optional = true }
 uuid = { version = "1", default-features = false, optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std"], optional = true }
 serde_json = { version = "1", optional = true }
