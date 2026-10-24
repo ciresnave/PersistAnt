@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.48
+
+### Changed
+- Dependencies: UniSQL 0.25.8 -> 0.26.0 (`unisql`, `unisql-core`, `unisql-embed`, `unisql-macro-core`; CireSnave: all dependencies on their latest). UniSQL 0.25.8 rejects a literal `NULL` for a `NOT NULL` column with no default, and 0.26.0 (Breaking) needs `source_collation_not_bytewise` for `LIKE`/`ILIKE` on a non-bytewise collation; both can add compile errors to a consumer's `sql!` calls. No call site in this repo changed.
+
 ## 0.9.47
 
 ### Changed
