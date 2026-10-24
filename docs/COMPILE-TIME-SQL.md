@@ -69,7 +69,7 @@ A false compile error in a consumer's build is worse than a missed check.
 | `INSERT` column list and `VALUES` arity agree; no duplicate column; `UPDATE .. SET` names real columns | schema | 2 |
 | `NOT NULL` column without a default left out of an `INSERT` | nullability, default | 2 |
 | `ON CONFLICT (cols)` names a stated unique key | keys (UniSQL already reads them) | 2 |
-| Comparison operand classes (numeric vs text vs boolean) for plain column refs against a literal or another column of the same table, **PostgreSQL source only** (SQLite and MySQL convert silently); a string literal against a numeric column is never reported (PostgreSQL converts it); joins, subqueries and CTEs are unknown. *Built, 0.9.49.* | `ColumnClass` (exists) | 2 |
+| Comparison operand classes (numeric vs text vs boolean) for plain column refs against a literal or another column of the same table, **PostgreSQL source only** (SQLite and MySQL convert silently); a string literal against a numeric column is never reported (PostgreSQL converts it); joins, subqueries and CTEs are unknown. *Built, 0.10.0.* | `ColumnClass` (exists) | 2 |
 | A bound argument's Rust type fits the column's class | declared type | 3 |
 | Selected columns fit a row struct (names, arity, class) | declared type, nullability | 3 |
 
