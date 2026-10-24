@@ -9,3 +9,6 @@ exclude = [".coderipper.toml"]
 repository = "https://github.com/ciresnave/PersistAnt"
 keywords = ["storage", "persistence", "capabilities", "conformance"]
 categories = ["development-tools::testing", "database-implementations"]
+
+[dependencies]
+capant = "0.0.7"
