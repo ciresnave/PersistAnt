@@ -134,7 +134,7 @@ The advisory `portfolio` job (0.9.34) swept this repository: run 40005822738 at 
 | `SUP-001` | `persistant-migrate` | A binary with no committed `Cargo.lock`: committed, CI builds `--locked` | resolved (0.9.36) |
 | `SUP-004` | five `checked_in_matrix*` tests | `include_str!` outside the crate: the tests moved to the root crate, one copy of each TSV | resolved (0.9.35) |
 | `ci-security` | `machine-durability.yml`, `synapse-power-cut.yml` | The self-hosted power-loss jobs "mention no GPU": by design (the GPU is the rule's proxy for "needs our hardware"); waived in `.coderipper.toml` with a reason and owner | waived (0.9.37) |
-| `licence` | `LICENSE-MIT` | The copyright holder is "CireSnave", which the rule reads as a person's name | open: board item 263, CireSnave's call; not changed |
+| `licence` | `LICENSE-MIT` | The copyright holder was "CireSnave", which the rule reads as a person's name. CireSnave ruled (board item 263): the holder is "Eric Evans" | resolved (0.9.39) |
 
 ## File permissions
 
