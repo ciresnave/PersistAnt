@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::concurrency::yield_now;
-use crate::{BlobBackend, BlobError, Entry, Page};
+use crate::{BlobBackend, BlobError, Entry, KeyLayout, Page};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -42,6 +42,7 @@ pub enum Defect {
 pub struct MemoryBlob {
     map: Mutex<BTreeMap<String, Vec<u8>>>,
     defect: Option<Defect>,
+    hex_layout: bool,
 }
 
 impl MemoryBlob {
@@ -55,7 +56,15 @@ impl MemoryBlob {
         MemoryBlob {
             map: Mutex::default(),
             defect: Some(defect),
+            hex_layout: false,
         }
+    }
+
+    /// As [`MemoryBlob::new`] but asking the layer above for [`KeyLayout::HexPath`] keys, as a
+    /// filesystem backend does (to test that layout without a filesystem).
+    pub fn with_hex_layout(mut self) -> Self {
+        self.hex_layout = true;
+        self
     }
 
     fn k(&self, key: &str) -> String {
@@ -80,6 +89,14 @@ fn pattern_prefix_match(key: &str, pattern: &str) -> bool {
 }
 
 impl BlobBackend for MemoryBlob {
+    fn key_layout(&self) -> KeyLayout {
+        if self.hex_layout {
+            KeyLayout::HexPath
+        } else {
+            KeyLayout::Raw
+        }
+    }
+
     fn backend(&self) -> &str {
         "memory"
     }

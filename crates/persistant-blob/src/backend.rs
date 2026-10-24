@@ -61,6 +61,24 @@ impl Page {
     }
 }
 
+/// How a layer above this store (the key-value adapter) should turn its keys into blob keys.
+///
+/// A blob key is a path on a filesystem backend, and a filesystem is not a faithful key space: some
+/// ignore case, some forbid names, and a file cannot also be a directory. A backend that is not
+/// faithful says so here, and the layer above encodes its keys to fit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum KeyLayout {
+    /// The key is used as it is. Right for a store whose keys are opaque strings.
+    Raw,
+    /// The key's bytes are written as lower-case hexadecimal, split into path segments of at most
+    /// 100 characters, ending in a fixed final segment. Safe on any filesystem: only `0-9 a-f`, `/`
+    /// and `-` appear, so no two keys share a file whatever the case rules, no name is reserved,
+    /// and no key is another key's directory. Bytewise key order and the prefix relation are kept,
+    /// so listing by prefix and in order still work.
+    HexPath,
+}
+
 /// A blob store: bytes by key.
 ///
 /// Small on purpose. Every method is a primitive a capability's contract is written against; a
@@ -72,6 +90,11 @@ pub trait BlobBackend: Send + Sync {
 
     /// The backend's version string as it appears in matrix rows.
     fn version(&self) -> &str;
+
+    /// How keys built on this store should be laid out (default [`KeyLayout::Raw`]).
+    fn key_layout(&self) -> KeyLayout {
+        KeyLayout::Raw
+    }
 
     /// The value at `key`, or `None` if absent.
     fn read(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>, BlobError>> + Send;

@@ -77,6 +77,10 @@ impl<B: BlobBackend> BlobBackend for Instrumented<'_, B> {
         self.inner.version()
     }
 
+    fn key_layout(&self) -> crate::KeyLayout {
+        self.inner.key_layout()
+    }
+
     async fn read(&self, key: &str) -> Result<Option<Vec<u8>>, BlobError> {
         self.note("read", self.inner.read(key).await)
     }

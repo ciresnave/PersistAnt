@@ -16,7 +16,7 @@ pub use process_lock::{
     ProcessLock, certify as certify_process_lock, maybe_run_child as maybe_run_lock_child,
 };
 
-use persistant_blob::{BlobBackend, BlobError, Entry, Page};
+use persistant_blob::{BlobBackend, BlobError, Entry, KeyLayout, Page};
 use persistant_core::Config;
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -103,6 +103,16 @@ impl BlobBackend for OpendalBlob {
 
     fn version(&self) -> &str {
         opendal::raw::VERSION
+    }
+
+    /// A key-value store on `fs` encodes its keys (`HexPath`): a key is a file path there, and a
+    /// filesystem may ignore case, reserve names, or make a key another key's directory.
+    fn key_layout(&self) -> KeyLayout {
+        if self.fs.is_some() {
+            KeyLayout::HexPath
+        } else {
+            KeyLayout::Raw
+        }
     }
 
     async fn read(&self, key: &str) -> Result<Option<Vec<u8>>, BlobError> {

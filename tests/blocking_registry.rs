@@ -26,8 +26,7 @@ fn basic() -> ProviderNeeds {
     )
 }
 
-/// The blob-backed in-process store: it opens on every platform. (`fs` is refused on a directory whose
-/// filesystem ignores case, e.g. NTFS, so these tests do not depend on it.)
+/// The blob-backed in-process store: it opens on every platform.
 fn open_memory() -> KvHandle {
     registry::open_named(
         "memory",
@@ -78,13 +77,9 @@ fn a_need_the_backend_does_not_meet_is_refused_at_open() {
     );
     let r = registry::open_named("fs", &Endpoint::path(dir.path().join("s")), &wants);
     assert!(matches!(r, Err(OpenError::Unmet(_))), "{r:?}");
-    // The control: the same call with needs it does meet is not refused for them. (On a directory whose
-    // filesystem ignores case it is refused for that reason instead, and says so.)
+    // The control: the same call with needs it does meet is not refused for them.
     let r = registry::open_named("fs", &Endpoint::path(dir.path().join("s")), &basic());
-    assert!(
-        matches!(r, Ok(_) | Err(OpenError::CaseInsensitiveFilesystem { .. })),
-        "{r:?}"
-    );
+    assert!(r.is_ok(), "{r:?}");
 }
 
 #[test]

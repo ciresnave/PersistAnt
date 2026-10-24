@@ -734,7 +734,10 @@ Written 2026-10-14 at main 0.4.24 (0.4.23 is on crates.io: `persistant`, `persis
    compare-and-delete). It moved onto `kv` and is real on PostgreSQL only.
 4. **OpenDAL `fs` on a case-insensitive filesystem (Windows, default macOS) treats keys differing
    only in case as one key**, and a file `a/B` collides with a directory `a/b`. `blob.read` and
-   `kv.get` are off there. Found by the first Windows CI run, not predicted.
+   `kv.get` were off there. Found by the first Windows CI run, not predicted. **Since 0.9.42
+   `KvOnBlob` over `fs` writes each key in hex** (`BlobBackend::key_layout` is `HexPath`), so
+   `kv.get` is on there too; `blob.read` is the caller's own keys and stays off on such a
+   filesystem.
 5. **The literal-prefix test must avoid `*` and `?`**: they are not valid in a Windows file name.
 6. **A text key column orders by collation**: shown on PostgreSQL (`a/a` before `a/B` under
    `en_US`), and the adapter's BYTEA keys do not. A case-insensitive order is a known-bad control.

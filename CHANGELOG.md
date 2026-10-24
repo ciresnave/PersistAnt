@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.42
+
+### Changed
+- **The registry's `fs` keeps every key apart on any filesystem** (PM [TASK] 2026-10-24, ROADMAP consumer row 9). A key was a file path (`kv/<key>`), so on a case-insensitive filesystem (NTFS, APFS by default) `Key` and `key` were one file, a key such as `a` could not sit beside `a/b`, and a reserved name (`CON`) or `..` was a path. `BlobBackend` has a new provided method `key_layout()` (`KeyLayout::Raw` by default); `OpendalBlob::fs` returns `KeyLayout::HexPath`, and `KvOnBlob` then stores each key's bytes in lower-case hex, in path segments of at most 100 characters, under `kvx/` and ending in a `-` segment. Bytewise order and the prefix relation are kept, so `ordered_scan` and `prefix_list` behave as before; a store with the raw layout (`memory`, any other blob store) is unchanged.
+  - **Migration:** a directory written by 0.9.41 or earlier holds `kv/<key>` files. `registry::open_named("fs", ..)` moves them to the new layout when it opens the directory, and `KvOnBlob::migrate_raw_layout()` does it for a program using the adapter itself (an exclusive copy, then a delete; a newer value at the new key is never overwritten; expired records are dropped; repeating it is harmless). A raw `fs` directory read by an older version after this one has moved it will not see its keys.
+  - `open_named("fs", ..)` no longer refuses a directory on a case-insensitive filesystem, and `OpenError::CaseInsensitiveFilesystem` is no longer returned (the variant stays so `match` arms compile). The probe that fed it is removed.
+  - Tests: `crates/persistant-kv/src/on_blob.rs` (round trip, no collision even ignoring case, no key a directory of another, order and prefixes over awkward keys and the segment boundary, a case-folding store as control, migration), `crates/persistant-opendal/tests/kv_on_fs_keys.rs` and `tests/registry_fs_case.rs` (a real directory; passes on NTFS), and the kv conformance for `fs` no longer expects `kv.get` off on a case-insensitive filesystem.
+  - `MemoryBlob::with_hex_layout` exists to test the layout without a filesystem.
+- The advisory `portfolio` CI job is pinned to coderipper `30e012b7` (concurrent-run install fix; was `a48fc6cc`).
+
 ## 0.9.41
 
 ### Added
