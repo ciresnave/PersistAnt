@@ -27,14 +27,14 @@ the feature of each backend you want an operator to be able to pick; upgrading a
 
 ## What each `Need` becomes
 
-Measured against `origin/main` at 0.9.28 (`matrix/*.tsv`, `src/registry.rs`).
+Measured against `origin/main` at 0.9.28 (the `CreateIfAbsent` row at 0.9.41) (`matrix/*.tsv`, `src/registry.rs`).
 
 | `Need` | Capability id | In the registry |
 |---|---|---|
 | `Read`, `Write`, `Delete` | `kv.get`, `kv.put`, `kv.delete` | on every listed backend |
 | `List` | `kv.prefix_list` returns **keys only, in no promised order**; `kv.ordered_scan` returns keys in ascending bytewise order | on every listed backend. `Store::list` gave ascending order *and* an `Entry` (`len`, `modified`): use `ordered_scan` where order mattered, and note that **neither returns a length or a modification time**: if you used them, store them in the value or under a second key |
 | `AtomicReplace` | none: not a separate id | every listed backend replaces a value whole. `fs` is the registry's `atomic_write_dir=set; put_mode=atomic` configuration (writes through a scratch directory beside the target, the one the blob-level crash test certifies, `blob.replace_atomic` in `matrix/opendal.tsv`); the SQL backends write one row in one statement |
-| `CreateIfAbsent` | `kv.put_if_absent` | **not on `fs`**: with a scratch directory the exclusive create is check-then-rename, so the matrix has it off. Asking for it lists `mysql`, `postgres`, `sqlite` and `sqlite-full` at `Process` durability (`mariadb` and `memory` join at `Volatile`; run on 0.9.28) |
+| `CreateIfAbsent` | `kv.put_if_absent` | on `fs` since 0.9.41: with a scratch directory the driver writes a finished scratch file and hard-links it to the key (OpenDAL's own create there is check-then-rename), so one of many creators wins and the value is whole when visible. It needs the scratch directory and the root on one filesystem with hard links. Asking for it lists `fs`, `mysql`, `postgres`, `sqlite` and `sqlite-full` at `Process` durability (`mariadb` and `memory` join at `Volatile`; run on 0.9.41). The old `Store::create_if_absent` still refuses `atomic_write_dir` |
 | `Stat`, `MaxValueSize` | none | there is no key-value counterpart: values are whole `Vec<u8>`; if you need a size limit, check it yourself |
 
 And three things a program may use *beside* the `Store` API (the old `Store` has no append and no locks; these come from the blob driver and `persistant-opendal`) that the registry **does not serve** (its handle is the key-value kind only), and one it now does:
