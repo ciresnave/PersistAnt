@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.45
+
+### Changed
+- CI: the portfolio workflow is pinned to coderipper 0.9.14 (d14a22b), which installs coderipper 0.9.14 (the old pin installed 0.9.6).
+
 ## 0.9.44
 
 ### Added
