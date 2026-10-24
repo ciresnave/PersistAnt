@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.49
+
+### Added
+- **`sql!` checks comparison operand classes** (ROADMAP compile-time SQL row 6, PM [TASK] 2026-10-24): in the `WHERE` of a `SELECT`, `UPDATE` or `DELETE` over one table, a plain column compared with a literal or another column of the same table is a compile error when PostgreSQL has no operator for the two classes (text against a number, a number against a boolean). Only for `source = postgres` (SQLite and MySQL convert silently); a string literal against a numeric column is never reported (PostgreSQL converts it); joins, subqueries, CTEs, expressions and unknown columns pass. Tests `comparison_operand_classes_*` give each fault with a passing twin and the cases that must not be reported.
+- Existing `sql!` calls that compare such operands now fail to build.
+
 ## 0.9.48
 
 ### Changed

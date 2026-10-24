@@ -979,6 +979,86 @@ mod tests {
     }
 
     #[test]
+    fn comparison_operand_classes_must_have_an_operator() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        let q = |sql: &str| call(r#"schema = "s.sql""#, sql);
+        // Each fault, then its twin with the fault removed (the control that the check is not
+        // simply refusing the statement shape).
+        for (bad, needle) in [
+            (
+                "SELECT id FROM users WHERE email = 5",
+                "cannot compare column `email` (text) with a numeric literal",
+            ),
+            (
+                "SELECT id FROM users WHERE 5 < email",
+                "cannot compare a numeric literal with column `email` (text)",
+            ),
+            (
+                "SELECT id FROM users WHERE id = true",
+                "cannot compare column `id` (numeric) with a boolean literal",
+            ),
+            (
+                "UPDATE users SET note = $1 WHERE email BETWEEN 1 AND 9",
+                "cannot compare column `email` (text) with a numeric literal",
+            ),
+            (
+                "DELETE FROM users WHERE id > 0 AND (note IN ('a', 2) OR age = 1)",
+                "cannot compare column `note` (text) with a numeric literal",
+            ),
+            (
+                "SELECT id FROM users u WHERE NOT (u.email = u.id)",
+                "cannot compare column `email` (text) with column `id` (numeric)",
+            ),
+        ] {
+            fails_in(&q(bad), d.path(), needle);
+        }
+        for good in [
+            "SELECT id FROM users WHERE email = 'a@b'",
+            "SELECT id FROM users WHERE id = 5",
+            "SELECT id FROM users WHERE id = '5'",
+            "SELECT id FROM users WHERE id = $1",
+            "UPDATE users SET note = $1 WHERE id BETWEEN 1 AND 9",
+            "DELETE FROM users WHERE id > 0 AND (note IN ('a', 'b') OR age = 1)",
+            "SELECT id FROM users u WHERE NOT (u.email = u.note)",
+        ] {
+            ok_in(&q(good), d.path());
+        }
+    }
+
+    #[test]
+    fn comparison_operand_classes_are_checked_only_when_certain() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        // Not PostgreSQL: SQLite and MySQL convert between the classes, so it is no fault.
+        ok_in(
+            r#"source = sqlite, targets = [sqlite], schema = "s.sql", "SELECT id FROM users WHERE email = 5""#,
+            d.path(),
+        );
+        // A join or a subquery leaves the scope unknown; a column of another table is unknown.
+        for sql in [
+            "SELECT u.id FROM users u JOIN users v ON v.id = u.id WHERE u.email = 5",
+            "SELECT id FROM users WHERE id IN (SELECT id FROM users WHERE email = 5)",
+            "SELECT id FROM users WHERE other.email = 5",
+            "SELECT id FROM users WHERE (email || 'x') = 5",
+        ] {
+            ok_in(&call(r#"schema = "s.sql""#, sql), d.path());
+        }
+        // No schema stated for the table: the column is unknown.
+        ok_in(
+            &call(r#"schema = "s.sql""#, "SELECT x FROM missing WHERE x = 5"),
+            d.path(),
+        );
+        // The control for all of the above: with the schema and PostgreSQL, the fault is reported.
+        fails_in(
+            &call(
+                r#"schema = "s.sql""#,
+                "SELECT id FROM users WHERE email = 5",
+            ),
+            d.path(),
+            "cannot compare column `email` (text)",
+        );
+    }
+
+    #[test]
     fn unisqls_own_name_checks_run_through_the_macro() {
         let d = dir_with(&[("s.sql", DDL)]);
         fails_in(
