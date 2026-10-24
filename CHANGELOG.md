@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.44
+
+### Added
+- **`Matrix::to_capant()` and `capant_provider(..)`: the rows as a `capant` matrix** (PM [TASK] 2026-10-24, capant step 2, PR-a; no behaviour change, no call site uses them). `to_capant` turns every row into a `capability` row for `capant` (the lookup ignores `subject_kind` too), a `yes` row's probe id becoming its evidence and `Reason::Untested` becoming `No(Other("untested"))` so that "a `no` row wins" stays exact; `capant_provider(id, backend, version, actual)` is the one place `Matrix::lookup` is asked about, as a `capant` provider.
+  - Test `tests/capant_view.rs`: for every row of the five checked-in matrices against every configuration they name (more than a thousand questions), `capant::resolve` gives the verdict the gate gives (`Yes` / `No(reason)` / `Unverified(no row)`), and `capant::evaluate` says a provider satisfies a need exactly when the gate turns every capability in it on (each capability alone and each backend's whole set). A control flips a verdict in the view (yes to no, no to yes) and the same comparison reports it.
+  - **One intended difference, tested:** a `yes` row with no probe id is `Unverified(no evidence)` to `capant` and on to the gate. No checked-in row lacks one. Step 2's later PRs decide whether the gate adopts `capant`'s stricter reading.
+  - `capant` is a dev-dependency of the root crate for the test (it was already a dependency of `persistant-core`).
+
 ## 0.9.43
 
 ### Added

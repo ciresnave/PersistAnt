@@ -13,6 +13,22 @@ pub enum Lookup {
     NoRow,
 }
 
+/// A `capant` provider called `id` for the one place [`Matrix::lookup`] is asked about: this
+/// `backend` at this `version` with these `actual` facts. Rows match it exactly when `lookup` would
+/// match them.
+pub fn capant_provider(
+    id: &str,
+    backend: &str,
+    version: &str,
+    actual: &Config,
+) -> capant::Provider {
+    let config = actual
+        .iter()
+        .fold(capant::Config::new(), |acc, (k, v)| acc.with(k, v));
+    capant::Provider::new(id, vec![capant::Surface::new(backend, version, config)])
+        .expect("a provider with one surface has a surface")
+}
+
 /// The recorded facts of one or more matrix files, and the lookup the gate performs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Matrix {
@@ -55,6 +71,14 @@ impl Matrix {
     /// `environment` or `inherited_from` that the reader could not have produced is not written.
     pub fn to_tsv(&self) -> String {
         crate::adapter::write(&self.rows)
+    }
+
+    /// The rows as a `capant` matrix, so that `capant` can be asked what [`Matrix::lookup`] answers.
+    /// Every row becomes a `capability` row (the lookup ignores `subject_kind` too). `Reason::Untested`
+    /// becomes `State::No(Other("untested"))`, which keeps "a `no` row wins" exact; a `yes` row with
+    /// no probe id (the `test` metadata key) is `Unverified(NoEvidence)` to `capant`.
+    pub fn to_capant(&self) -> capant::Matrix {
+        crate::adapter::view(&self.rows)
     }
 
     /// The gate's lookup. Rows match on `subject`, `backend` and `version` exactly, and on `config`
