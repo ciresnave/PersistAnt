@@ -183,6 +183,10 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
-        assert_eq!(VERSION, "0.9.42");
+<<<<<<< HEAD
+        assert_eq!(VERSION, "0.9.43");
+=======
+        assert_eq!(VERSION, "0.9.43");
+>>>>>>> 339bf6e (sqlite: new database files are owner-only on Windows too (0.9.43))
     }
 }

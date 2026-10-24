@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.43
+
+### Added
+- **SQLite databases are owner-only on Windows too** (PM [TASK] 2026-10-24, ROADMAP "File permissions"). `SqliteBackend::open` and `open_durable` create a new database file with a protected ACL holding one entry, full control for the user the process runs as, instead of the directory's inherited ACL (usually readable by other local users). It is set through the Win32 security API in one small Windows-only module of `persistant-sqlx` (`src/owner_only.rs`, dependency `windows-sys`, only on Windows); nothing changes on other platforms. If the file cannot be restricted the open fails and the new file is removed.
+  - `open_durable` also creates the `-wal` and `-shm` files restricted, because SQLite does not copy a Windows ACL to them as it copies a Unix mode. The rollback `-journal` of `open` is created by SQLite on every transaction and still inherits the directory's ACL; restrict the directory, or use `open_durable`.
+  - A database file that already exists keeps its ACL, as on Unix. Files written by the `fs` blob driver are not restricted on either OS.
+  - Test: `crates/persistant-sqlx/tests/sqlite_file_acl.rs` reads the ACL back with `icacls`, with a control (an ordinary file is not owner-only by the same reading).
+
 ## 0.9.42
 
 ### Changed

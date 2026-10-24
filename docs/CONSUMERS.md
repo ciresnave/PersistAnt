@@ -96,7 +96,7 @@ In order of how many projects each unblocks. None is started.
    said the vocabulary names nothing, from a search for the word "encrypt"; the leaf is spelled differently.)*
 6. **A Redis backend** only if auth-framework's operators need it; it would be native for every kv leaf in
    `DESIGN-AUTH-STORAGE.md` and is not proposed here.
-7. **Windows owner-only files** (open with CireSnave through the PM; `ROADMAP.md`, "File permissions").
+7. **Windows owner-only files** (built for SQLite databases in 0.9.43; `ROADMAP.md`, "File permissions").
 
 ## 6. How to repeat it
 
