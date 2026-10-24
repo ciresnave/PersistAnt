@@ -104,22 +104,65 @@ pub struct SqliteBackend {
     full_sync: bool,
 }
 
-/// On Unix, create `path` empty and owner-only if it is not there, so SQLite finds an existing
-/// zero-length file (it treats that as a new database) and keeps its mode. `create_new` never touches
-/// an existing file; any failure (the directory is missing, no permission) is left for the open that
-/// follows to report in its own words. Does nothing elsewhere.
-fn owner_only_if_new(path: &Path) {
+/// Create `path` empty and owner-only if it is not there, so SQLite finds an existing zero-length
+/// file (it treats that as a new database) and keeps its permissions. `create_new` never touches an
+/// existing file; any failure (the directory is missing, no permission) is left for the open that
+/// follows to report in its own words.
+///
+/// On Unix that is mode `0600`, and SQLite gives the `-wal`, `-shm` and `-journal` files beside it
+/// the database file's mode. On Windows it is a protected ACL with one entry for the current user
+/// (`owner_only.rs`), and SQLite does **not** copy it: the files beside the database inherit the
+/// directory's ACL. With `sidecars` (the WAL profile) the `-wal` and `-shm` files are therefore
+/// created the same way first, and SQLite opens them as they are. The rollback `-journal` of the
+/// default profile is created and removed by SQLite on every transaction and cannot be prepared.
+fn owner_only_if_new(path: &Path, sidecars: bool) -> Result<(), RelError> {
     #[cfg(unix)]
     {
+        let _ = sidecars;
         use std::os::unix::fs::OpenOptionsExt;
         let _ = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(path);
+        Ok(())
     }
-    #[cfg(not(unix))]
-    let _ = path;
+    #[cfg(windows)]
+    {
+        // A file that was just created and cannot be restricted is not left open to the directory's
+        // readers: it is removed and the open fails, rather than SQLite creating it unrestricted.
+        let make = |p: &Path| -> Result<(), RelError> {
+            if std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(p)
+                .is_ok()
+                && let Err(e) = crate::owner_only::restrict_to_current_user(p)
+            {
+                let _ = std::fs::remove_file(p);
+                return Err(RelError::Backend(format!(
+                    "could not make {} owner-only: {e}",
+                    p.display()
+                )));
+            }
+            Ok(())
+        };
+        let fresh = !path.exists();
+        make(path)?;
+        if sidecars && fresh && path.exists() {
+            for suffix in ["-wal", "-shm"] {
+                let mut name = path.as_os_str().to_owned();
+                name.push(suffix);
+                make(Path::new(&name))?;
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (path, sidecars);
+        Ok(())
+    }
 }
 
 impl SqliteBackend {
@@ -131,10 +174,13 @@ impl SqliteBackend {
     /// a new file is created owner-only (`0600`, less the umask), and SQLite gives its `-wal` and
     /// `-shm` files the database file's mode; SQLite's own default would be `0644` less the umask,
     /// world-readable under the usual `022` (measured on Linux). A file that already exists keeps
-    /// the mode its owner gave it. On Windows the file inherits the directory's ACL: restrict the
-    /// directory the databases live in.
+    /// the mode its owner gave it. **On Windows** a new file gets a protected ACL with one entry, full
+    /// control for the user the process runs as (0.9.43), where it would inherit the directory's; the
+    /// rollback journal SQLite creates and removes on every transaction still inherits the directory's
+    /// ACL, so restrict the directory too if its contents matter, or use
+    /// [`open_durable`](Self::open_durable), whose `-wal` and `-shm` files are restricted as well.
     pub async fn open(path: impl AsRef<Path>) -> Result<Self, RelError> {
-        owner_only_if_new(path.as_ref());
+        owner_only_if_new(path.as_ref(), false)?;
         let opts = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
@@ -153,7 +199,7 @@ impl SqliteBackend {
     /// [`open`](Self::open) stays `sqlite` and declared `Process`. A pool built elsewhere and handed
     /// to [`from_pool`](Self::from_pool) is never assumed to have this setting.
     pub async fn open_durable(path: impl AsRef<Path>) -> Result<Self, RelError> {
-        owner_only_if_new(path.as_ref());
+        owner_only_if_new(path.as_ref(), true)?;
         let opts = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
