@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.46
+
+### Changed
+- Docs: the compile-time SQL interface with UniSQL is frozen (`docs/COMPILE-TIME-SQL.md` section 7; PM [TASK] 2026-10-24, ROADMAP row 1): `Snapshot` serde and format, `Column` detail fields, `Sql`, schema lookup and `Checker::check` are stable within a UniSQL `0.n` line, with a `[NOTICE]` before a breaking change. Records the checks UniSQL 0.25.8 and 0.26.0 added, which can add compile errors to existing `sql!` calls when the dependency is raised.
+
 ## 0.9.45
 
 ### Changed

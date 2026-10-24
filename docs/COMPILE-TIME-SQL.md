@@ -1,6 +1,6 @@
 # Compile-time SQL: re-exporting UniSQL's macros with catalog-based checks
 
-Status: **design, 2026-10-18; step 2 of section 6 built in 0.8.21 (`persistant-macros`, `persistant::sql!`, `RelationalSqlExt`), the catalog readers and `persistant-migrate snapshot` (step 4, from a live catalog or a scratch apply) in 0.8.22, the catalog `Checker` and `sql!` reading the snapshot (step 5) in 0.9.0; `FromRow` and `sql!(as T, ..)` (step 6) in 0.9.2.** Written against PersistAnt 0.8.3 (`4febf59`) and UniSQL 0.24.11
+Status: **interface frozen 2026-10-24 (section 7); design, 2026-10-18; step 2 of section 6 built in 0.8.21 (`persistant-macros`, `persistant::sql!`, `RelationalSqlExt`), the catalog readers and `persistant-migrate snapshot` (step 4, from a live catalog or a scratch apply) in 0.8.22, the catalog `Checker` and `sql!` reading the snapshot (step 5) in 0.9.0; `FromRow` and `sql!(as T, ..)` (step 6) in 0.9.2.** Written against PersistAnt 0.8.3 (`4febf59`) and UniSQL 0.24.11
 (`a5cb56e`). Origin: PM [TASK], quoting CireSnave (`CIRESNAVE-EXPECTATIONS.md` 6.16): *"have PersistAnt
 re-export it and the catalog-based checks. ... All of our projects should strive to provide that same
 'checks happen at compile time' functionality where applicable."*
@@ -210,15 +210,23 @@ the fault removed builds). `.stderr` files are rustc-version sensitive, so CI pi
 that test, as UniSQL does. Also: the snapshot of this repo's own `rel.*` leaf tables checked against
 all three servers in the existing CI jobs, and `snapshot --check` as a CI step.
 
-## 7. Settled with the UniSQL lane (2026-10-18) and what is still open
+## 7. The frozen interface (agreed with the UniSQL lane 2026-10-24) and what is still open
 
-Settled: the snapshot format is UniSQL's and this repo writes it; `Schema` gains enumeration and serde
-(behind a feature) and `Column` gains `declared_type`, `nullable`, `has_default` (additive); `Sql` is
-`unisql_embed::Query`; no environment lookup in UniSQL's macro; `targets = [..]` required at each call.
+Frozen, read by the UniSQL lane at its `origin/main` `6e75805` (0.26.2): the interface below is what this repo builds against (PersistAnt 0.9.45, UniSQL 0.25.8).
+**"Frozen" means stable within a UniSQL `0.n` line; a breaking change (a new second number) is announced to this lane by `[NOTICE]` before it ships.** UniSQL does not promise more than that.
 
-Open: the exact `Checker`/`CheckContext` shape (settled when built); whether asking for a target that
-was not embedded can be a compile error (UniSQL's open question); a project-wide default `targets` (a
-`macro_rules!` wrapper today).
+| Piece | Frozen as |
+|---|---|
+| Schema serde | `unisql-core` feature `serde`; `Snapshot` carries `format: u32` (`SNAPSHOT_FORMAT` = 1); the loader rejects a newer format. This repo writes the file. |
+| `Column` detail | `declared_type`, `nullable`, `has_default` beside `class` (`Column` is `#[non_exhaustive]`). |
+| `Sql` | `unisql_embed::Query`, aliased; the expansion path is overridden so a consumer names neither UniSQL crate. |
+| Schema lookup | Done by this repo's macro, not UniSQL's: `schema = "path"`, else `persistant-schema.json` in `CARGO_MANIFEST_DIR`, embedded with `include_bytes!`; no environment lookup in UniSQL's macro. |
+| Checker | `unisql_macro_core::Checker::check(&ast::Statement, &CheckContext<'_>) -> Vec<Problem>`. `CheckContext` is `#[non_exhaustive]`: read its fields, never construct it. |
+| Targets | `targets = [..]` is mandatory at each call; no default is planned (a project writes a `macro_rules!` wrapper). |
+
+**Behaviour that moved after 0.25.8, and can add compile errors to existing `sql!` calls when this repo takes it:** `SchemaChecker` rejects a literal `NULL` for a `NOT NULL` column with no default (0.25.8); `LIKE`/`ILIKE` on a non-bytewise collation needs `source_collation_not_bytewise` (0.26.0, Breaking). UniSQL is at 0.26.2; raising the dependency here is its own change.
+
+Open: whether asking for a target that was not embedded becomes a compile error (UniSQL's open question; it waits on CireSnave, not decided).
 
 ## 8. Not decided here
 
