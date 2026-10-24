@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.39
+
+### Changed
+- **The `LICENSE-MIT` copyright holder is now "Eric Evans"** (was "CireSnave"), for the repositories under `ciresnave/EvansLaboratories` (CireSnave's ruling on board item 263, relayed by the PM 2026-10-24: "Go with your recommendations"). The year is kept (2026) and no other holder text changed. The licence terms are unchanged (`MIT OR Apache-2.0`).
+
 ## 0.9.38
 
 ### Fixed
