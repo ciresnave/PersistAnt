@@ -21,5 +21,5 @@ mod memory;
 pub mod speed;
 pub mod stats;
 
-pub use backend::{BlobBackend, BlobError, Entry, Page};
+pub use backend::{BlobBackend, BlobError, Entry, KeyLayout, Page};
 pub use memory::{Defect, MemoryBlob};

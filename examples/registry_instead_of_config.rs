@@ -22,7 +22,7 @@
 
 use persistant::capability::{CapabilityId, choose::Durability, provider::ProviderNeeds};
 use persistant::kv::KvBackend;
-use persistant::registry::{self, Endpoint, OpenError};
+use persistant::registry::{self, Endpoint};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -60,26 +60,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let dir = given.unwrap_or_else(|| scratch.path().join("state"));
             registry::open_named(&chosen, &Endpoint::path(&dir), &needs).await?
         }
-        // No id given: take the first listed backend that opens here. `fs` is refused on a directory
-        // whose filesystem ignores case (the Windows and macOS defaults), so the next one is tried.
+        // No id given: take the first listed backend. (Before 0.9.42 `fs` was refused on a
+        // case-insensitive directory and a program had to try the next; it opens everywhere now.)
         None => {
-            let mut opened = None;
-            for l in &list {
-                let dir = scratch.path().join(l.id);
-                match registry::open_named(l.id, &Endpoint::path(&dir), &needs).await {
-                    Ok(h) => {
-                        opened = Some(h);
-                        break;
-                    }
-                    Err(OpenError::CaseInsensitiveFilesystem { id, .. }) => {
-                        println!(
-                            "{id}: refused here (the filesystem ignores case); trying the next"
-                        );
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            }
-            opened.ok_or("no listed backend opens here: build with `--features registry-sqlite`")?
+            let first = list
+                .first()
+                .ok_or("no listed backend: build with `--features registry-sqlite`")?;
+            let dir = scratch.path().join(first.id);
+            registry::open_named(first.id, &Endpoint::path(&dir), &needs).await?
         }
     };
     let kv = handle.kv();

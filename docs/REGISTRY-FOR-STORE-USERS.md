@@ -73,21 +73,22 @@ server to wait for. Without it, wrap each call in your own timeout.
 
 ## `fs` and keys that differ only by case
 
-`fs` stores a key as a file path. On a case-insensitive filesystem (NTFS and APFS by default) two keys that differ only by case are
-**the same file**. Measured on Windows, 2026-10-23, through `open_named("fs", ..)`: `put("Key", "upper")` then `put("key", "lower")`
-then `get("Key")` returned `lower`. **From 0.9.33 `open_named("fs", ..)` refuses such a directory** with
-`OpenError::CaseInsensitiveFilesystem { id, path }` (it creates a probe file whose name has both cases, looks the name up with the case
-flipped, and removes the probe), so the aliasing can no longer happen silently. `providers()` still lists `fs` there, because it has no
-directory to probe and the property belongs to the directory, not the operating system (macOS can have case-sensitive volumes, Linux
-case-insensitive directories): the listing says so in its notes, and `examples/registry_instead_of_config.rs` shows a program trying the
-next listed id. To use `fs` on such a machine anyway you would need keys that cannot differ only by case (lower-case or hex-encode them
-yourself before `put`), but the registry will still refuse the directory; choose a SQL backend or a case-sensitive directory. Making `fs`
-work there with a key encoding is an open ROADMAP row (the old `Store` also kept keys as paths; that was not re-measured).
+On a case-insensitive filesystem (NTFS and APFS by default) two keys that differ only by case would be **the same file** if a key were a
+file path. Measured on Windows, 2026-10-23: `put("Key", "upper")` then `put("key", "lower")` then `get("Key")` returned `lower`. From
+0.9.33 `open_named("fs", ..)` refused such a directory (`OpenError::CaseInsensitiveFilesystem`). **From 0.9.42 `fs` works there**: it
+stores each key's bytes in lower-case hex (path segments of at most 100 characters, under `kvx/` in the directory), so no two keys share a
+file whatever the filesystem does with case, separators, dots or reserved names (`CON`, `a:b`, `..`), a key such as `a` can sit beside
+`a/b`, and bytewise order and prefixes are kept, so `ordered_scan` and `prefix_list` are unchanged. The price is a directory of hex names
+that is not meant to be read by hand, and Windows' 260-character path limit applies to the whole path (root, `kvx/`, and two hex
+characters per key byte). `OpenError::CaseInsensitiveFilesystem` is still defined so existing `match` arms compile; `open_named` no
+longer returns it. A directory written by 0.9.41 or earlier (raw `kv/<key>` files) is **moved to the hex layout when it is opened**
+(an exclusive copy, then a delete, so a newer value is never overwritten and repeating it is harmless); `KvOnBlob::migrate_raw_layout`
+does the same for a program that uses the adapter itself.
 
 ## What to do with a configuration that already names a backend
 
-Do not guess at the endpoint: a directory that held `Store` data holds `fs` data in the layout `KvOnBlob` uses (`kv/<key>` with a
-small envelope), not the files `Store` wrote, so **existing data is not read by the new backend**. Moving is a one-time copy by the
+Do not guess at the endpoint: a directory that held `Store` data holds `fs` data in the layout `KvOnBlob` uses (`kvx/<hex of the key>/-` with a
+small envelope since 0.9.42; `kv/<key>` before), not the files `Store` wrote, so **existing data is not read by the new backend**. Moving is a one-time copy by the
 program, and its order matters:
 
 1. **Drain the old writers first.** A rolling upgrade, with old and new instances running together, loses writes: an old instance
