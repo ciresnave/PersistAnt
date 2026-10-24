@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! PersistAnt's vocabulary and verification model. No I/O, no third-party dependencies.
+//! PersistAnt's vocabulary and verification model. No I/O; the one dependency is `capant`, which reads and writes the matrix file.
 //!
 //! A **capability** is a boolean for one `(backend, version, config)`; it is off until an automated
 //! test passed (`docs/DESIGN-KINDS.md` §2.1). This crate holds the pieces every kind shares:
@@ -10,6 +10,7 @@
 //! - [`Verdict`]: the four test outcomes, and the rule that an `on` row needs both controls;
 //! - [`vocabulary::SEED`]: the seed ids with their written contracts (all off until tested).
 
+mod adapter;
 pub mod bench;
 pub mod choose;
 mod config;

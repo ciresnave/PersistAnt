@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.40
+
+### Changed
+- **The matrix file is read and written by `capant` 0.0.6** (PM [TASK], step 1 of the capant move; no behaviour change). `Matrix::parse` and `Matrix::to_tsv` delegate to `capant::parse` / `capant::write` through one adapter (`persistant-core/src/adapter.rs`); `Row`, `Reason`, `Config`, `Lookup`, `CapabilityId` and `Matrix::lookup` are as they were, and nothing selects, opens or ranks differently.
+  - **The file spells the probe id `probe=`** where it said `test=`. Rows still carry it as the `test` metadata key (every producer and every `r.metadata.get("test")` is unchanged), and a file with the older `test=` spelling is still read. The five `matrix/*.tsv` are regenerated: each of their 292 rows changes in that one key (and its place among the sorted metadata keys) and nowhere else.
+  - **Proof of no change:** `tests/matrix_reader_equivalence.rs` keeps the 0.9.39 reader and checks that it and the new one read all five checked-in files to equal rows, that the gate's `lookup` is equal for every row against every configuration the files name, and that each file is exactly the writer's text.
+  - **`ParseError`** gained `DuplicateColumn`, `BadTimestamp` and `Other` (it is `#[non_exhaustive]`). A header naming a column twice is now refused; `capant`'s `UNVERIFIED: ` reasons are still refused as `BadReason`, with the reason as written.
+  - The optional `capant` columns (`probed_at`, `tool_version`, `environment`, `inherited_from`) are read into `Row::extra` under their own names, so a rewrite keeps them. The `persistant-core` crate has one dependency now: `capant`.
+
 ## 0.9.39
 
 ### Changed

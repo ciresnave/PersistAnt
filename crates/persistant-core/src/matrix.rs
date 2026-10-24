@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-use crate::row::COLUMNS;
 use crate::{CapabilityId, Config, ParseError, Reason, Row};
-use std::collections::BTreeSet;
 
 /// What the matrix says about one capability on one `(backend, version, config)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,44 +25,13 @@ impl Matrix {
         Matrix::default()
     }
 
-    /// Read one tab-separated file. The first non-comment line is the header; columns are matched
-    /// by name, so order does not matter and unknown columns are kept in [`Row::extra`]. Blank
-    /// lines and lines starting with `#` are skipped.
+    /// Read one tab-separated file (by `capant`'s reader; see `adapter.rs`). The first non-comment
+    /// line is the header; columns are matched by name, so order does not matter and unknown
+    /// columns are kept in [`Row::extra`]. Blank lines and lines starting with `#` are skipped.
+    /// The probe id is the `probe` metadata key of the file, and the `test` key of a [`Row`]
+    /// (the older spelling of the file is read too).
     pub fn parse(text: &str) -> Result<Matrix, ParseError> {
-        let mut header: Option<Vec<&str>> = None;
-        let mut rows = Vec::new();
-        for (i, raw) in text.lines().enumerate() {
-            let line = i + 1;
-            let l = raw.trim_end_matches('\r');
-            if l.is_empty() || l.starts_with('#') {
-                continue;
-            }
-            let fields: Vec<&str> = l.split('\t').collect();
-            match &header {
-                None => {
-                    for c in COLUMNS {
-                        if !fields.contains(&c) {
-                            return Err(ParseError::MissingColumn(c));
-                        }
-                    }
-                    header = Some(fields);
-                }
-                Some(h) => {
-                    if fields.len() != h.len() {
-                        return Err(ParseError::FieldCount {
-                            line,
-                            want: h.len(),
-                            got: fields.len(),
-                        });
-                    }
-                    rows.push(Row::parse_fields(h, &fields, line)?);
-                }
-            }
-        }
-        if header.is_none() {
-            return Err(ParseError::NoHeader);
-        }
-        Ok(Matrix { rows })
+        crate::adapter::parse(text).map(|rows| Matrix { rows })
     }
 
     /// A matrix of exactly these rows (what a conformance run produces).
@@ -82,23 +49,12 @@ impl Matrix {
         &self.rows
     }
 
-    /// Write the known columns, then the sorted union of unknown columns. Round-trips what
-    /// [`Matrix::parse`] read, apart from comments, blank lines and column order.
+    /// Write the known columns, then the sorted union of unknown columns (by `capant`'s writer;
+    /// the probe id is written as the `probe` metadata key). Round-trips what [`Matrix::parse`]
+    /// read, apart from comments, blank lines and column order. A value in `probed_at`,
+    /// `environment` or `inherited_from` that the reader could not have produced is not written.
     pub fn to_tsv(&self) -> String {
-        let extra: BTreeSet<&str> = self
-            .rows
-            .iter()
-            .flat_map(|r| r.extra.keys().map(String::as_str))
-            .collect();
-        let columns: Vec<&str> = COLUMNS.iter().copied().chain(extra).collect();
-        let mut out = columns.join("\t");
-        out.push('\n');
-        for r in &self.rows {
-            let cells: Vec<String> = columns.iter().map(|c| r.field(c)).collect();
-            out.push_str(&cells.join("\t"));
-            out.push('\n');
-        }
-        out
+        crate::adapter::write(&self.rows)
     }
 
     /// The gate's lookup. Rows match on `subject`, `backend` and `version` exactly, and on `config`

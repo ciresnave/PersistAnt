@@ -60,6 +60,12 @@ pub enum ParseError {
     BadReason { line: usize, value: String },
     /// `enabled=no` without a reason, or `enabled=yes` with one.
     ReasonMismatch { line: usize },
+    /// The header names a column twice.
+    DuplicateColumn(String),
+    /// `probed_at` is not `YYYY-MM-DDTHH:MM:SSZ`.
+    BadTimestamp { line: usize, value: String },
+    /// Any other refusal by the file reader, in its words.
+    Other(String),
 }
 
 impl fmt::Display for ParseError {
@@ -88,24 +94,19 @@ impl fmt::Display for ParseError {
                     "line {line}: a no needs a reason and a yes must have none"
                 )
             }
+            ParseError::DuplicateColumn(c) => write!(f, "matrix header names column {c:?} twice"),
+            ParseError::BadTimestamp { line, value } => {
+                write!(
+                    f,
+                    "line {line}: probed_at {value:?} is not YYYY-MM-DDTHH:MM:SSZ"
+                )
+            }
+            ParseError::Other(m) => f.write_str(m),
         }
     }
 }
 
 impl std::error::Error for ParseError {}
-
-/// The known columns, in the order they are written (`docs/DESIGN-KINDS.md` §2.4).
-pub(crate) const COLUMNS: [&str; 9] = [
-    "subject_kind",
-    "subject",
-    "backend",
-    "version",
-    "config",
-    "enabled",
-    "reason",
-    "metadata",
-    "note",
-];
 
 /// One recorded fact: a test ran, for this subject, on this backend, version and config.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,89 +131,4 @@ pub struct Row {
     pub note: String,
     /// Columns this crate does not know (UniSQL writes `from`), kept so a rewrite loses nothing.
     pub extra: BTreeMap<String, String>,
-}
-
-impl Row {
-    pub(crate) fn parse_fields(
-        header: &[&str],
-        fields: &[&str],
-        line: usize,
-    ) -> Result<Row, ParseError> {
-        let idx = |name: &'static str| -> Result<usize, ParseError> {
-            header
-                .iter()
-                .position(|h| *h == name)
-                .ok_or(ParseError::MissingColumn(name))
-        };
-        let get = |name: &'static str| -> Result<&str, ParseError> { Ok(fields[idx(name)?]) };
-        let cfg = |name: &'static str| -> Result<Config, ParseError> {
-            Config::parse(get(name)?).map_err(|error| ParseError::BadConfig {
-                line,
-                column: name,
-                error,
-            })
-        };
-        let enabled = match get("enabled")? {
-            "yes" => true,
-            "no" => false,
-            other => {
-                return Err(ParseError::BadEnabled {
-                    line,
-                    value: other.to_string(),
-                });
-            }
-        };
-        let reason = match get("reason")? {
-            "" => None,
-            "missing" => Some(Reason::Missing),
-            "wrong" => Some(Reason::Wrong),
-            "untested" => Some(Reason::Untested),
-            other => {
-                return Err(ParseError::BadReason {
-                    line,
-                    value: other.to_string(),
-                });
-            }
-        };
-        if enabled == reason.is_some() {
-            return Err(ParseError::ReasonMismatch { line });
-        }
-        let extra = header
-            .iter()
-            .zip(fields)
-            .filter(|(h, _)| !COLUMNS.contains(h))
-            .map(|(h, v)| (h.to_string(), v.to_string()))
-            .collect();
-        Ok(Row {
-            subject_kind: get("subject_kind")?.to_string(),
-            subject: CapabilityId::new(get("subject")?)
-                .map_err(|error| ParseError::BadId { line, error })?,
-            backend: get("backend")?.to_string(),
-            version: get("version")?.to_string(),
-            config: cfg("config")?,
-            enabled,
-            reason,
-            metadata: cfg("metadata")?,
-            note: get("note")?.to_string(),
-            extra,
-        })
-    }
-
-    pub(crate) fn field(&self, column: &str) -> String {
-        match column {
-            "subject_kind" => self.subject_kind.clone(),
-            "subject" => self.subject.to_string(),
-            "backend" => self.backend.clone(),
-            "version" => self.version.clone(),
-            "config" => self.config.to_string(),
-            "enabled" => if self.enabled { "yes" } else { "no" }.to_string(),
-            "reason" => self
-                .reason
-                .map(|r| r.as_str().to_string())
-                .unwrap_or_default(),
-            "metadata" => self.metadata.to_string(),
-            "note" => self.note.clone(),
-            other => self.extra.get(other).cloned().unwrap_or_default(),
-        }
-    }
 }

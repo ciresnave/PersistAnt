@@ -68,6 +68,11 @@ impl Config {
         self.0.iter().all(|(k, v)| actual.0.get(k) == Some(v))
     }
 
+    /// The facts, sorted by key.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
     /// The value of one fact.
     pub fn get(&self, key: &str) -> Option<&str> {
         self.0.get(key).map(String::as_str)
