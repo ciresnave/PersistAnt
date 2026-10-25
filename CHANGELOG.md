@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.3
+
+### Added
+- `docs/PATENT-SWEEP.md` second pass: full independent claims of 29 first-pass hits, 2-3 new queries per idea (Google Patents only; Espacenet and WIPO unreachable), no needs-review; `ROADMAP.md` gains six "do not build without re-reading" patent conditions.
+
 ## 0.11.2
 
 ### Added

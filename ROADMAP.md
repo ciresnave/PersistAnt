@@ -157,6 +157,16 @@ CireSnave 2026-10-18 (`CIRESNAVE-EXPECTATIONS.md` 6.16): *"have PersistAnt re-ex
 `KvOnRelational` written once in PostgreSQL SQL and translated by UniSQL (`DESIGN-KINDS.md` §5).
 Depends on UniSQL 0.24.4 or later from crates.io.
 
+## Patent conditions (docs/PATENT-SWEEP.md second pass, 2026-10-25): do not build without re-reading the patent
+| Do not build | Re-read first |
+|---|---|
+| A runtime translation cache, library, driver, interception or ML step for `sql!` translation (keep it compile-time) | US12204528B2, US9582500B2, US20140280259A1, US12079210B2, US12147422B2 |
+| SQL grammar encoded as a type state machine | US9177017B2 |
+| The `sql!` check as a synthetic-type provider replaced at compile time | US8813027B2 |
+| Backend selection that returns a closest match (an unmet need stays an error) | US9100343B1 |
+| Emulating an unsupported backend operation from stored per-backend metadata | US9454548B1 |
+| A rolling snapshot-plus-commit-log durability scheme | US20130198139A1 |
+
 ## Spec-to-roadmap audit (PM [TASK] 2026-10-24, CireSnave's idea; read at `dabef6c`, 0.9.46)
 
 Read: `README.md`, `ROADMAP.md`, `SECURITY.md`, `bench/README.md`, `matrix/README.md`, `scripts/machine-durability/README.md` and `docs/` (`COMPILE-TIME-SQL`, `CONSUMERS`, `DECODER-AUDIT`, `DESIGN-AUTH-STORAGE`, `DESIGN-DURABILITY-MACHINE`, `DESIGN-KINDS`, `DESIGN-SQLX-BRIDGE`, `FACADE-MIGRATION`, `REGISTRY-FOR-STORE-USERS`): 15 files. `DESIGN-KINDS.md` section 11 is a snapshot at 0.4.24, so most of its "not built" text is stale; the rows below are only what the code still lacks (a name absent from `crates/`, `matrix/`, `src/` at `dabef6c`: `kv.in_relational_transaction`, `persist.kind`, `rel.trigger`, `rel.advisory_lock`, `rel.skip_locked` have 0 hits, while `lock.lease` and `ops.pitr` are present, so the search works). **None of these is started by this PR.** State: *open* (nobody holds it), *held* (by whom), *done* (PR or version).
