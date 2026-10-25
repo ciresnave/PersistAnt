@@ -228,6 +228,48 @@ Frozen, read by the UniSQL lane at its `origin/main` `6e75805` (0.26.2): the int
 
 Open: whether asking for a target that was not embedded becomes a compile error (UniSQL's open question; it waits on CireSnave, not decided).
 
+## 7b. Argument types: a bound `$n` against its column (design, 2026-10-25; ROADMAP row 6, part 2)
+
+**Problem.** `db.query_sql(&FIND, &[Value::Int(7)])` takes `Value`s at run time, so nothing at compile time knows
+what the caller binds. The statement does know what each `$n` must be: in `WHERE email = $1`, `INSERT INTO users
+(id, email) VALUES ($1, $2)` and `SET age = $1` the placeholder meets a plain column of known class (the
+same resolution as the operand-class check of section 2, one base table, PostgreSQL source or not, since a
+bound parameter's type is the driver's business, not the dialect's). Everything else (`$n` in an expression, a
+join, `IN (..)`, `LIMIT $n`) is unknown and passes.
+
+**Design.** Reuse what `FromRow` built (`rows.rs`: the macro states classes as constants, a trait states the
+Rust side, `const _: () = assert!(..)` compares them).
+
+1. `ToValue` gains `const KIND: FieldKind = FieldKind::Any` and `const NULLABLE: bool = false` (defaults, so a
+   downstream `impl ToValue` still compiles and is simply unchecked), set by PersistAnt for `i64`, `i32`,
+   `f64`, `bool`, `String`, `&str`, `Vec<u8>`, `&[u8]`, `Option<T>`, `Uuid`, `chrono`, `serde_json::Value`.
+2. `sql!(.., params = (i64, String), "..")` states the Rust types of the arguments at the call that defines the
+   statement. The macro emits the same kind of `const _` assertions as `as T`: for `$n` with a resolved class,
+   `kind_in::<Arg_n>(CLASS)` (a `String` for a numeric column is the error, naming `$n`, the column and the
+   type). Nullability is **not** checked: an `Option<T>` for a `NOT NULL` column and a bare `T` for a nullable one are both fine (the first can only fail at run time for `None`, the second cannot send `NULL`), so the check is class only. A count that differs from the statement's `k` is an error (stage 1 of section 2 already
+   checks the count at the call site for the runtime form).
+3. The typed values travel as `Sql` unchanged, so **`query_sql` and every consumer stay as they are**:
+   `params = (..)` is additive and optional, and the call site keeps passing `&[Value]` (built by
+   `(a, b).to_values()`, a new method on a tuple of `ToValue`, so the types checked are the types sent).
+4. Not claimed: the value's range (an `i64` into an `INTEGER` column), string length, encoding.
+
+**Options considered.** (a) Infer nothing; document that arguments are unchecked: today's state, loses what
+`sqlx::query!` gives. (b) A typed `Sql<const P: u64>` returned by `sql!`: the types are inferred from the
+call, but `sql!` returns a different type, which breaks every `const FIND: Sql = sql!(..)` declaration. (c)
+**`params = (..)` above**: opt-in, no break, the macro sees the types as tokens (a path or a tuple of paths;
+a type alias or a macro-produced type is not resolvable by a proc macro and is an error that says to write
+the type out). **Recommendation: (c).**
+
+**Cost and risk.** One new macro option, a `const` pair on `ToValue`, a `to_values` tuple method, and the
+placeholder-to-column resolution (shared with the operand-class check). No CireSnave call: no consumer's
+existing call changes. Versioning: additive; the PM allocates.
+
+**Confirmed with the UniSQL lane (2026-10-25, unisql 0.26.8):** the option is named `params` (matches `Query::PARAMS`; `args` would overlap the trailing-values form `sql!(.., "..$1,$2", a, b)`); if both are given the counts must match. A `Problem` is `{kind, message}` only, so it names `$n` in its message text. The build needs one UniSQL change, `CheckContext.param_types: Option<&[String]>`, which is source-breaking on UniSQL's side (UniSQL 0.27.0, announced by [NOTICE] first). UniSQL passes the type tokens verbatim as whitespace-normalised strings (`"i64"`, `"String"`); mapping them to SQL classes is the `Checker`'s job, so it lives in `persistant-macros`.
+
+**Tests.** For each placeholder position (WHERE, INSERT values, SET) a mismatched type fails with the named
+message and the matched twin builds; `Option<T>` against a nullable and a non-null column builds; an unresolved
+placeholder (expression, join) passes with any type; a count mismatch fails.
+
 ## 8. Not decided here
 
 Whether a Node or other-language binding gets the macro (it cannot; macros are Rust), and whether a
