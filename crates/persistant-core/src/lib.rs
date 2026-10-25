@@ -18,6 +18,7 @@ mod id;
 mod matrix;
 pub mod provider;
 mod row;
+pub mod telemetry;
 mod verdict;
 pub mod vocabulary;
 

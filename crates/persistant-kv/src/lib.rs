@@ -20,6 +20,8 @@
 //! - [`speed`]: stage 3, timings as data with the environment recorded; only backends that pass the
 //!   contract get a number, and nothing is ranked across machines.
 //! - [`stats`]: stage 2, how often each leaf passes and what each operation did (no timing).
+//! - `Traced` (feature `tracing`): a wrapper that emits one `persist` span per call, with the field
+//!   names of `persistant_core::telemetry` and no key, value or error text.
 //!
 //! `kv.take` (get-and-delete, one winner) is built on `compare_and_delete`, so a backend has it
 //! exactly when it has that. `kv.count` (live keys under a prefix, from one snapshot) is native on
@@ -38,6 +40,8 @@ mod on_blob;
 mod on_relational;
 pub mod speed;
 pub mod stats;
+#[cfg(feature = "tracing")]
+mod traced;
 mod translate;
 
 pub use backend::{
@@ -47,3 +51,5 @@ pub use lease::Lease;
 pub use memory::{Defect, MemoryKv};
 pub use on_blob::KvOnBlob;
 pub use on_relational::KvOnRelational;
+#[cfg(feature = "tracing")]
+pub use traced::Traced;
