@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.1
+
+### Added
+- `bench/opendal-speed-concurrent.tsv` (value size 256) and `bench/opendal-speed-concurrent-4096.tsv`: first concurrent timings (`--tasks=1,4,16 --ops=50`), PM quiet window 2026-10-25 13:09-13:35Z, Windows, 32 threads, run with the 0.11.0 binary. Rows whose `host=` shows 50% or more CPU at either end are not evidence (one in the 256 file, six in the 4096 file, including some 16-task rows whose end load may be their own). Value size 64 not yet run.
+
 ## 0.11.0
 
 ### Added
@@ -400,7 +405,8 @@ Published to crates.io (tag `v0.10.4`). 0.10.0 to 0.10.3 were never published (t
 ## 0.8.16
 
 ### Fixed
-- Machine durability harness: the guest copy of `pa-small-db.sh` had every letter `r` deleted (run 39282354886): the CR-stripping `tr -d ''` lost its backslash between PowerShell and ssh. Carriage returns are now stripped on the host, and the guest's copy must match the host file's SHA-256 or the run stops. 0.8.15's container pre-test ran the script directly, so it never exercised this path. PostgreSQL/MySQL ENOSPC still has no verdict.
+- Machine durability harness: the guest copy of `pa-small-db.sh` had every letter `r` deleted (run 39282354886): the CR-stripping `tr -d '
+'` lost its backslash between PowerShell and ssh. Carriage returns are now stripped on the host, and the guest's copy must match the host file's SHA-256 or the run stops. 0.8.15's container pre-test ran the script directly, so it never exercised this path. PostgreSQL/MySQL ENOSPC still has no verdict.
 
 ## 0.8.15
 
