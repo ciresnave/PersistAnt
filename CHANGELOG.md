@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.6
+
+### Added
+- `persistant_relational::Traced` and `TracedTx` (feature `tracing`; facade feature `relational-tracing`): the relational counterpart of the kv and blob wrappers, same `persist.*` names with `persist.kind = "rel"`; spans for `execute`, `query`, `begin` and a transaction's statements, commit and rollback. The outcome is `ok` or the error kind; no SQL text, parameter, row or error text is a field. This completes audit row 8.
+
 ## 0.11.5
 
 ### Added
