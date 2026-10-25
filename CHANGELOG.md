@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.5
+
+### Added
+- `persistant_blob::Traced` (feature `tracing`; facade feature `blob-tracing`): the blob counterpart of the kv wrapper, same `persist.*` names with `persist.kind = "blob"`, outcome `ok`, `backend` or `unsupported`, no key, value or error text in any field. Relational wrapper not built yet (audit row 8).
+
 ## 0.11.4
 
 ### Added
