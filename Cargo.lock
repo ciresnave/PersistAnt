@@ -976,7 +976,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "persistant"
-version = "0.10.4"
+version = "0.10.5"
 dependencies = [
  "capant",
  "futures-util",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-blob"
-version = "0.10.4"
+version = "0.10.5"
 dependencies = [
  "persistant-core",
  "tokio",
@@ -1004,14 +1004,14 @@ dependencies = [
 
 [[package]]
 name = "persistant-core"
-version = "0.10.4"
+version = "0.10.5"
 dependencies = [
  "capant",
 ]
 
 [[package]]
 name = "persistant-kv"
-version = "0.10.4"
+version = "0.10.5"
 dependencies = [
  "persistant-blob",
  "persistant-core",
@@ -1022,7 +1022,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-macros"
-version = "0.10.4"
+version = "0.10.5"
 dependencies = [
  "proc-macro2",
  "serde_json",
@@ -1034,7 +1034,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-migrate"
-version = "0.10.4"
+version = "0.10.5"
 dependencies = [
  "persistant-relational",
  "persistant-sqlx",
@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-opendal"
-version = "0.10.4"
+version = "0.10.5"
 dependencies = [
  "futures-util",
  "opendal",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-relational"
-version = "0.10.4"
+version = "0.10.5"
 dependencies = [
  "chrono",
  "persistant-core",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-sqlx"
-version = "0.10.4"
+version = "0.10.5"
 dependencies = [
  "chrono",
  "persistant-core",

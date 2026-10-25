@@ -14,8 +14,8 @@ use persistant_core::{Config, Reason};
 use std::time::Instant;
 
 pub use persistant_core::bench::{
-    Comparison, Environment, Left, Outcome, Ranked, SpeedParseError as ParseError, SpeedRow,
-    SpeedTable, Stats, compare,
+    Comparison, Environment, Left, Outcome, Position, Profile, Ranked,
+    SpeedParseError as ParseError, SpeedRow, SpeedTable, Stats, compare, compare_across,
 };
 
 /// One thing worth timing, with the contract leaf it depends on.
