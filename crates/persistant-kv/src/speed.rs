@@ -27,7 +27,7 @@ use std::time::Instant;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum Workload {
-    /// `put` of a 256-byte value to a fresh key.
+    /// `put` of a 256-byte value (or the size given to [`run_sized`]) to a fresh key.
     Put,
     /// `get` of one present key.
     Get,
@@ -68,6 +68,18 @@ impl Workload {
         }
     }
 
+    /// The id of this workload at `value_bytes`-byte values. The default size
+    /// ([`DEFAULT_VALUE_BYTES`]) keeps the plain [`id`](Workload::id), so existing data files stay
+    /// valid; any other size gets a `.v<bytes>` suffix. The size is part of the id, so [`compare`]
+    /// never ranks backends measured at different sizes in one list.
+    pub fn id_at(self, value_bytes: usize) -> String {
+        if value_bytes == DEFAULT_VALUE_BYTES {
+            self.id().to_string()
+        } else {
+            format!("{}.v{value_bytes}", self.id())
+        }
+    }
+
     /// The contract leaf the workload needs: no pass, no number.
     pub fn required(self) -> Leaf {
         match self {
@@ -87,8 +99,11 @@ pub use persistant_core::bench::{
     SpeedTable, Stats, compare,
 };
 
-/// Time `workloads` on `target`, `iterations` operations each. A workload whose leaf the target does
-/// not pass gets an excluded row and no timing.
+/// The value size, in bytes, [`run`] times with.
+pub const DEFAULT_VALUE_BYTES: usize = 256;
+
+/// Time `workloads` on `target`, `iterations` operations each, with [`DEFAULT_VALUE_BYTES`]-byte
+/// values. A workload whose leaf the target does not pass gets an excluded row and no timing.
 pub async fn run<K: KvBackend>(
     target: &K,
     config: &Config,
@@ -96,11 +111,33 @@ pub async fn run<K: KvBackend>(
     workloads: &[Workload],
     iterations: u32,
 ) -> Vec<SpeedRow> {
+    run_sized(
+        target,
+        config,
+        env,
+        workloads,
+        iterations,
+        DEFAULT_VALUE_BYTES,
+    )
+    .await
+}
+
+/// [`run`] with `value_bytes`-byte values (at least 1). Rows carry [`Workload::id_at`], so each size
+/// is its own workload in the data file.
+pub async fn run_sized<K: KvBackend>(
+    target: &K,
+    config: &Config,
+    env: &Environment,
+    workloads: &[Workload],
+    iterations: u32,
+    value_bytes: usize,
+) -> Vec<SpeedRow> {
+    let value_bytes = value_bytes.max(1);
     let mut out = Vec::with_capacity(workloads.len());
     for w in workloads.iter().copied() {
         let leaf = w.required();
         let outcome = match contract::check(target, &[leaf]).await {
-            Eligibility::Eligible => match time(target, w, iterations).await {
+            Eligibility::Eligible => match time(target, w, iterations, value_bytes).await {
                 Ok(Some(s)) => Outcome::Measured(s),
                 Ok(None) => Outcome::Excluded {
                     leaf: leaf.id().to_string(),
@@ -123,7 +160,7 @@ pub async fn run<K: KvBackend>(
             }
         };
         out.push(SpeedRow {
-            workload: w.id().to_string(),
+            workload: w.id_at(value_bytes),
             backend: target.backend().to_string(),
             version: target.version().to_string(),
             config: config.clone(),
@@ -134,15 +171,14 @@ pub async fn run<K: KvBackend>(
     out
 }
 
-const VALUE_BYTES: usize = 256;
-
 async fn time<K: KvBackend>(
     b: &K,
     w: Workload,
     iterations: u32,
+    value_bytes: usize,
 ) -> Result<Option<Stats>, crate::KvError> {
     let base = format!("persistant-speed/{}/", w.id());
-    let value = vec![0x5A_u8; VALUE_BYTES];
+    let value = vec![0x5A_u8; value_bytes];
     let mut us: Vec<u64> = Vec::with_capacity(iterations as usize);
     let mut keys: Vec<String> = Vec::new();
     macro_rules! timed {
@@ -265,6 +301,27 @@ mod tests {
             assert!(s.p50_ns <= s.p95_ns && s.p95_ns <= s.p99_ns && s.p99_ns <= s.max_ns);
         }
         let t = SpeedTable::from_rows(rows);
+        assert_eq!(SpeedTable::parse(&t.to_tsv()).unwrap(), t);
+    }
+
+    #[tokio::test]
+    async fn value_size_is_part_of_the_workload_id_and_never_shares_a_ranking() {
+        let e = env("m");
+        let kv = MemoryKv::new();
+        let small = run_sized(&kv, &Config::new(), &e, &[Workload::Put], 5, 64).await;
+        let default = run(&kv, &Config::new(), &e, &[Workload::Put], 5).await;
+        let big = run_sized(&kv, &Config::new(), &e, &[Workload::Put], 5, 4096).await;
+        assert_eq!(default[0].workload, "speed.kv.put");
+        assert_eq!(small[0].workload, "speed.kv.put.v64");
+        assert_eq!(big[0].workload, "speed.kv.put.v4096");
+        let mut rows = small;
+        rows.extend(default);
+        rows.extend(big);
+        let t = SpeedTable::from_rows(rows);
+        let cmp = compare(&t);
+        // Control: one backend at one size is one comparison; three sizes are three.
+        assert_eq!(cmp.len(), 3);
+        assert!(cmp.iter().all(|c| c.ranked.len() == 1));
         assert_eq!(SpeedTable::parse(&t.to_tsv()).unwrap(), t);
     }
 

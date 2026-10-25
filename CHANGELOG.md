@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3
+
+### Added
+- `persistant_kv::speed::run_sized` and `Workload::id_at`: time the key-value workloads at any value size. The default 256 bytes keeps its ids; another size is its own workload (`speed.kv.put.v4096`), so `compare` never ranks different sizes together. `choose::need_sized` ranks by a sized workload. The code half of the ROADMAP "value sizes other than 256 bytes" gap; no data file is regenerated yet (needs a quiet machine).
+
 ## 0.10.2
 
 ### Changed

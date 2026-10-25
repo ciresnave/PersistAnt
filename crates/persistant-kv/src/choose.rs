@@ -88,6 +88,21 @@ pub fn need(
     }
 }
 
+/// [`need`] ranked by `rank_by` at `value_bytes`-byte values ([`Workload::id_at`]): a figure measured
+/// at another size is a different workload and is not consulted.
+pub fn need_sized(
+    leaves: &[Leaf],
+    min_durability: Durability,
+    rank_by: Workload,
+    value_bytes: usize,
+    environment: impl Into<String>,
+) -> Need {
+    Need {
+        rank_by: rank_by.id_at(value_bytes),
+        ..need(leaves, min_durability, rank_by, environment)
+    }
+}
+
 /// Order `candidates` for `need` using `speed` and this kind's durability table.
 pub fn choose(
     candidates: &[Candidate],
