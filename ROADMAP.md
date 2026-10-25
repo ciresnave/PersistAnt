@@ -180,7 +180,7 @@ Read: `README.md`, `ROADMAP.md`, `SECURITY.md`, `bench/README.md`, `matrix/READM
 | 5 | `ops.pitr` test (restore to instant *t*, compare with a snapshot taken at *t*) | `DESIGN-KINDS` 2.2 | open, needs infrastructure the PM provides |
 | 6 | `kv.in_relational_transaction`: `kv` operations inside a relational transaction | `DESIGN-KINDS` 4.4 | open, design first |
 | 7 | Fault injection (`Masked`, `Faulty`) for every kind, not only blob | `DESIGN-KINDS` 5 | open |
-| 8 | One set of `tracing` span and field names (`persist.kind`, `persist.backend`, `persist.op`, `persist.capability`) | `DESIGN-KINDS` 5 | **part done (0.11.5):** names in `persistant_core::telemetry`, `Traced` for kv (0.11.4) and blob (0.11.5); relational wrapper open |
+| 8 | One set of `tracing` span and field names (`persist.kind`, `persist.backend`, `persist.op`, `persist.capability`) | `DESIGN-KINDS` 5 | **done (0.11.6):** names in `persistant_core::telemetry`, `Traced` for kv (0.11.4), blob (0.11.5) and relational (0.11.6) |
 | 9 | Secret handle for connection config beyond `ConnectionSecret` (env var, file or `with-secret` reference, redacted `Debug`) | `DESIGN-KINDS` 5, 10 | open, design first |
 | 10 | Opt-in live test at open (rolled-back `TEMP` objects), per program through its `Needs` (D3, ruled 2026-10-14) | `DESIGN-KINDS` 2.3, 9 | open |
 | 11 | The registry `Handle` serves the kv kind only; blob and relational ids are reported unmet | `DESIGN-KINDS` 3 | open |

@@ -29,6 +29,8 @@ pub mod speed;
 #[cfg(feature = "sql")]
 mod sql_ext;
 mod sweep;
+#[cfg(feature = "tracing")]
+mod traced;
 mod value;
 
 pub use backend::{Isolation, RelationalBackend, RelationalTx};
@@ -36,6 +38,8 @@ pub use error::RelError;
 pub use migrate::{MigrateError, MigrateReport, Migrates, Migration};
 pub use secret::{ConnectionSecret, Redacted};
 pub use sweep::{SweepError, SweepReport, sweep};
+#[cfg(feature = "tracing")]
+pub use traced::{Traced, TracedTx};
 pub use value::{Dialect, Row, Value};
 
 #[cfg(feature = "sql")]
