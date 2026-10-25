@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.2
+
+### Added
+- `docs/PATENT-SWEEP.md`: first-pass patent sweep of the 0.11.x ideas (PM process of 2026-10-25). Thin coverage; five hits with unread claims are listed for review. Not legal advice.
+
 ## 0.11.1
 
 ### Added

@@ -1,0 +1,65 @@
+# Patent sweep: PersistAnt 0.11.x @ 6574b85 (first pass, thin coverage)
+
+Date: 2026-10-25; Run by: PersistAnt lane, Sonnet 5.5 (three Sonnet subagents ran the searches, the lane wrote this record); Method: AI-assisted search and read; **NOT legal advice; NOT a freedom-to-operate opinion.**
+
+**Read this first.** This is a first pass. Each idea got one or two Google Patents queries (through a site-restricted web search). Claims were read through a page summariser (short verbatim fragments, not full claim text), and for many hits the claims were **not read at all**. A hit marked `unread` has no verdict. No USPTO, Espacenet or WIPO query was run. "No patent found" is an absence from one query with no positive control. Status and expiry are Google's own estimates. Everything below is a reason to look further, not a clearance. Covers the version line 0.11.x.
+
+## Ideas swept
+1. Capability-filtered backend selection: required capability ids plus an ordered preference list; backends meeting every requirement returned sorted by preference then measured speed with a reason per rank; an unmet need is an error naming each backend's unmet id (never a closest match); the chosen backend's stable id is stored in configuration and opened by id.
+2. A backend capability is boolean, present only when an automated conformance test passes; results live in a committed matrix file CI regenerates, and CI fails if the committed file differs from what the code certifies.
+3. Measured speed data per backend, configuration and workload, with host CPU load and free RAM at start and end, a concurrent multi-task harness, rows measured under high load flagged as not evidence; used to rank backends.
+4. Key-value store on a blob store: atomic put by temp write and rename, ordered scan by listing, capabilities derived from the blob store's declared configuration facts.
+5. Layered storage abstraction: trait crates for blob, key-value and relational, and generic adapters (key-value on relational, on blob).
+6. Whole-OS durability check: write on a VM guest, acknowledge, cut the guest's power with no sync, boot, verify every acknowledged key; a known-bad control must lose writes in the same cycle or the test is invalid.
+7. Process-kill durability test with a known-bad control that must fail.
+8. Atomic replace: temp file in a separate scratch directory, fsync, rename over the target, with a recorded configuration fact feeding capability declaration.
+9. Compile-time macro validating embedded SQL against a committed schema snapshot (names through aliases and joins, INSERT arity, omitted NOT NULL, ON CONFLICT unique key), erroring only when certain, unknown names pass.
+10. Producing the snapshot from migration DDL without a database, from a live catalog, or by scratch apply; a check mode fails when the committed snapshot differs.
+11. Compile-time translation of one statement into each enabled dialect (PostgreSQL, MySQL, MariaDB, SQLite), refusing by construct, with per-target parameter order.
+12. Compile-time check that bound argument types fit the column's type class and a row struct matches selected columns.
+13. Verifying a migration set on a fresh scratch schema per engine against the committed snapshot.
+
+## Queries
+All: Google Patents via web search restricted to patents.google.com, 2026-10-25, one or two per idea. Idea 1 `patent storage backend selection required capabilities preference order ranking storage systems capability matching`. 2 `patent conformance test results capability matrix storage backend certified continuous integration`. 3 `patent benchmark storage performance measured host CPU load free memory flag invalid measurement ranking storage backends`. 4 `patent key-value store on top of object store atomic put temporary object rename ordered scan listing`. 5 `patent key-value store implemented on relational database adapter layer storage abstraction blob store interface`. 6 `patent verifying durability acknowledged writes virtual machine power off hypervisor no sync boot verify data present`. 7 `patent crash consistency testing kill process after acknowledged write reopen verify data durability`. 8 `patent atomic file replace write temporary file fsync rename over target`. 9 `patent compile-time validation of embedded SQL statement against database schema macro`; `patent static analysis SQL query in source code verify table and column names exist against database schema`. 10 `patent generate schema description from DDL scripts without database, compare with catalog of live database, detect schema drift`. 11 `patent translating SQL statement to multiple database dialects at compile time`. 12 `patent type checking query parameters host language types against database column types at compile time`. 13 `patent verifying database migration by applying to scratch schema comparing catalog to schema snapshot` (shared with 10) and a general-web `"scratch database" OR "shadow database" apply migrations compare schema to expected schema patent`.
+
+## Hits (claims read = independent claims through a summariser unless stated)
+| # | patent | title | assignee | status | overlap | our difference | verdict |
+|---|---|---|---|---|---|---|---|
+| 1 | US8185536B2 | Rank-order service providers by desired properties | HP / Conundrum IP | active | ranks providers vs requirements | every independent claim needs SVD text similarity | clear |
+| 1 | US8214621B2 | Storage optimization across media with differing capabilities | Microsoft | expired | selects media by match to metadata | claims divide media into parts by characteristic variance | clear |
+| 1 | US10579272B2 | Workload aware storage platform | Ericsson | expired | picks a backend from data vs backend configuration | also creates instances and retunes parameters | clear (paraphrase only, low confidence) |
+| 2 | US20150261842A1 | Conformance specification and checking for hosting services | IBM | abandoned | theme: conformance spec | hosting environments, not a storage capability matrix | unread; abandoned |
+| 2 | US9354998B2, US7757121B1 | conformance / compliance test | - | - | snippet only | - | unread |
+| 3 | US8271991B2 | Analyzing performance in a storage system | Hitachi | expired | performance measurement | disk-controller parity groups | unread |
+| 3 | US11163592B2 | Benchmarks from performance traces | - | - | snippet only | - | unread |
+| 4 | US11347688B2 | Key-value store for map reduce | HPE | active | ordered key-value store | claims need tablet/partition division over compute nodes | clear |
+| 4 | US10445338B2 | Replicating data in a cloud storage system | NEC | active | object store, compare-and-swap | needs quorum reads with timestamps | clear |
+| 4 | US20140156618A1, US20120284317A1, US20160321295A1 | transactional KV store; metadata file system on KV | - | - | snippets mention atomic puts, rename on KV | - | unread |
+| 5 | US9870168B1 | KV store with internal KV storage interface | EMC / Triad | active | abstract storage interface under a KV store | every independent claim needs keys with semantic information and a KV-native device | clear |
+| 5 | US11507592 | Adapting multiple key-value stores | Samsung | active | adapter "glue logic" between KV stores and a device | unknown | **unread, needs-review** (title close) |
+| 5 | US10360233B2, US11036756B2 | In-memory KV store for a multi-model database | Oracle | active | KV view over relational table data | unknown | **unread, needs-review** (title and snippet close) |
+| 5 | EP3314473B1 | Transactional DB layer above a distributed KV store | Microsoft | not in force | reverse layering | - | unread |
+| 6 | US7213246B1 | Failing over a virtual machine | Veritas | expired | uses a VM | VM failover, no durability test | clear |
+| 7 | US9009683B2 | Testing client reactions to simulated disruptions | Software AG / IBM | active | fault injection by killing processes | claims need a broker cluster and network simulation | clear |
+| 7 | US20130198139A1, WO2008115343A1 | in-memory DB durability plan; crash tests | - | - | titles tangential | - | unread |
+| 8 | US6560614B1 | Nonintrusive update of files | XOSoft / CA | expired | staged temporary copy | needs in-use detection and redirection | clear |
+| 8 | US10133744B2 | Composite rename operations in WAN file systems | Symantec / CA | active | temp file and rename commands | needs a deletion object list on a remote server | clear |
+| 8 | US7987166B2 / US7349926 | Atomic renaming and moving of data files, lock-free look-ups | - | - | atomic rename (in-memory directory per snippet) | - | **unread, needs-review** (low risk per snippet) |
+| 9 | US9244982B2 | Static analysis of PL/SQL objects and SQL queries | Oracle | active | extracts query expressions and analyses them | needs trigger-collision detection and compiling a procedure | clear |
+| 9 | US8452754B2 | Static analysis framework for database applications | Microsoft | expired | parses SQL from code for tables and columns | unknown | clear on abstract only (expired); claims unread |
+| 9 | US8726254B2, US5717911 | annotation macros for injection analysis; runtime schema comparison | - | - | snippets | compile-time vs runtime | unread |
+| 10 | US7418461B2 | Schema conformance for database servers | Microsoft | expired | compares schema to a master schema | needs several servers, difference files and an alarm server | clear |
+| 10 | US20040153469A1, US7991742B2, US20050149582A1 | database comparator; migration differences; DB copy sync | Beach / IBM / IBM | abandoned / expired / abandoned | schema comparison | different comparison objects | clear |
+| 11 | US12204528B2 | Converting database language statements between dialects | Micro Focus | active | translates a statement between dialects | every independent claim needs a translation cache and conversion at application runtime; we translate at compile time with no cache | design-around (keep it compile-time, no runtime cache) |
+| 11 | US7664795B2, US6877000B2 | database migration; SQL to portable ODBC | Microsoft / IBM | expired | dialect conversion; source-level SQL rewriting | runtime driver wrapper; substitutes ODBC calls | clear |
+| 11 | US9582500B2, US20140280259A1, US7757225 | run-time SQL translation; link-time alternatives | - | - | titles | - | unread |
+| 12 | US9177017B2 | Query constraint encoding with a type-based state machine | Microsoft | active | compile-time validation of language-integrated queries | every claim builds a type-based state machine from the query language | design-around (do not encode the SQL grammar as a type state machine) |
+| 12 | US11550556B1 | Efficient semantic analysis of program code | SAP | active | compile-time table and column checks (per snippet) | unknown (bytecode-based per abstract) | **unread, needs-review** |
+| 13 | US10331656B2 | Data migration validation | - | - | compares data between stores (per snippet) | we compare catalogs | unread |
+| 13 | US20130173546A1 | Migrating database data | - | - | catalog version check | not a replay | unread |
+
+## Needs review (to the PM)
+No hit is a confirmed overlap; five are unresolved because their claims were not read: **US11507592** (Samsung), **US10360233B2 and US11036756B2** (Oracle), **US11550556B1** (SAP), **US7987166B2 / US7349926**. Two active patents are design-around conditions on future work, not current overlap: US12204528B2 (do not add a runtime translation cache to `sql!` translation) and US9177017B2 (do not encode SQL as a type state machine).
+
+## Limitations
+AI-assisted search, one or two queries per idea, one search engine, no non-patent literature, no CPC-class search, no USPTO, Espacenet or WIPO. Claims came through a summariser; several pages were truncated before the claims. Roughly a third of the hits are `unread`. Expiry and status are Google's estimates. Ideas 3 (host-load flagging), 4 (capabilities from blob configuration facts) and 8 (configuration fact feeding capability declaration) were not searched separately. **A second pass that reads the unread claims in full (PDF text) and queries the other patent offices is needed before this record supports a release.** Re-sweep when a new family of capability is added, and by 2027-10-25.
