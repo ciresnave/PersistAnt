@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.0
+
+### Added
+- `speed::run_concurrent(target: Arc<K>, .., ops_per_task, tasks, value_bytes, probe)`: the key-value workloads with N tasks at once (each its own keys, started together after setup). Its own workload in the data file (`speed.kv.put.c8`, with a size `speed.kv.put.v4096.c8`); `ops_per_sec` is total operations over wall-clock time. One task is `run_sized`. `Workload::id_with`.
+- `bench::host_snapshot()` (`cpu_load_pct`/`load1` and `ram_available_mb`), recorded at the start and end of every concurrent workload in the row's environment (`host=`), so a figure taken on a busy machine says so.
+- Example `speed_concurrent` (persistant-opendal). No data file is committed: the timing runs wait for a quiet machine (PM window).
+
+### Changed
+- **Breaking:** `bench::Environment` gains `host: Option<String>`; struct literals must add `host: None`. `Environment::detect` is unchanged. Data files without `host=` still parse.
+- `persistant-kv` depends on `tokio` (`rt`, `sync`) for the concurrent harness.
+
 ## 0.10.5
 
 ### Added
