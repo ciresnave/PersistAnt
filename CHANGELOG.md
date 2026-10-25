@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.8
+
+### Added
+- `persistant_kv::Faulty` (spec-to-roadmap audit row 7, kv part): wraps any `KvBackend` so a consumer can test its store misbehaving. `fail_nth` fails the Nth call (of one operation, or of any) before it runs; `interrupt_nth` runs the call and then returns the error, the ambiguous outcome of a lost reply; `mask` makes an operation answer `Unsupported`; `calls` counts. Rules fire once. Tests use `MemoryKv` and show the effect (or its absence) by reading back; the unwrapped backend is the control for the mask. The relational kind is not built (it needs the statement/commit boundary, `DESIGN-KINDS` section 5).
+
 ## 0.11.7
 
 ### Added

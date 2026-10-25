@@ -33,6 +33,7 @@ pub mod choose;
 pub mod conformance;
 pub mod contract;
 pub mod durability;
+mod fault;
 pub mod index;
 mod lease;
 mod memory;
@@ -47,6 +48,7 @@ mod translate;
 pub use backend::{
     BatchOp, BoundedProbe, KeyPage, KvBackend, KvError, ValuePage, count_prefix_paged,
 };
+pub use fault::Faulty;
 pub use lease::Lease;
 pub use memory::{Defect, MemoryKv};
 pub use on_blob::KvOnBlob;
