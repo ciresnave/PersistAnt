@@ -335,7 +335,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -976,7 +976,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "persistant"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "capant",
  "futures-util",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-blob"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "persistant-core",
  "tokio",
@@ -1004,14 +1004,14 @@ dependencies = [
 
 [[package]]
 name = "persistant-core"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "capant",
 ]
 
 [[package]]
 name = "persistant-kv"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "persistant-blob",
  "persistant-core",
@@ -1022,7 +1022,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-macros"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "proc-macro2",
  "serde_json",
@@ -1034,7 +1034,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-migrate"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "persistant-relational",
  "persistant-sqlx",
@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-opendal"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "futures-util",
  "opendal",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-relational"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "chrono",
  "persistant-core",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "persistant-sqlx"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "chrono",
  "persistant-core",
@@ -1243,7 +1243,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1673,7 +1673,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1846,9 +1846,9 @@ checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
 
 [[package]]
 name = "unisql"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb3bfe999d01864ce62c424f6e599945ab30cdab674ffb494716036f49fcec1a"
+checksum = "2d432de7b11ce0623dd9336915143ca569cd30ff1bcf275c7d50acc2cffe7492"
 dependencies = [
  "unisql-core",
  "unisql-dialect-mysql",
@@ -1859,9 +1859,9 @@ dependencies = [
 
 [[package]]
 name = "unisql-core"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dd65d84e7811aebb6e40a11cf8e9aa724633704137e52f8bff7cd4842ca7eb2"
+checksum = "7f79e1f67014e115711598df076771d9b274f7ad1dc61f4272d7d7e4bc4987e7"
 dependencies = [
  "serde",
  "serde_json",
@@ -1869,9 +1869,9 @@ dependencies = [
 
 [[package]]
 name = "unisql-dialect-mysql"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5fb8efe253a4a18f5caf26c1e34c37daf59469d361e1dcdd1d6ecdadf67e2f3"
+checksum = "70919a3e5c0ff68494d16b22448cc4f0cc370ec5b6edc4b79976a479e48bf46c"
 dependencies = [
  "unisql-core",
  "unisql-sqlparser-adapter",
@@ -1879,9 +1879,9 @@ dependencies = [
 
 [[package]]
 name = "unisql-dialect-postgres"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f548ab207240e4a4bcd0ba9927c7878506c4ee7d4fb774d7e3dd32160980dc4e"
+checksum = "1b73bba5c428b6ae915c09d668cc86f536a439c7db53ab6f1110dd1a287738ce"
 dependencies = [
  "unisql-core",
  "unisql-sqlparser-adapter",
@@ -1889,9 +1889,9 @@ dependencies = [
 
 [[package]]
 name = "unisql-dialect-sqlite"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ae0edf4301b7ab4c435e6e84b66fb97b1497750f05775ec10172dd7ed59305d"
+checksum = "ab4550863f643c4aeb7fe8ad4adcc71890e0c48e7f88d37b7efc3dfabfacd2a6"
 dependencies = [
  "unisql-core",
  "unisql-sqlparser-adapter",
@@ -1899,24 +1899,24 @@ dependencies = [
 
 [[package]]
 name = "unisql-embed"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fc70fc3f33222976411dd46fa31cdf600a4fa122a5a4b81873ee3c1b4004501"
+checksum = "8274bef7239de99f8926ac3094eebb4dd33da3671dccf32ba11a4260336d6f45"
 
 [[package]]
 name = "unisql-macro-core"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bde18adbfc24f937f326698f54a34755934ce3cdc73d8846fbc533b1be7982f4"
+checksum = "32c77339f2d57ebe39659e3a3f5c51b80638096aa95c2d1627f3bd01d111e21c"
 dependencies = [
  "unisql",
 ]
 
 [[package]]
 name = "unisql-sqlparser-adapter"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d26e9ccfd56bbc412d84bd346a95642935c5dae868aeb8ba6b5459c3569b7ac2"
+checksum = "a205178601b3b0f983a2d6198402aa60dd908759c17f41a89084a1a9b8495555"
 dependencies = [
  "sqlparser",
  "unisql-core",

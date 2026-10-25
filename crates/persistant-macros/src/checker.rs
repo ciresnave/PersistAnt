@@ -18,8 +18,14 @@
 //!   A string literal against a numeric column is never reported (PostgreSQL reads `'5'` as an
 //!   untyped literal and converts it).
 //!
-//! Not checked, and said so in the macro's documentation: the types of bound arguments and of selected
-//! columns (stage 6), joins, subqueries, CTEs, views, other schemas, and any operand that is not a
+//! * a declared argument type (`params = (..)`) whose class differs from the plain column its `$n` meets
+//!   in `WHERE col = $n`, `INSERT INTO t (cols) VALUES ($1, ..)` or `UPDATE t SET col = $n`: text against
+//!   a number or a boolean, and the reverse. A boolean against a number is a fault only when the source
+//!   is PostgreSQL (SQLite and MySQL store booleans as integers). A type this file does not know
+//!   (`Uuid`, a date, a JSON value, an alias) is unknown and passes; nullability is not checked.
+//!
+//! Not checked, and said so in the macro's documentation: the range of an argument, the types of
+//! selected columns (stage 6), an argument anywhere else than those three positions, joins, subqueries, CTEs, views, other schemas, and any operand that is not a
 //! plain column or a literal.
 
 use unisql::ast::{self, BinaryOp, Expr, InsertSource, Literal, Name, SetExpr, TableRef};
@@ -39,6 +45,77 @@ fn same_set(a: &[String], b: &[String]) -> bool {
     a.len() == b.len()
         && a.iter()
             .all(|x| b.iter().any(|y| y.eq_ignore_ascii_case(x)))
+}
+
+/// The class a declared Rust argument type travels as: `Option<T>` as `T`, references peeled.
+/// `None` for a type this check does not know.
+fn type_class(ty: &str) -> Option<ColumnClass> {
+    let mut t = ty.trim();
+    while let Some(rest) = t.strip_prefix('&') {
+        t = rest.trim_start();
+        if t.starts_with('\'') {
+            t = t
+                .split_once(char::is_whitespace)
+                .map_or("", |(_, r)| r)
+                .trim_start();
+        }
+        t = t.strip_prefix("mut ").unwrap_or(t).trim_start();
+    }
+    let squeezed: String = t.split_whitespace().collect();
+    if let Some(inner) = squeezed
+        .strip_prefix("Option<")
+        .and_then(|r| r.strip_suffix('>'))
+    {
+        return type_class(inner);
+    }
+    match squeezed.as_str() {
+        "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize" | "f32"
+        | "f64" => Some(ColumnClass::Numeric),
+        "bool" => Some(ColumnClass::Boolean),
+        "String" | "str" => Some(ColumnClass::Text),
+        _ => None,
+    }
+}
+
+/// The declared argument types of the call, and what to compare them with.
+#[derive(Clone, Copy)]
+struct Args<'a> {
+    types: &'a [String],
+    schema: &'a Schema,
+    postgres: bool,
+}
+
+impl Args<'_> {
+    /// `$n` meets plain column `col` of `table`: report when the two classes certainly differ.
+    fn meets(&self, e: &Expr, table: &Name, col: &str, out: &mut Vec<Problem>) {
+        let Expr::Param(n) = peel(e) else { return };
+        let Some(ty) = usize::try_from(*n)
+            .ok()
+            .and_then(|n| n.checked_sub(1))
+            .and_then(|i| self.types.get(i))
+        else {
+            return;
+        };
+        let (Some(arg), Some(c)) = (type_class(ty), self.schema.get(table, col)) else {
+            return;
+        };
+        let col_class = c.class;
+        let certain = match (arg, col_class) {
+            (ColumnClass::Text, ColumnClass::Numeric | ColumnClass::Boolean)
+            | (ColumnClass::Numeric | ColumnClass::Boolean, ColumnClass::Text) => true,
+            (ColumnClass::Boolean, ColumnClass::Numeric)
+            | (ColumnClass::Numeric, ColumnClass::Boolean) => self.postgres,
+            _ => false,
+        };
+        if certain {
+            out.push(problem(format!(
+                "argument ${n} is declared `{ty}` ({}) but meets column `{col}` of `{}` ({})",
+                word(arg),
+                table.last(),
+                word(col_class)
+            )));
+        }
+    }
 }
 
 /// What an operand is, as far as the comparison rule can tell.
@@ -72,6 +149,9 @@ struct Scope<'a> {
     schema: &'a Schema,
     table: &'a Name,
     alias: Option<&'a str>,
+    /// Run the PostgreSQL operand-class rule.
+    postgres: bool,
+    args: Option<Args<'a>>,
 }
 
 impl Scope<'_> {
@@ -104,6 +184,18 @@ impl Scope<'_> {
     /// One comparison. Reported only when at least one side is a column and both classes are known.
     fn compare(&self, l: &Expr, r: &Expr, out: &mut Vec<Problem>) {
         let (l, r) = (peel(l), peel(r));
+        if let Some(args) = &self.args {
+            for (param, col) in [(l, r), (r, l)] {
+                if let Expr::Column(name) = col
+                    && matches!(self.operand(col), Operand::Class(_))
+                {
+                    args.meets(param, self.table, name.last(), out);
+                }
+            }
+        }
+        if !self.postgres {
+            return;
+        }
         let (Operand::Class(a), Operand::Class(b)) = (self.operand(l), self.operand(r)) else {
             return;
         };
@@ -158,7 +250,12 @@ impl Scope<'_> {
 }
 
 /// The operand-class check over the `WHERE` of a one-table `SELECT`, `UPDATE` or `DELETE`.
-fn operand_classes(stmt: &ast::Statement, schema: &Schema) -> Vec<Problem> {
+fn operand_classes(
+    stmt: &ast::Statement,
+    schema: &Schema,
+    postgres: bool,
+    args: Option<Args<'_>>,
+) -> Vec<Problem> {
     let mut out = Vec::new();
     let (table, alias, where_) = match stmt {
         ast::Statement::Query(q) if q.with.is_empty() => {
@@ -183,8 +280,28 @@ fn operand_classes(stmt: &ast::Statement, schema: &Schema) -> Vec<Problem> {
             schema,
             table,
             alias,
+            postgres,
+            args,
         }
         .walk(w, &mut out);
+    }
+    if let (Some(args), ast::Statement::Update(u)) = (args, stmt) {
+        for a in &u.set {
+            args.meets(&a.value, &u.table, &a.column, &mut out);
+        }
+    }
+    out
+}
+
+/// `INSERT INTO t (cols) VALUES (..)`: each `$n` at position `j` meets column `j`.
+fn insert_args(i: &ast::Insert, args: Args<'_>) -> Vec<Problem> {
+    let mut out = Vec::new();
+    if let InsertSource::Values(rows) = &i.source {
+        for row in rows.iter().filter(|r| r.len() == i.columns.len()) {
+            for (e, col) in row.iter().zip(&i.columns) {
+                args.meets(e, &i.table, col, &mut out);
+            }
+        }
     }
     out
 }
@@ -194,16 +311,20 @@ impl Checker for PersistantChecker {
         let Some(schema) = ctx.schema else {
             return Vec::new();
         };
-        if ctx.source.eq_ignore_ascii_case("postgres") {
-            let found = operand_classes(stmt, schema);
-            if !found.is_empty() {
-                return found;
-            }
+        let postgres = ctx.source.eq_ignore_ascii_case("postgres");
+        let args = ctx.param_types.map(|types| Args {
+            types,
+            schema,
+            postgres,
+        });
+        let found = operand_classes(stmt, schema, postgres, args);
+        if !found.is_empty() {
+            return found;
         }
         let ast::Statement::Insert(i) = stmt else {
             return Vec::new();
         };
-        let mut out = Vec::new();
+        let mut out = args.map(|a| insert_args(i, a)).unwrap_or_default();
         let table = i.table.last();
 
         // A NOT NULL column with no default that the INSERT leaves out. Only when the INSERT names its

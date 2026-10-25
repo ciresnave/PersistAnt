@@ -11,11 +11,13 @@
 //! ```
 //!
 //! Arguments, in any order, then the statement as the last argument (a string literal):
-//! `source` (required), `targets` (required, at least one), `allow`, `requires`, `forbids`, and
+//! `source` (required), `targets` (required, at least one), `allow`, `requires`, `forbids`, `schema`,
+//! `params = (T1, T2, ..)` (the Rust type of each `$n`, checked against the plain column it meets in a
+//! `WHERE`, `INSERT .. VALUES` or `SET`; see `docs/COMPILE-TIME-SQL.md` 7b), and
 //! `crate = path` (where the expansion finds `Query`, default `::persistant::embed`). The statement is
 //! parsed in the source dialect and translated for every named target at build time; whatever cannot
-//! be is a compile error. Nothing is looked up in a database and no schema is read yet (the
-//! catalog-based checks are a later stage).
+//! be is a compile error. Nothing is looked up in a database; the catalog checks read the committed
+//! schema snapshot.
 
 mod checker;
 mod imp;

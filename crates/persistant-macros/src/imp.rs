@@ -37,6 +37,8 @@ struct Args {
     /// `as T`: the struct the statement's columns are checked against.
     row: Option<(String, Span)>,
     sql: Option<(String, Span)>,
+    /// `params = (T, ..)`: the Rust type of each `$n`, as token text.
+    params: Option<(Vec<String>, Span)>,
 }
 
 /// Where the macro's schema comes from.
@@ -248,9 +250,22 @@ fn build(input: TokenStream, manifest_dir: Option<&Path>) -> Result<TokenStream,
             .unwrap_or_default(),
         sql,
         schema,
+        param_types: args.params.as_ref().map(|p| p.0.clone()),
     };
     match expand_with(&input, &[&PersistantChecker]) {
         Ok(expansion) => {
+            if let Some((types, span)) = &args.params
+                && types.len() != expansion.params as usize
+            {
+                return Err(vec![err(
+                    *span,
+                    format!(
+                        "`params` declares {} type(s) but the statement has {} parameter(s)",
+                        types.len(),
+                        expansion.params
+                    ),
+                )]);
+            }
             let path = args.krate.as_deref().unwrap_or(DEFAULT_CRATE);
             let mut text = render(path, &expansion);
             if let Some((rel, ty, checks)) = &rows {
@@ -402,7 +417,7 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
         let Some(name) = named else {
             errors.push(err(
                 span,
-                "expected `name = value` (source, targets, allow, requires, forbids, schema, crate), `as Type`, or the statement as a string literal",
+                "expected `name = value` (source, targets, allow, requires, forbids, schema, params, crate), `as Type`, or the statement as a string literal",
             ));
             continue;
         };
@@ -451,6 +466,11 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
                     Err(e) => errors.push(e),
                 }
             }
+            "params" => match param_types(&value) {
+                Ok(_) if args.params.is_some() => dup(&mut errors),
+                Ok(v) => args.params = Some((v, vspan)),
+                Err(e) => errors.push(e),
+            },
             "crate" => {
                 if args.krate.is_some() {
                     dup(&mut errors);
@@ -467,7 +487,7 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
             other => errors.push(err(
                 span,
                 format!(
-                    "unknown argument `{other}` (known: source, targets, allow, requires, forbids, schema, crate)"
+                    "unknown argument `{other}` (known: source, targets, allow, requires, forbids, schema, params, crate)"
                 ),
             )),
         }
@@ -477,6 +497,49 @@ fn parse_args(input: TokenStream) -> Result<Args, Vec<Error>> {
     } else {
         Err(errors)
     }
+}
+
+/// `( T1, T2<A, B>, .. )`: one type per argument, each as token text. A type is written out, because a
+/// macro cannot resolve an alias.
+fn param_types(value: &[TokenTree]) -> Result<Vec<String>, Error> {
+    let [TokenTree::Group(g)] = value else {
+        return Err(err(
+            value[0].span(),
+            "expected `params = (T1, T2, ..)`: the Rust type of each `$n` in parentheses",
+        ));
+    };
+    if g.delimiter() != Delimiter::Parenthesis {
+        return Err(err(
+            g.span(),
+            "expected `params = (T1, T2, ..)` in parentheses",
+        ));
+    }
+    let mut out = Vec::new();
+    let (mut cur, mut depth): (Vec<TokenTree>, i32) = (Vec::new(), 0);
+    for tt in g.stream() {
+        if let TokenTree::Punct(p) = &tt {
+            match p.as_char() {
+                '<' => depth += 1,
+                '>' => depth -= 1,
+                ',' if depth == 0 => {
+                    if cur.is_empty() {
+                        return Err(err(
+                            p.span(),
+                            "an empty type in `params` (two commas in a row)",
+                        ));
+                    }
+                    out.push(cur.drain(..).collect::<TokenStream>().to_string());
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        cur.push(tt);
+    }
+    if !cur.is_empty() {
+        out.push(cur.into_iter().collect::<TokenStream>().to_string());
+    }
+    Ok(out)
 }
 
 fn one_name(tokens: &[TokenTree], what: &str) -> Result<String, Error> {
@@ -1055,6 +1118,104 @@ mod tests {
             ),
             d.path(),
             "cannot compare column `email` (text)",
+        );
+    }
+
+    #[test]
+    fn declared_argument_types_must_match_the_column_they_meet() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        let with = |params: &str, sql: &str| {
+            call(&format!(r#"schema = "s.sql", params = ({params})"#), sql)
+        };
+        // Each fault in each position, then its twin with the fault removed.
+        for (params, bad, needle) in [
+            (
+                "String",
+                "SELECT id FROM users WHERE id = $1",
+                "argument $1 is declared `String` (text) but meets column `id` of `users` (numeric)",
+            ),
+            (
+                "i64",
+                "SELECT id FROM users WHERE $1 = email",
+                "argument $1 is declared `i64` (numeric) but meets column `email` of `users` (text)",
+            ),
+            (
+                "i64, i64",
+                "INSERT INTO users (id, email) VALUES ($1, $2)",
+                "argument $2 is declared `i64` (numeric) but meets column `email`",
+            ),
+            (
+                "& str",
+                "UPDATE users SET age = $1 WHERE id = 1",
+                "argument $1 is declared `& str` (text) but meets column `age`",
+            ),
+            (
+                "i64, Option < bool >",
+                "UPDATE users SET note = $1 WHERE id = $2 AND age = 1",
+                "argument $1 is declared `i64` (numeric) but meets column `note`",
+            ),
+        ] {
+            fails_in(&with(params, bad), d.path(), needle);
+        }
+        for (params, good) in [
+            ("i64", "SELECT id FROM users WHERE id = $1"),
+            (
+                "i32, String",
+                "INSERT INTO users (id, email) VALUES ($1, $2)",
+            ),
+            ("Option<i64>", "UPDATE users SET age = $1 WHERE id = 1"),
+            ("Option<String>", "UPDATE users SET note = $1 WHERE id = 1"),
+            // Unknown: a type this check does not know, an expression, a join.
+            ("uuid::Uuid", "SELECT id FROM users WHERE id = $1"),
+            ("String", "SELECT id FROM users WHERE id = $1 + 1"),
+            (
+                "String",
+                "SELECT u.id FROM users u JOIN users v ON v.id = u.id WHERE u.id = $1",
+            ),
+        ] {
+            ok_in(&with(params, good), d.path());
+        }
+        // A boolean meets a number only on PostgreSQL; SQLite stores booleans as integers.
+        fails_in(
+            &with("bool", "SELECT id FROM users WHERE age = $1"),
+            d.path(),
+            "argument $1 is declared `bool` (boolean) but meets column `age`",
+        );
+        ok_in(
+            r#"source = sqlite, targets = [sqlite], schema = "s.sql", params = (bool), "SELECT id FROM users WHERE age = $1""#,
+            d.path(),
+        );
+        // No `params`: nothing is checked, as before.
+        ok_in(
+            &call(r#"schema = "s.sql""#, "SELECT id FROM users WHERE id = $1"),
+            d.path(),
+        );
+    }
+
+    #[test]
+    fn params_must_be_a_parenthesised_list_and_agree_with_the_statement() {
+        let d = dir_with(&[("s.sql", DDL)]);
+        let with = |params: &str| {
+            call(
+                &format!(r#"schema = "s.sql", params = {params}"#),
+                "SELECT id FROM users WHERE id = $1",
+            )
+        };
+        fails_in(&with("i64"), d.path(), "expected `params = (T1, T2, ..)`");
+        fails_in(&with("(i64,,i64)"), d.path(), "an empty type in `params`");
+        fails_in(
+            &with("(i64, i64)"),
+            d.path(),
+            "declares 2 type(s) but the statement has 1 parameter(s)",
+        );
+        ok_in(&with("(i64)"), d.path());
+        // A comma inside angle brackets does not split a type.
+        ok_in(
+            &call(
+                r#"schema = "s.sql", params = (std::collections::HashMap<String, i64>)"#,
+                "SELECT id FROM users WHERE id = $1",
+            ),
+            d.path(),
         );
     }
 

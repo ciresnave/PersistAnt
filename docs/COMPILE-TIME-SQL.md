@@ -230,6 +230,12 @@ Open: whether asking for a target that was not embedded becomes a compile error 
 
 ## 7b. Argument types: a bound `$n` against its column (design, 2026-10-25; ROADMAP row 6, part 2)
 
+**Built 0.10.4, as a subset of the design below:** `params = (..)` is parsed by `persistant-macros` and the type
+tokens are mapped to classes in `checker.rs` (`i*`, `u*`, `f*` numeric; `bool`; `String`, `str`; `Option<T>` and
+references peeled; anything else unknown and passes), so `ToValue::KIND` and the tuple `to_values` below are NOT built.
+`IN (..)` and `BETWEEN` operands are checked like `=` (each is a certain comparison). A boolean against a number
+is reported only for a PostgreSQL source.
+
 **Problem.** `db.query_sql(&FIND, &[Value::Int(7)])` takes `Value`s at run time, so nothing at compile time knows
 what the caller binds. The statement does know what each `$n` must be: in `WHERE email = $1`, `INSERT INTO users
 (id, email) VALUES ($1, $2)` and `SET age = $1` the placeholder meets a plain column of known class (the
