@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.7
+
+### Added
+- `bench/opendal-speed-concurrent-64.tsv`: concurrent timings at value size 64 (`--tasks=1,4,16 --ops=50`), PM quiet window 2026-10-25 21:00-21:20Z (run 21:00:10-21:09:12Z), Windows, 32 threads, binary built from 0.11.6 at 20:52Z. 45 rows measured, 18 excluded (same split as the 256 and 4096 files); no row shows 50% or more CPU at either end of its `host=` reading. Data only, no code change.
+
 ## 0.11.6
 
 ### Added
