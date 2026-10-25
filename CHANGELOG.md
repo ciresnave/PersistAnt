@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.4
+
+### Added
+- `persistant_core::telemetry`: the one set of `tracing` names (`persist` span; fields `persist.kind`, `persist.backend`, `persist.op`, `persist.capability`, `persist.outcome`) from `docs/DESIGN-KINDS.md` section 5 (spec-to-roadmap audit row 8).
+- `persistant_kv::Traced` (feature `tracing`; facade feature `kv-tracing`): wraps any `KvBackend` and emits one `DEBUG` span per call. No key, value or error text is ever a field (the outcome is `ok` or the error kind). Tests capture the spans with a `tracing-subscriber` layer; a backend whose error quotes the key is the control that the leak check can fail. Blob and relational wrappers are not built yet.
+
 ## 0.11.3
 
 ### Added
