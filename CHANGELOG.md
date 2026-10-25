@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2
+
+### Changed
+- Docs: design for argument types in `sql!` (`docs/COMPILE-TIME-SQL.md` section 7b): opt-in `params = (i64, String)`, class-only check, agreed with the UniSQL lane; the build waits for UniSQL 0.27.0 (`CheckContext.param_types`).
+
 ## 0.10.1
 
 ### Changed
