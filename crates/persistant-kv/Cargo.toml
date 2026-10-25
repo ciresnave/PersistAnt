@@ -16,6 +16,8 @@ persistant-blob = { workspace = true }
 persistant-relational = { workspace = true }
 # Pure translation, no I/O. Published version only (CireSnave rule 2026-10-07).
 unisql = "0.27.0"
+# The concurrent speed harness spawns tasks and gates them on a barrier.
+tokio = { version = "1.53.2", features = ["rt", "sync"] }
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["rt", "macros"] }

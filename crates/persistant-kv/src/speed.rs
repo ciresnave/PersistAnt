@@ -21,7 +21,11 @@ use crate::conformance::Leaf;
 use crate::contract::{self, Eligibility};
 use crate::{BatchOp, KvBackend};
 use persistant_core::{Config, Reason};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+use tokio::sync::Barrier;
+use tokio::task::JoinSet;
 
 /// One thing worth timing, with the contract leaf it depends on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,6 +84,16 @@ impl Workload {
         }
     }
 
+    /// The id at `value_bytes`-byte values with `tasks` concurrent tasks: [`id_at`](Workload::id_at),
+    /// plus `.c<tasks>` when more than one task runs. One task keeps the id of the lone-caller run.
+    pub fn id_with(self, value_bytes: usize, tasks: usize) -> String {
+        if tasks > 1 {
+            format!("{}.c{tasks}", self.id_at(value_bytes))
+        } else {
+            self.id_at(value_bytes)
+        }
+    }
+
     /// The contract leaf the workload needs: no pass, no number.
     pub fn required(self) -> Leaf {
         match self {
@@ -97,6 +111,7 @@ impl Workload {
 pub use persistant_core::bench::{
     Comparison, Environment, Left, Outcome, Position, Profile, Ranked,
     SpeedParseError as ParseError, SpeedRow, SpeedTable, Stats, compare, compare_across,
+    host_snapshot,
 };
 
 /// The value size, in bytes, [`run`] times with.
@@ -171,6 +186,167 @@ pub async fn run_sized<K: KvBackend>(
     out
 }
 
+/// [`run_sized`] with `tasks` tasks hitting `target` at once, `ops_per_task` operations each (so
+/// `tasks * ops_per_task` samples per workload). This changes what is measured: a figure here is the
+/// per-operation latency *under that load* and the aggregate throughput, not the latency of a lone
+/// caller, so it is its own workload in the data file (`speed.kv.put.c8`; with a non-default size,
+/// `speed.kv.put.v4096.c8`). One task is exactly [`run_sized`].
+///
+/// - **No two tasks share a key** (each has its own prefix), so this measures what the backend does
+///   with concurrent callers, not how it resolves a conflict.
+/// - Every task finishes its setup, then all start together; `ops_per_sec` is the total operations over
+///   the wall-clock time from the first start to the last finish (not the sum of operation times).
+/// - `probe` describes the host (load, available RAM; see [`host_snapshot`]). It is called before
+///   and after each workload, outside the timed region, and the pair is recorded in the row's
+///   environment so a figure taken on a busy machine says so.
+///
+/// Only meaningful on a machine otherwise idle: it is a benchmark of the machine as much as the backend.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_concurrent<K: KvBackend + 'static>(
+    target: Arc<K>,
+    config: &Config,
+    env: &Environment,
+    workloads: &[Workload],
+    ops_per_task: u32,
+    tasks: usize,
+    value_bytes: usize,
+    probe: &dyn Fn() -> String,
+) -> Vec<SpeedRow> {
+    let tasks = tasks.max(1);
+    let value_bytes = value_bytes.max(1);
+    let mut out = Vec::with_capacity(workloads.len());
+    for w in workloads.iter().copied() {
+        let leaf = w.required();
+        let before = probe();
+        let outcome = match contract::check(target.as_ref(), &[leaf]).await {
+            Eligibility::Eligible => {
+                match time_concurrent(&target, w, ops_per_task, value_bytes, tasks).await {
+                    Ok(Some(s)) => Outcome::Measured(s),
+                    Ok(None) => Outcome::Excluded {
+                        leaf: leaf.id().to_string(),
+                        reason: Reason::Untested,
+                        note: "no operations were timed".to_string(),
+                    },
+                    Err(e) => Outcome::Excluded {
+                        leaf: leaf.id().to_string(),
+                        reason: Reason::Missing,
+                        note: format!("the workload failed on a backend that passed the leaf: {e}"),
+                    },
+                }
+            }
+            Eligibility::Excluded(ex) => {
+                let e = &ex[0];
+                Outcome::Excluded {
+                    leaf: e.leaf.id().to_string(),
+                    reason: e.reason,
+                    note: e.note.clone(),
+                }
+            }
+        };
+        let after = probe();
+        let mut env = env.clone();
+        env.host = Some(format!("start[{before}] end[{after}]"));
+        out.push(SpeedRow {
+            workload: w.id_with(value_bytes, tasks),
+            backend: target.backend().to_string(),
+            version: target.version().to_string(),
+            config: config.clone(),
+            env,
+            outcome,
+        });
+    }
+    out
+}
+
+async fn time_concurrent<K: KvBackend + 'static>(
+    b: &Arc<K>,
+    w: Workload,
+    ops_per_task: u32,
+    value_bytes: usize,
+    tasks: usize,
+) -> Result<Option<Stats>, crate::KvError> {
+    let gate = Arc::new(Barrier::new(tasks));
+    let mut set = JoinSet::new();
+    for t in 0..tasks {
+        let (b, gate) = (Arc::clone(b), Arc::clone(&gate));
+        set.spawn(async move {
+            let base = format!("persistant-speed/{}/t{t}/", w.id());
+            let passed = AtomicBool::new(false);
+            let run = drive(
+                b.as_ref(),
+                w,
+                ops_per_task,
+                value_bytes,
+                &base,
+                Some(&gate),
+                &passed,
+            )
+            .await;
+            match run {
+                Ok(r) => {
+                    cleanup(b.as_ref(), &r.keys).await;
+                    Ok(r)
+                }
+                Err(e) => {
+                    // A task that failed in setup still owes the others its place at the gate, or
+                    // they would wait for it forever.
+                    if !passed.load(Ordering::SeqCst) {
+                        gate.wait().await;
+                    }
+                    Err(e)
+                }
+            }
+        });
+    }
+    let mut samples = Vec::new();
+    let mut window: Option<(Instant, Instant)> = None;
+    let mut failure = None;
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(Ok(r)) => {
+                samples.extend(r.samples);
+                window = Some(match window {
+                    None => (r.start, r.end),
+                    Some((s, e)) => (s.min(r.start), e.max(r.end)),
+                });
+            }
+            Ok(Err(e)) => failure = failure.or(Some(e)),
+            Err(e) => {
+                failure = failure.or(Some(crate::KvError::Backend(format!("task failed: {e}"))));
+            }
+        }
+    }
+    if let Some(e) = failure {
+        return Err(e);
+    }
+    let total = samples.len() as u64;
+    let Some(mut stats) = Stats::from_samples(samples) else {
+        return Ok(None);
+    };
+    if let Some((start, end)) = window {
+        let wall = u64::try_from(end.duration_since(start).as_nanos()).unwrap_or(u64::MAX);
+        stats.ops_per_sec = total
+            .saturating_mul(1_000_000_000)
+            .checked_div(wall)
+            .unwrap_or(0);
+    }
+    Ok(Some(stats))
+}
+
+async fn cleanup<K: KvBackend>(b: &K, keys: &[String]) {
+    for k in keys {
+        let _ = b.delete(k).await; // best effort: leave a shared target as found
+    }
+}
+
+/// What one task did: the operation durations, the keys to clean up, and when its timed loop ran.
+struct Driven {
+    samples: Vec<u64>,
+    keys: Vec<String>,
+    start: Instant,
+    end: Instant,
+}
+
 async fn time<K: KvBackend>(
     b: &K,
     w: Workload,
@@ -178,6 +354,24 @@ async fn time<K: KvBackend>(
     value_bytes: usize,
 ) -> Result<Option<Stats>, crate::KvError> {
     let base = format!("persistant-speed/{}/", w.id());
+    let passed = AtomicBool::new(false);
+    let run = drive(b, w, iterations, value_bytes, &base, None, &passed).await?;
+    cleanup(b, &run.keys).await;
+    Ok(Stats::from_samples(run.samples))
+}
+
+/// One task's setup, then (after `gate`, when given) its timed loop. `passed` is set just before the
+/// task waits at the gate, so a caller can tell a setup failure from a failure in the loop.
+async fn drive<K: KvBackend>(
+    b: &K,
+    w: Workload,
+    iterations: u32,
+    value_bytes: usize,
+    base: &str,
+    gate: Option<&Barrier>,
+    passed: &AtomicBool,
+) -> Result<Driven, crate::KvError> {
+    let base = base.to_string();
     let value = vec![0x5A_u8; value_bytes];
     let mut us: Vec<u64> = Vec::with_capacity(iterations as usize);
     let mut keys: Vec<String> = Vec::new();
@@ -189,8 +383,20 @@ async fn time<K: KvBackend>(
             r
         }};
     }
+    let start: Instant;
+    // Called once, after setup and before the timed loop: wait for the other tasks, then start the clock.
+    macro_rules! gate {
+        () => {{
+            passed.store(true, Ordering::SeqCst);
+            if let Some(g) = gate {
+                g.wait().await;
+            }
+            start = Instant::now();
+        }};
+    }
     match w {
         Workload::Put | Workload::PutIfAbsent | Workload::Batch => {
+            gate!();
             for i in 0..iterations {
                 let k = format!("{base}{i:08}");
                 keys.push(k.clone());
@@ -229,6 +435,7 @@ async fn time<K: KvBackend>(
             let k = format!("{base}k");
             keys.push(k.clone());
             b.put(&k, value.clone(), None).await?;
+            gate!();
             for _ in 0..iterations {
                 timed!(b.get(&k).await?);
             }
@@ -238,6 +445,7 @@ async fn time<K: KvBackend>(
             keys.push(k.clone());
             let mut cur = value.clone();
             b.put(&k, cur.clone(), None).await?;
+            gate!();
             for i in 0..iterations {
                 let mut next = value.clone();
                 next[0] = (i % 251) as u8 + 1;
@@ -256,6 +464,7 @@ async fn time<K: KvBackend>(
                 keys.push(k.clone());
                 b.put(&k, value.clone(), None).await?;
             }
+            gate!();
             for _ in 0..iterations {
                 if w == Workload::OrderedScan {
                     timed!(b.ordered_scan(&base, None, 50).await?);
@@ -265,10 +474,13 @@ async fn time<K: KvBackend>(
             }
         }
     }
-    for k in &keys {
-        let _ = b.delete(k).await; // best effort: leave a shared target as found
-    }
-    Ok(Stats::from_samples(us))
+    let end = Instant::now();
+    Ok(Driven {
+        samples: us,
+        keys,
+        start,
+        end,
+    })
 }
 
 #[cfg(test)]
@@ -285,6 +497,7 @@ mod tests {
             date: "2026-10-16".to_string(),
             digest: Some("sha256:abc".to_string()),
             rerun: "cargo run --example speed".to_string(),
+            host: None,
         }
     }
 
@@ -323,6 +536,65 @@ mod tests {
         assert_eq!(cmp.len(), 3);
         assert!(cmp.iter().all(|c| c.ranked.len() == 1));
         assert_eq!(SpeedTable::parse(&t.to_tsv()).unwrap(), t);
+    }
+
+    #[tokio::test]
+    async fn concurrent_runs_are_their_own_workload_and_record_the_host() {
+        let e = env("m");
+        let kv = Arc::new(MemoryKv::new());
+        let probe = || "cpu_load_pct:3,ram_available_mb:1000".to_string();
+        let one = run_concurrent(
+            kv.clone(),
+            &Config::new(),
+            &e,
+            &[Workload::Put],
+            5,
+            1,
+            256,
+            &probe,
+        )
+        .await;
+        let many = run_concurrent(
+            kv.clone(),
+            &Config::new(),
+            &e,
+            &Workload::ALL,
+            10,
+            4,
+            256,
+            &probe,
+        )
+        .await;
+        // One task is the lone-caller id; four tasks are a different workload.
+        assert_eq!(one[0].workload, "speed.kv.put");
+        assert_eq!(many[0].workload, "speed.kv.put.c4");
+        assert_eq!(Workload::Put.id_with(4096, 8), "speed.kv.put.v4096.c8");
+        assert_eq!(many.len(), Workload::ALL.len());
+        for r in &many {
+            let Outcome::Measured(s) = &r.outcome else {
+                panic!("{}: {:?}", r.workload, r.outcome)
+            };
+            assert_eq!(
+                s.n, 40,
+                "{}: every task's operations are sampled",
+                r.workload
+            );
+            assert!(s.ops_per_sec > 0);
+            let host = r.env.host.as_deref().unwrap();
+            assert_eq!(
+                host,
+                "start[cpu_load_pct:3,ram_available_mb:1000] end[cpu_load_pct:3,ram_available_mb:1000]"
+            );
+        }
+        // The host facts survive the data file, and the tasks left nothing behind.
+        let t = SpeedTable::from_rows(many);
+        assert_eq!(SpeedTable::parse(&t.to_tsv()).unwrap(), t);
+        assert!(
+            kv.get("persistant-speed/speed.kv.put/t0/00000000")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

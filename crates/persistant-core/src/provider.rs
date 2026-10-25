@@ -576,6 +576,7 @@ mod tests {
             date: "2026-10-21".into(),
             digest: None,
             rerun: "cmd".into(),
+            host: None,
         };
         let stats = |p50| Stats {
             n: 5,
@@ -654,6 +655,7 @@ mod tests {
             date: "2026-10-21".into(),
             digest: None,
             rerun: "cmd".into(),
+            host: None,
         };
         let st = |p50| Stats {
             n: 5,
