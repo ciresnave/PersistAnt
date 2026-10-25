@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.4
+
+### Added
+- `sql!(.., params = (i64, String), "..")`: the Rust type of each `$n`, checked against the plain column it meets in `WHERE col = $n`, `INSERT INTO t (cols) VALUES ($1, ..)` and `UPDATE t SET col = $n`. Text against a number or boolean (and the reverse) is a compile error naming `$n`, the type and the column; a boolean against a number only for a PostgreSQL source. Unknown types (`Uuid`, dates, JSON, aliases), expressions and joins pass; nullability is not checked; the count must equal the statement's parameters. Opt-in: a call without `params` is unchanged. `docs/COMPILE-TIME-SQL.md` 7b.
+
+### Changed
+- UniSQL 0.26.0 -> 0.27.0 (`CheckContext.param_types`).
+
 ## 0.10.3
 
 ### Added
