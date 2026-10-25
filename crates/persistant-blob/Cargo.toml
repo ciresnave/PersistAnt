@@ -11,6 +11,13 @@ categories = ["filesystem", "development-tools::testing"]
 
 [dependencies]
 persistant-core = { workspace = true }
+# `Traced`, behind the `tracing` feature.
+tracing = { version = "0.1.44", optional = true }
+
+[features]
+tracing = ["dep:tracing"]
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["rt", "macros"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry"] }

@@ -2,17 +2,17 @@
 members = [".", "crates/persistant-core", "crates/persistant-blob", "crates/persistant-opendal", "crates/persistant-kv", "crates/persistant-relational", "crates/persistant-sqlx", "crates/persistant-migrate", "crates/persistant-macros"]
 
 [workspace.package]
-version = "0.11.4"
+version = "0.11.5"
 
 [workspace.dependencies]
-persistant-core = { version = "0.11.4", path = "crates/persistant-core" }
-persistant-blob = { version = "0.11.4", path = "crates/persistant-blob" }
-persistant-kv = { version = "0.11.4", path = "crates/persistant-kv" }
-persistant-opendal = { version = "0.11.4", path = "crates/persistant-opendal" }
-persistant-relational = { version = "0.11.4", path = "crates/persistant-relational" }
-persistant-sqlx = { version = "0.11.4", path = "crates/persistant-sqlx" }
-persistant-migrate = { version = "0.11.4", path = "crates/persistant-migrate" }
-persistant-macros = { version = "0.11.4", path = "crates/persistant-macros" }
+persistant-core = { version = "0.11.5", path = "crates/persistant-core" }
+persistant-blob = { version = "0.11.5", path = "crates/persistant-blob" }
+persistant-kv = { version = "0.11.5", path = "crates/persistant-kv" }
+persistant-opendal = { version = "0.11.5", path = "crates/persistant-opendal" }
+persistant-relational = { version = "0.11.5", path = "crates/persistant-relational" }
+persistant-sqlx = { version = "0.11.5", path = "crates/persistant-sqlx" }
+persistant-migrate = { version = "0.11.5", path = "crates/persistant-migrate" }
+persistant-macros = { version = "0.11.5", path = "crates/persistant-macros" }
 
 [package]
 name = "persistant"
@@ -64,6 +64,7 @@ persistant-macros = { workspace = true, optional = true }
 # Each feature re-exports one crate under the module named in `src/lib.rs`. None changes `Store`.
 core = ["dep:persistant-core"]
 blob = ["dep:persistant-blob", "core"]
+blob-tracing = ["blob", "persistant-blob/tracing"]
 relational = ["dep:persistant-relational"]
 kv = ["dep:persistant-kv", "blob", "relational", "core"]
 kv-tracing = ["kv", "persistant-kv/tracing"]
