@@ -30,6 +30,10 @@ pub struct Environment {
     pub digest: Option<String>,
     /// The command that reproduces this run.
     pub rerun: String,
+    /// What the host was doing at the start and end of the run (load, available RAM; see
+    /// [`host_snapshot`]), for runs where that decides whether a figure means anything. `None` when
+    /// not recorded. It is evidence, not part of [`comparable_key`](Environment::comparable_key).
+    pub host: Option<String>,
 }
 
 impl Environment {
@@ -43,6 +47,7 @@ impl Environment {
             date: today_utc(),
             digest,
             rerun: clean(&rerun.into(), true),
+            host: None,
         }
     }
 
@@ -60,8 +65,42 @@ impl Environment {
         if let Some(d) = &self.digest {
             c = c.with("digest", clean(d, false));
         }
+        if let Some(h) = &self.host {
+            c = c.with("host", clean(h, false));
+        }
         c
     }
+}
+
+/// What the host is doing right now, as `cpu_load_pct:N,ram_available_mb:N` (Windows: CPU load percent
+/// from WMI and free physical memory; Linux: the one-minute load average and `MemAvailable`), or
+/// `unavailable` when the OS gives neither. Costs a process launch on Windows, so call it outside any
+/// timed region. A benchmark records it at the start and end of a run: a figure taken while something
+/// else used the machine says so.
+pub fn host_snapshot() -> String {
+    if let (Ok(load), Ok(mem)) = (
+        std::fs::read_to_string("/proc/loadavg"),
+        std::fs::read_to_string("/proc/meminfo"),
+    ) {
+        let load1 = load.split_whitespace().next().unwrap_or("?");
+        let kb = mem
+            .lines()
+            .find_map(|l| l.strip_prefix("MemAvailable:"))
+            .and_then(|v| v.split_whitespace().next())
+            .and_then(|v| v.parse::<u64>().ok());
+        if let Some(kb) = kb {
+            return format!("load1:{load1},ram_available_mb:{}", kb / 1024);
+        }
+    }
+    let script = "$o=Get-CimInstance Win32_OperatingSystem; $c=(Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average; \"cpu_load_pct:$([int]$c),ram_available_mb:$([int]($o.FreePhysicalMemory/1024))\"";
+    std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|t| t.starts_with("cpu_load_pct:"))
+        .unwrap_or_else(|| "unavailable".to_string())
 }
 
 /// Make a value safe for the data file: no tab or newline, and (inside a `k=v;k=v` field) no `;`
@@ -259,6 +298,7 @@ impl SpeedRow {
             date: get("date")?,
             digest: env_cfg.get("digest").map(str::to_string),
             rerun: c[13].to_string(),
+            host: env_cfg.get("host").map(str::to_string),
         };
         let num = |i: usize| c[i].parse::<u64>().map_err(|_| bad("number"));
         let outcome = match c[4] {
@@ -535,6 +575,7 @@ mod tests {
             date: "2026-10-16".to_string(),
             digest: Some("sha256:abc".to_string()),
             rerun: "cargo run --example speed".to_string(),
+            host: None,
         }
     }
 

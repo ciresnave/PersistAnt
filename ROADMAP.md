@@ -44,8 +44,8 @@ blob (#45). Not done, in this order (queued by the PM 2026-10-16):
    Migrations as leaves are built (0.7.2, five `rel.migrate.*` leaves; MySQL cannot undo DDL; `rel.upsert_where` runs on MySQL as `ON DUPLICATE KEY UPDATE .. IF(..)` since 0.7.5). Relational speed workloads for `rel.savepoint` and `rel.upsert_where` are built (0.7.3). Concurrent migrators are a leaf (`rel.migrate.concurrent`, 0.7.4; MariaDB 0.7.7). Owner: the PersistAnt lane.
 3. **Synapse `tests/mailbox_suite` as a stage-1 consumer check**: the Synapse lane runs `run_all` on
    each eligible backend (Postgres, SQLite, MySQL) and reports which leaves it adds.
-4. Not covered by any stage yet: concurrency-aware speed (needs a quiet window from the PM; record host load and
-   available RAM at start and end of every result). Ranking by more than one workload: built (0.10.5,
+4. Not covered by any stage yet: concurrency-aware speed: harness built (0.11.0, `run_concurrent`, example
+   `speed_concurrent`, host load and RAM recorded at start and end of every result); the timing runs wait for a PM quiet window. Ranking by more than one workload: built (0.10.5,
    `compare_across`, no composite score). Value sizes: code built (0.10.3, `run_sized`); the sized data files wait for a quiet machine.
 
 Rules: benchmarks are tests. They run in CI or on the self-hosted runner, fail loudly on regression, and

@@ -418,6 +418,7 @@ mod tests {
             date: "2026-10-16".to_string(),
             digest: None,
             rerun: "re-run".to_string(),
+            host: None,
         }
     }
 
