@@ -431,6 +431,98 @@ pub fn compare(table: &SpeedTable) -> Vec<Comparison> {
     out
 }
 
+/// One backend's place in each of several workloads, side by side, in one environment. There is no
+/// combined score: how much each workload matters is the consumer's call, so the places are shown and
+/// never summed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Position {
+    /// Backend name.
+    pub backend: String,
+    /// Backend version.
+    pub version: String,
+    /// Backend configuration.
+    pub config: Config,
+    /// One entry per workload of the [`Profile`], same order: `Some((place, p50_ns))` with place 1 for
+    /// the fastest median (ties by name), `None` where the backend has no number for that workload
+    /// (excluded or not measured).
+    pub places: Vec<Option<(usize, u64)>>,
+    /// Backends that are at least as fast on every workload and strictly faster on one ("backend
+    /// version"). Only judged between backends with a number on every workload; empty for one that
+    /// lacks a number somewhere. A backend nobody dominates is on the Pareto front: no other is
+    /// better everywhere.
+    pub dominated_by: Vec<String>,
+}
+
+/// Several workloads in one environment: each backend's [`Position`] in all of them. The environment
+/// is part of the answer, as in [`Comparison`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Profile {
+    /// [`Environment::comparable_key`]: this holds here and nowhere else.
+    pub environment: String,
+    /// The workload ids asked for, in the order asked.
+    pub workloads: Vec<String>,
+    /// Every backend that has a number for at least one of them, ordered by name, version and
+    /// configuration (not by speed).
+    pub positions: Vec<Position>,
+}
+
+/// Compare backends over several `workloads` at once, per environment. Environments with no number for
+/// any of them are left out. Built on [`compare`]: the places are its rankings, unchanged.
+pub fn compare_across(table: &SpeedTable, workloads: &[&str]) -> Vec<Profile> {
+    let mut by_env: BTreeMap<String, Vec<Comparison>> = BTreeMap::new();
+    for c in compare(table) {
+        if workloads.contains(&c.workload.as_str()) {
+            by_env.entry(c.environment.clone()).or_default().push(c);
+        }
+    }
+    let mut out = Vec::new();
+    for (environment, comps) in by_env {
+        let mut who: BTreeMap<(String, String, String), Position> = BTreeMap::new();
+        for (wi, w) in workloads.iter().enumerate() {
+            let Some(c) = comps.iter().find(|c| c.workload == *w) else {
+                continue;
+            };
+            for (i, r) in c.ranked.iter().enumerate() {
+                let p = who
+                    .entry((r.backend.clone(), r.version.clone(), r.config.to_string()))
+                    .or_insert_with(|| Position {
+                        backend: r.backend.clone(),
+                        version: r.version.clone(),
+                        config: r.config.clone(),
+                        places: vec![None; workloads.len()],
+                        dominated_by: Vec::new(),
+                    });
+                p.places[wi] = Some((i + 1, r.stats.p50_ns));
+            }
+        }
+        let mut positions: Vec<Position> = who.into_values().collect();
+        // p50 on every workload, for the backends that have them all.
+        let full: Vec<Option<Vec<u64>>> = positions
+            .iter()
+            .map(|p| p.places.iter().map(|x| x.map(|(_, t)| t)).collect())
+            .collect();
+        for i in 0..positions.len() {
+            let Some(mine) = &full[i] else { continue };
+            for (j, other) in full.iter().enumerate() {
+                let Some(theirs) = other else { continue };
+                if i != j
+                    && theirs.iter().zip(mine).all(|(t, m)| t <= m)
+                    && theirs.iter().zip(mine).any(|(t, m)| t < m)
+                {
+                    let name = format!("{} {}", positions[j].backend, positions[j].version);
+                    positions[i].dominated_by.push(name);
+                }
+            }
+        }
+        out.push(Profile {
+            environment,
+            workloads: workloads.iter().map(|w| (*w).to_string()).collect(),
+            positions,
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,5 +622,59 @@ mod tests {
             .unwrap();
         let names: Vec<_> = server.ranked.iter().map(|r| r.backend.as_str()).collect();
         assert_eq!(names, ["slow", "fast"]);
+    }
+
+    fn measured_on(workload: &str, backend: &str, p50: u64) -> SpeedRow {
+        SpeedRow {
+            workload: workload.to_string(),
+            ..measured(backend, "laptop", p50)
+        }
+    }
+
+    #[test]
+    fn several_workloads_are_shown_side_by_side_with_no_combined_score() {
+        let rows = vec![
+            // a is fastest at get among a, b, c but slowest at put; b is the reverse; c is slower
+            // than b everywhere.
+            measured_on("speed.kv.get", "a", 10),
+            measured_on("speed.kv.get", "b", 20),
+            measured_on("speed.kv.get", "c", 30),
+            measured_on("speed.kv.put", "a", 900),
+            measured_on("speed.kv.put", "b", 100),
+            measured_on("speed.kv.put", "c", 500),
+            // d has no put number.
+            measured_on("speed.kv.get", "d", 5),
+            // A workload not asked for must not leak in.
+            measured_on("speed.kv.batch", "a", 1),
+        ];
+        let t = SpeedTable::from_rows(rows);
+        let prof = compare_across(&t, &["speed.kv.get", "speed.kv.put"]);
+        assert_eq!(prof.len(), 1);
+        let p = &prof[0];
+        assert_eq!(p.workloads, ["speed.kv.get", "speed.kv.put"]);
+        let names: Vec<_> = p.positions.iter().map(|x| x.backend.as_str()).collect();
+        assert_eq!(names, ["a", "b", "c", "d"], "ordered by name, not by speed");
+        let places = |n: &str| p.positions.iter().find(|x| x.backend == n).unwrap();
+        // Places are compare()'s own rankings: d is first at get, a is third at put.
+        assert_eq!(places("d").places, [Some((1, 5)), None]);
+        assert_eq!(places("a").places, [Some((2, 10)), Some((3, 900))]);
+        assert_eq!(places("b").places, [Some((3, 20)), Some((1, 100))]);
+        // c is worse than b on both: dominated. a and b each win one: on the front. d lacks a number,
+        // so nobody is judged against it and it is judged by nobody.
+        assert_eq!(places("c").dominated_by, ["b 1"]);
+        assert!(places("a").dominated_by.is_empty());
+        assert!(places("b").dominated_by.is_empty());
+        assert!(places("d").dominated_by.is_empty());
+        // Controls: a workload nobody ran gives nothing; one workload gives every backend a place.
+        assert_eq!(compare_across(&t, &["speed.kv.nothing"]).len(), 0);
+        assert_eq!(compare_across(&t, &["speed.kv.get"])[0].positions.len(), 4);
+    }
+
+    #[test]
+    fn profiles_never_cross_machines() {
+        let rows = vec![measured("a", "laptop", 10), measured("a", "server", 99)];
+        let prof = compare_across(&SpeedTable::from_rows(rows), &["speed.kv.get"]);
+        assert_eq!(prof.len(), 2);
+        assert!(prof.iter().all(|p| p.positions.len() == 1));
     }
 }

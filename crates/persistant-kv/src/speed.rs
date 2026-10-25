@@ -95,8 +95,8 @@ impl Workload {
 }
 
 pub use persistant_core::bench::{
-    Comparison, Environment, Left, Outcome, Ranked, SpeedParseError as ParseError, SpeedRow,
-    SpeedTable, Stats, compare,
+    Comparison, Environment, Left, Outcome, Position, Profile, Ranked,
+    SpeedParseError as ParseError, SpeedRow, SpeedTable, Stats, compare, compare_across,
 };
 
 /// The value size, in bytes, [`run`] times with.

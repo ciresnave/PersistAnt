@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.5
+
+### Added
+- `speed::compare_across(table, &[workload ids])` (`Profile`, `Position`): each backend's place in several workloads side by side, per environment, plus the backends another one beats on every workload (the Pareto front is whoever nobody beats). No combined score: how to weigh workloads is the consumer's call. `speed_report --across=ID,ID` prints it.
+
 ## 0.10.4
 
 ### Added
