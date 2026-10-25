@@ -6,8 +6,10 @@ give them, instead of silently doing something weaker.
 
 > Status: pre-1.0 (the API may change between minor versions). It has capability declaration with refusal, atomic replace on the `fs` and `memory`
 > backends, typed records with schema versions, and in-memory, capability-masking and
-> fault-injecting fakes, and a blocking facade (`persistant::blocking`) for synchronous code. Migrations,
-> locks and expiry are still to come. The main API is async.
+> fault-injecting fakes, and a blocking facade (`persistant::blocking`) for synchronous code. The same crate
+> re-exports the wider layer (key-value, relational, migrations, compile-time SQL) behind features: see
+> [`docs/DESIGN-KINDS.md`](https://github.com/ciresnave/PersistAnt/blob/main/docs/DESIGN-KINDS.md) and `ROADMAP.md`.
+> The main API is async.
 
 ## Usage
 
@@ -109,8 +111,10 @@ show that a program refuses a weaker production backend. Wrappers nest.
 4. **A blocking facade** for synchronous code.
 5. **OpenDAL types stay out of the public API**, so OpenDAL's breaking changes land in this crate.
 
-**Not yet:** migrations for non-SQL stores, lock helpers and expiry helpers. OpenDAL has no TTL and no
-locks, so those will be emulated, and the documentation will say what is emulated and where the limits are.
+**Not yet (on this OpenDAL `Store`):** migrations for non-SQL stores, lock helpers and expiry helpers.
+OpenDAL has no TTL and no locks, so those would be emulated, and the documentation would say what is
+emulated and where the limits are. (The kind crates have a process lock, leases and expiry on the key-value
+backends; see `ROADMAP.md`.)
 
 ## Direction
 
@@ -119,13 +123,14 @@ PersistAnt is to be the one persistence layer for every kind of persistence, rel
 included, organised as one capability vocabulary with a crate per kind. The design, with the evidence
 behind it and the decisions still open, is
 [`docs/DESIGN-KINDS.md`](https://github.com/ciresnave/PersistAnt/blob/main/docs/DESIGN-KINDS.md).
-Nothing in it is implemented yet; the list under "What it does not do" describes **this crate today**.
+Much of it is built since (key-value and relational kinds, SQLite, PostgreSQL, MySQL and MariaDB, migrations, compile-time SQL; `ROADMAP.md` says what is and is not); the list under "What it does not do" describes **the OpenDAL `Store` of this crate**.
 
 ## What it does not do
 
 - **No SQL, queries, joins or secondary indexes, yet.** This crate is blob and record-by-key only.
-  OpenDAL's `postgresql`, `sqlite` and `redis` services are key/value tables, not SQL. Relational support
-  is designed in `docs/DESIGN-KINDS.md` and is not built.
+  OpenDAL's `postgresql`, `sqlite` and `redis` services are key/value tables, not SQL. Relational
+  support is a separate part of this workspace (`persistant-relational`, `persistant-sqlx`), reached through
+  the `relational` re-export; the `Store` here does not use it.
 - **No multi-key transactions.** OpenDAL has none, so PersistAnt does not pretend to.
 - **No OS file locks, directory trees handed to other tools, or memory-mapped model files.**
 

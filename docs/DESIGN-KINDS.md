@@ -220,7 +220,7 @@ request grows by accident, and every request is a design review. Instead:
 | `blob.list` | ascending, paged, literal prefix | agentlife registry listing (`registry.rs:420-429`); auth KV prefix list | memory, s3, fs (directory scan) | prefix filtering done by this crate on OpenDAL (today) |
 | `blob.replace_atomic` | reader sees old or new, never a mix | 17 hand-written sites (§1.2) | fs with scratch dir, memory | refused without `atomic_write_dir` |
 | `blob.create_exclusive` | write only if absent | agentlife/lane-restart locks, synapse keystore | fs `create_new`, s3 if-not-exists | **not together with `replace_atomic` on fs via OpenDAL** (README, 0.4.7) |
-| `blob.create_exclusive_atomic` | exclusive *and* content fully visible on creation | synapse `write_new` by `hard_link` (`keystore.rs:606-615`) | a native fs path (hard link) — **not OpenDAL** | no OpenDAL service advertises it |
+| `blob.create_exclusive_atomic` | exclusive *and* content fully visible on creation | synapse `write_new` by `hard_link` (`keystore.rs:606-615`) | a native fs path (hard link) — **not OpenDAL**; *(0.9.41)* the `fs` driver does it by hard link | no OpenDAL service advertises it |
 | `blob.durable` | survives power loss (file and parent directory synced) | synapse and user-request sync the file; fuel, mlmf, lane-restart do not | none via OpenDAL (no parent-dir fsync, README *Limits*) | on only if the VM hard-reset test passed (below) |
 | `blob.file_mode` | owner-only permission on create | synapse (keystore, session cache, announce file, security log: 0600; keystore dir 0700) | native fs path | not in OpenDAL's capability struct (FIT §C row 10) |
 | `blob.append` | append bytes, optionally with torn-line repair | agentlife journal; 9 plain-append sites | fs | repair is ours |
@@ -704,6 +704,10 @@ Each will go to the PM as its own `[ASK]`, one at a time, with options and a rec
 Written 2026-10-14 at main 0.4.24 (0.4.23 is on crates.io: `persistant`, `persistant-core`,
 `-blob`, `-relational`, `-kv`, `-opendal`, `-sqlx`). Citations are crate paths at that commit.
 
+**Refreshed 2026-10-24 (main 0.10.0; PM spec-to-roadmap audit).** 11.1 and 11.2 are the 0.4.24
+snapshot with corrections marked *(0.9.x)*; 11.3 is rewritten to what is still not built. What
+was built since is in `ROADMAP.md` and `CHANGELOG.md`; the roadmap is the place for what is open.
+
 ### 11.1 What exists
 
 | Crate | Contents | Certified by |
@@ -711,10 +715,10 @@ Written 2026-10-14 at main 0.4.24 (0.4.23 is on crates.io: `persistant`, `persis
 | `persistant-core` | `CapabilityId`, `Config` (`k=v;k=v`), `Row`/`Matrix` (the §2.4 file: read, write, merge, the gate lookup), `Verdict` (an `on` row needs both controls), seed vocabulary with a contract per id | unit tests with negative controls |
 | `persistant-blob` | `BlobBackend` (read, write, delete, stat, list, create_exclusive, replace_atomic, append), `MemoryBlob` with injectable defects, `conformance::certify`, a runtime-agnostic concurrency harness | itself, against defects |
 | `persistant-opendal` | `OpendalBlob` (fs, memory), `ProcessLock` (`lock.process`, std only) | `matrix/opendal.tsv`; a child-kill test |
-| `persistant-kv` | `KvBackend`, `KvOnBlob` (strict or explicit in-place put), `KvOnRelational` (PostgreSQL SQL, BYTEA keys), `MemoryKv`, `Lease` (`lock.lease`) | `matrix/opendal.tsv`, `matrix/sqlx-postgres.tsv` |
+| `persistant-kv` | `KvBackend`, `KvOnBlob` (strict or explicit in-place put), `KvOnRelational` (PostgreSQL SQL, BYTEA keys; *(0.9.x)* translated by UniSQL for SQLite, MySQL and MariaDB), `MemoryKv`, `Lease` (`lock.lease`) | `matrix/opendal.tsv`, `matrix/sqlx-*.tsv` |
 | `persistant-relational` | the small `RelationalBackend`/`RelationalTx` trait, `Value`, `Row`, `RelError` (SQLSTATE classification) | via `persistant-sqlx` |
-| `persistant-sqlx` | `PgBackend` over sqlx 0.9 (`rust-version = "1.94"`, only this crate), `PgBackend::pool()` for `sqlx::query!` | a PostgreSQL 16 service container pinned by digest |
-| `persistant` | the original OpenDAL facade, **unchanged**; it does not yet use the crates above | its own tests |
+| `persistant-sqlx` | `PgBackend` over sqlx 0.9 (`rust-version = "1.94"`, only this crate), `PgBackend::pool()` for `sqlx::query!`; *(0.9.x)* SQLite, MySQL and MariaDB backends, the catalog readers, the sqlx bridge | PostgreSQL 16, MySQL 8.4 and MariaDB 11.4 service containers, bundled SQLite |
+| `persistant` | the original OpenDAL facade, **unchanged** (it does not use the crates above); *(0.9.x)* it also re-exports them behind features (D7 option A, `docs/FACADE-MIGRATION.md`). Also *(0.9.x)*: `persistant-migrate`, `persistant-macros` | its own tests |
 
 `matrix/*.tsv` are the recorded results. CI regenerates them on Linux and fails on any difference.
 
@@ -731,7 +735,7 @@ Written 2026-10-14 at main 0.4.24 (0.4.23 is on crates.io: `persistant`, `persis
    blob store had no atomic replace; a reader could see half a record and nothing in the row said
    so. It is now strict, with `with_in_place_put` as an explicit choice recorded as `put_mode`.
 3. **`lock.lease` cannot be built on blob** (safe reclaim of an expired lease needs
-   compare-and-delete). It moved onto `kv` and is real on PostgreSQL only.
+   compare-and-delete). It moved onto `kv` and is real on the SQL engines (PostgreSQL, MySQL, MariaDB and SQLite; the matrix files say which).
 4. **OpenDAL `fs` on a case-insensitive filesystem (Windows, default macOS) treats keys differing
    only in case as one key**, and a file `a/B` collides with a directory `a/b`. `blob.read` and
    `kv.get` were off there. Found by the first Windows CI run, not predicted. **Since 0.9.42
@@ -749,19 +753,18 @@ Written 2026-10-14 at main 0.4.24 (0.4.23 is on crates.io: `persistant`, `persis
 
 ### 11.3 Not built (so off, or unanswered)
 
-- **SQLite and MySQL backends.** `KvOnRelational` writes PostgreSQL SQL and refuses any other
-  dialect. The translator is UniSQL, which is private and unpublished; a `persistant-*` crate cannot
-  depend on it until CireSnave publishes it (§7). `unisql::Schema` and `analyse_with` exist; the
-  catalog reader that fills a `Schema` is planned in `persistant-sqlx` and not written.
-- **Migrations with checksums** (§5), **TLS policy and secret-handle connection config** (the URL is
-  a plain string today), the **typed-error vocabulary beyond SQLSTATE classes**.
+Refreshed 2026-10-24 at main 0.10.0. Done since the 0.4.24 text: SQLite, MySQL and MariaDB backends
+(UniSQL is on crates.io); the catalog readers; migrations with checksums, the `persistant-migrate`
+CLI; TLS policy and `ConnectionSecret`; `kv.take` and `kv.count`; the facade re-exports the kind crates
+behind features. Still not built, each a row in `ROADMAP.md` ("Spec-to-roadmap audit"):
+
+- **The typed-error vocabulary beyond SQLSTATE classes**, a secret handle beyond `ConnectionSecret`.
 - **Tests that need a crash or a power cut:** `blob.replace_atomic` as a whole, `blob.durable`,
-  `ops.pitr`, `storage.no_plaintext_at_rest`. They have no row, so they are off.
-- **`kv.batch_atomic`, `kv.take`, `kv.count`**: not offered. auth-framework declined `batch_atomic`
-  (its design needs no multi-key atomicity); `kv.take` is a single `DELETE ... RETURNING` on
-  PostgreSQL and not yet asked for.
-- **`blob.file_mode`, `blob.create_exclusive_atomic`, `blob.max_value_size`**: no test yet.
-- **Migrating consumers** (§7 steps 1 to 7). The `persistant` facade has not moved onto these
-  crates; that needs a design note and a ruling, because it changes a published API.
+  `ops.pitr`, `storage.no_plaintext_at_rest`. They have no row, so they are off. (For kv, `Process`
+  and `Machine` durability are verified; see the roadmap.)
+- **`kv.batch_atomic`**: not offered (auth-framework declined it; its design needs no multi-key atomicity).
+- **`blob.file_mode`, `blob.max_value_size`**: no test yet.
+- **Migrating consumers** (§7 steps 1 to 7) are each consumer lane's work. Moving `Store` itself onto
+  `BlobBackend` needs a ruling, because it changes a published API.
 - **Verification by other lanes' suites.** Synapse's mailbox suite proves composite behaviour, not
-  leaf ids; mapping its case names to leaf ids waits for it to merge and is not asserted from here.
+  leaf ids; running its `run_all` as a stage-1 check on each backend is a roadmap item.
