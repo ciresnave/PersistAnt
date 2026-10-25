@@ -19,7 +19,7 @@ the best backend for a capability. Four stages, each its own PR, in order:
 4. **`best backend for X` API.** Returns a **ranked list with the evidence**. The consumer states the
    capabilities it needs and a minimum durability class; the choice is explicit and logged, never silent.
 
-**Status (kv as of 0.5.6, 2026-10-16; main is 0.7.8).** All four stages are done for the **kv** kind:
+**Status (kv as of 0.5.6, 2026-10-16; main was 0.7.8 then).** All four stages are done for the **kv** kind:
 `contract::check` (#39, with the Synapse duplicate-sequence workload as a leaf, #40), `stats::measure`
 (#43), `speed` with data files in `bench/` (#46), `choose::choose` (#47). Stage 2 also exists for
 blob (#45). Not done, in this order (queued by the PM 2026-10-16):
@@ -55,7 +55,7 @@ regresses.
 
 Source: Humboldt `docs/ADOPTION-PLAN.md` at `8e1a304` (branch `docs/adoption-plan`, not yet on its main), section 2,
 read 2026-10-17. Ruling it cites (board 196, relayed by the PM): all projects adopt PersistAnt for persistence.
-**That plan describes PersistAnt at 0.4.32 (`5812cb7`); main is 0.7.9, so two of its gaps are already closed:**
+**That plan describes PersistAnt at 0.4.32 (`5812cb7`); main was 0.7.9 when read, so two of its gaps are already closed:**
 
 | Humboldt asks for | PersistAnt at 0.7.9 | Candidate |
 |---|---|---|
@@ -182,6 +182,6 @@ Read: `README.md`, `ROADMAP.md`, `SECURITY.md`, `bench/README.md`, `matrix/READM
 | 18 | A consumer-CI recipe: the same suite against the consumer's own production backend, beyond Synapse's `run_all` (stage 1, item 3) | `DESIGN-KINDS` 2.3 | open, after item 3 |
 | 19 | Migrations, lock helpers and expiry helpers for **non-SQL** stores (OpenDAL has no TTL or locks; emulated, with the limits documented). `lock.process` is done (0.9.27); `kv.lease` and `kv.purge_expired` are on the kv backends, not the blob stores | `README` "Not yet" | open |
 | 20 | `Store` reimplemented over `BlobBackend` (so `Needs` become matrix lookups), then deprecated. D7 option A is **done** (the facade re-exports the kind crates behind features); B and C are not ruled | `FACADE-MIGRATION` 4-6 | held: **a CireSnave call** (breaking for lightbulb and agentlife); not proposed |
-| 21 | Stale text that contradicts the code: `README` ("Nothing in it is implemented yet", "relational support ... is not built"), `DESIGN-KINDS` 11.1-11.3 and the 2.2 `blob.create_exclusive_atomic` row ("not OpenDAL", done by the driver since 0.9.41), `FACADE-MIGRATION` 2 (`create_if_absent` gap), and this file's own "main is 0.7.8" / "0.7.9" | all of the above | open, docs only |
+| 21 | Stale text that contradicts the code: `README` ("Nothing in it is implemented yet", "relational support ... is not built"), `DESIGN-KINDS` 11.1-11.3 and the 2.2 `blob.create_exclusive_atomic` row ("not OpenDAL", done by the driver since 0.9.41), `FACADE-MIGRATION` 2 (`create_if_absent` gap), and this file's own "main is 0.7.8" / "0.7.9" | all of the above | done for `README` and `DESIGN-KINDS` (0.10.1); `FACADE-MIGRATION` 2 was already current; this file's two version snapshots are now dated "was ... then" |
 
 Counts: 15 files read, 21 rows added, 1 needs a CireSnave call (row 20). Rows 14, 15, 16 and 17 are held by design, not by a person who is blocked.

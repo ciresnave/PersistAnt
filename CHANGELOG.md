@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.1
+
+### Changed
+- Docs: stale text corrected (PM audit row 21). `README.md` no longer says nothing of the wider layer is implemented or that relational support is not built; `docs/DESIGN-KINDS.md` section 11 is marked as a 0.4.24 snapshot with corrections, and 11.3 lists only what is still not built; `ROADMAP.md` dates its two old version snapshots.
+
 ## 0.10.0
 
 ### Breaking
