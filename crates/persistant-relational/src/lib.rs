@@ -20,6 +20,7 @@ pub mod choose;
 pub mod conformance;
 pub mod contract;
 mod error;
+mod fault;
 mod migrate;
 pub mod migrate_conformance;
 #[cfg(feature = "sql")]
@@ -35,6 +36,7 @@ mod value;
 
 pub use backend::{Isolation, RelationalBackend, RelationalTx};
 pub use error::RelError;
+pub use fault::{Faulty, FaultyTx};
 pub use migrate::{MigrateError, MigrateReport, Migrates, Migration};
 pub use secret::{ConnectionSecret, Redacted};
 pub use sweep::{SweepError, SweepReport, sweep};
