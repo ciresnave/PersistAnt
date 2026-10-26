@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.10
+
+### Added
+- `persistant_relational::Faulty` and `FaultyTx` (audit row 7, relational part; completes row 7): the relational twin of `persistant_kv::Faulty`. `fail_nth` fails the Nth `execute`, `query`, `begin`, `tx.execute`, `tx.query`, `tx.commit` or `tx.rollback` (or the Nth call of any) before it runs; `interrupt_nth` runs it and then returns the error, so an interrupted `tx.commit` commits while the caller is told it failed; `mask` answers `Unsupported`. Counts span the backend and its transactions. Tests use a counting fake and read back what actually ran or committed; the unwrapped fake is the control. It is a wrapper, not a fake database.
+
 ## 0.11.9
 
 ### Changed
