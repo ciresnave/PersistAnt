@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.9
+
+### Changed
+- `docs/PATENT-SWEEP.md`: the first-pass table's `unread` verdicts replaced by the second pass's (every one of those patents' independent claims was read there; US9582500B2 and US20140280259A1 are `design-around` conditions); WO2008115343A1 read (a vehicle crash-test sled, clear). Only the patents under "Still unread" remain unread. Docs only, prompted by the PM [NOTICE] of 2026-10-26 on CodeRipper 0.10.0's `patent-sweep-record` rule.
+
 ## 0.11.8
 
 ### Added
