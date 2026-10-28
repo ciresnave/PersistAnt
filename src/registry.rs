@@ -39,9 +39,13 @@
 //! is a fact of that binary, not a runtime accident.
 //!
 //! # What the handle serves
-//! This release's [`Handle`] serves the key-value kind only, so a provider qualifies on `kv.*`
-//! capabilities (and `lock.*` is not offered): a need for any other id is reported unmet rather than
-//! promised and not delivered.
+//! This release's [`Handle`] serves the key-value kind only. A provider is **listed** on `kv.*`,
+//! `blob.*` and `rel.*` capabilities alike: it has one matrix surface per kind it serves (`fs` the
+//! blob store under its key-value store, `sqlite` the relational database), the gate needs every id
+//! on one of them, and the durability shown is the weakest of the kinds the need names. A need for
+//! `blob.*` or `rel.*` ids that passes the gate is refused at open with
+//! [`OpenError::KindNotServed`] until the handle serves that kind
+//! (`docs/DESIGN-REGISTRY-KINDS.md`), rather than promised and not delivered. `lock.*` is not offered.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -186,6 +190,14 @@ pub enum OpenError {
         /// The directory that was probed.
         path: PathBuf,
     },
+    /// The gate passed for a kind this release lists but cannot yet open: the needs name `blob.*` or
+    /// `rel.*` capabilities and the handle serves the key-value kind only. Nothing was touched.
+    KindNotServed {
+        /// The id asked for.
+        id: &'static str,
+        /// The kind (`blob` or `rel`).
+        kind: &'static str,
+    },
     /// The backend failed to open.
     Open(String),
 }
@@ -221,6 +233,10 @@ impl fmt::Display for OpenError {
                 f,
                 "backend `{id}` cannot be used at {}: the filesystem there ignores case, so keys that differ only by case would share one file and one value. Choose `sqlite`, `sqlite-full`, `postgres`, `mysql` or `mariadb` (each needs its `registry-*` Cargo feature), or a directory on a case-sensitive filesystem",
                 path.display()
+            ),
+            OpenError::KindNotServed { id, kind } => write!(
+                f,
+                "backend `{id}` has every {kind}.* capability asked for, but this release's handle serves the key-value kind only"
             ),
             OpenError::Open(m) => write!(f, "could not open: {m}"),
         }
@@ -261,10 +277,20 @@ struct Spec {
     kv_backend: &'static str,
     /// Config facts the recorded rows must carry.
     facts: &'static [(&'static str, &'static str)],
+    /// The blob layer the key-value store sits on, if the provider also serves the blob kind:
+    /// its matrix backend name and config facts.
+    blob: Option<Layer>,
+    /// The relational layer the key-value store sits on, if the provider also serves the relational
+    /// kind.
+    rel: Option<Layer>,
     endpoint: fn() -> EndpointSpec,
     /// Plain-language notes shown with the provider, caveats included.
     notes: &'static [&'static str],
 }
+
+/// A layer a provider serves besides key-value: the matrix backend name and the config facts its rows
+/// must carry.
+type Layer = (&'static str, &'static [(&'static str, &'static str)]);
 
 fn specs() -> Vec<Spec> {
     #[allow(
@@ -277,6 +303,8 @@ fn specs() -> Vec<Spec> {
             title: "In-process memory",
             kv_backend: "kv-on-blob:opendal-memory",
             facts: &[("put_mode", "atomic")],
+            blob: Some(("opendal-memory", &[])),
+            rel: None,
             endpoint: || EndpointSpec::None,
             notes: &["Lost when the process exits: for tests and caches only."],
         },
@@ -285,6 +313,8 @@ fn specs() -> Vec<Spec> {
             title: "Files in a local directory",
             kv_backend: "kv-on-blob:opendal-fs",
             facts: &[("atomic_write_dir", "set"), ("put_mode", "atomic")],
+            blob: Some(("opendal-fs", &[("atomic_write_dir", "set")])),
+            rel: None,
             endpoint: || EndpointSpec::Path,
             notes: &[
                 "Opens from a directory path; writes go through a scratch directory beside it (`<dir>.persistant-atomic`) so a reader never sees a half-written value.",
@@ -301,6 +331,8 @@ fn specs() -> Vec<Spec> {
             title: "SQLite file (default durability)",
             kv_backend: "kv-on-relational:sqlite",
             facts: &[("dialect", "sqlite")],
+            blob: None,
+            rel: Some(("sqlite", &[("dialect", "sqlite")])),
             endpoint: || EndpointSpec::Path,
             notes: &[
                 "Survives the process exiting or crashing. SQLite's `synchronous` setting is not asserted here, so after a power cut the most recent writes may be lost.",
@@ -312,6 +344,8 @@ fn specs() -> Vec<Spec> {
             title: "SQLite file, synchronous=FULL (survives power loss)",
             kv_backend: "kv-on-relational:sqlite-full",
             facts: &[("dialect", "sqlite")],
+            blob: None,
+            rel: Some(("sqlite-full", &[("dialect", "sqlite")])),
             endpoint: || EndpointSpec::Path,
             notes: &[
                 "Same storage as `sqlite`, opened with journal_mode=WAL and synchronous=FULL set explicitly: each acknowledged write is flushed before it returns. Slower writes than `sqlite`.",
@@ -325,6 +359,8 @@ fn specs() -> Vec<Spec> {
         title: "PostgreSQL server",
         kv_backend: "kv-on-relational:postgres",
         facts: &[("dialect", "postgres")],
+        blob: None,
+        rel: Some(("postgres", &[("dialect", "postgres")])),
         endpoint: || EndpointSpec::Url {
             schemes: vec!["postgres".to_string(), "postgresql".to_string()],
         },
@@ -341,6 +377,8 @@ fn specs() -> Vec<Spec> {
             title: "MySQL server",
             kv_backend: "kv-on-relational:mysql",
             facts: &[("dialect", "mysql")],
+            blob: None,
+            rel: Some(("mysql", &[("dialect", "mysql")])),
             endpoint: || EndpointSpec::Url {
                 schemes: vec!["mysql".to_string()],
             },
@@ -355,6 +393,8 @@ fn specs() -> Vec<Spec> {
             title: "MariaDB server",
             kv_backend: "kv-on-relational:mariadb",
             facts: &[("dialect", "mariadb")],
+            blob: None,
+            rel: Some(("mariadb", &[("dialect", "mariadb")])),
             endpoint: || EndpointSpec::Url {
                 schemes: vec!["mysql".to_string(), "mariadb".to_string()],
             },
@@ -416,9 +456,40 @@ fn with_bound(config: &Config, bounded: bool) -> Config {
     c
 }
 
-/// The matrix row (version and config) for a spec, taken from the recorded rows, with the
-/// `call_bound` fact the program will open with. No row: an empty version, so every lookup is "no
-/// row" and the unmet list says so.
+/// The kinds of capability a need list names, told by the id's prefix: `blob.*`, `rel.*`, and
+/// everything else (`kv.*`, `lock.*`) as key-value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Kv,
+    Blob,
+    Rel,
+}
+
+fn kind_of(id: &str) -> Kind {
+    if id.starts_with("blob.") {
+        Kind::Blob
+    } else if id.starts_with("rel.") {
+        Kind::Rel
+    } else {
+        Kind::Kv
+    }
+}
+
+/// The kinds `needs` names, key-value first; key-value alone for an empty list.
+fn kinds_named(needs: &ProviderNeeds) -> Vec<Kind> {
+    let mut v: Vec<Kind> = [Kind::Kv, Kind::Blob, Kind::Rel]
+        .into_iter()
+        .filter(|k| needs.ids().iter().any(|i| kind_of(i.as_str()) == *k))
+        .collect();
+    if v.is_empty() {
+        v.push(Kind::Kv);
+    }
+    v
+}
+
+/// The matrix row (version and config) for a spec's key-value layer, taken from the recorded rows,
+/// with the `call_bound` fact the program will open with. No row: an empty version, so every lookup
+/// is "no row" and the unmet list says so.
 fn surface_for(s: &Spec, matrix: &Matrix, bounded: bool) -> Surface {
     let row = matrix.rows().iter().find(|r| {
         r.backend == s.kv_backend && s.facts.iter().all(|(k, v)| r.config.get(k) == Some(v))
@@ -439,19 +510,76 @@ fn surface_for(s: &Spec, matrix: &Matrix, bounded: bool) -> Surface {
     }
 }
 
-fn provider_for(s: &Spec, matrix: &Matrix, bounded: bool) -> Provider {
+/// As [`surface_for`], for a blob or relational layer (no `call_bound` fact: those rows carry none).
+fn layer_surface(layer: Layer, matrix: &Matrix) -> Surface {
+    let (backend, facts) = layer;
+    let row = matrix
+        .rows()
+        .iter()
+        .find(|r| r.backend == backend && facts.iter().all(|(k, v)| r.config.get(k) == Some(v)));
+    match row {
+        Some(r) => Surface::new(backend, r.version.clone(), r.config.clone()),
+        None => {
+            let mut c = Config::new();
+            for (k, v) in facts {
+                c = c.with(*k, *v);
+            }
+            Surface::new(backend, "", c)
+        }
+    }
+}
+
+/// One surface per kind in `kinds` that the spec serves, in that order (the first is the primary,
+/// which speed rows are matched on). A spec that serves none of them gets its key-value surface, so
+/// every id of the missing kind is "no row" and the unmet list says so: there is no closest match.
+fn surfaces_for(s: &Spec, matrix: &Matrix, bounded: bool, kinds: &[Kind]) -> Vec<(Kind, Surface)> {
+    let mut out: Vec<(Kind, Surface)> = kinds
+        .iter()
+        .filter_map(|k| match k {
+            Kind::Kv => Some((Kind::Kv, surface_for(s, matrix, bounded))),
+            Kind::Blob => s.blob.map(|l| (Kind::Blob, layer_surface(l, matrix))),
+            Kind::Rel => s.rel.map(|l| (Kind::Rel, layer_surface(l, matrix))),
+        })
+        .collect();
+    if out.is_empty() {
+        out.push((Kind::Kv, surface_for(s, matrix, bounded)));
+    }
+    out
+}
+
+/// The declared durability of a provider that serves several kinds: the **weakest** class among the
+/// surfaces, with that surface's basis. One unknown makes it unknown.
+fn weakest_declared(surfaces: &[(Kind, Surface)]) -> Option<Declared> {
+    let mut weakest: Option<Declared> = None;
+    for (kind, surface) in surfaces {
+        let d = match kind {
+            Kind::Kv => persistant_kv::choose::declared_durability(&surface.backend),
+            Kind::Blob => persistant_blob::choose::declared_durability(&surface.backend),
+            Kind::Rel => persistant_relational::choose::declared_durability(&surface.backend),
+        }?;
+        weakest = match weakest {
+            Some(w) if w.class <= d.class => Some(w),
+            _ => Some(d),
+        };
+    }
+    weakest
+}
+
+fn provider_for(s: &Spec, matrix: &Matrix, bounded: bool, kinds: &[Kind]) -> Provider {
+    let surfaces = surfaces_for(s, matrix, bounded, kinds);
+    let declared = weakest_declared(&surfaces);
     Provider::new(
         s.id,
-        vec![surface_for(s, matrix, bounded)],
-        persistant_kv::choose::declared_durability(s.kv_backend),
+        surfaces.into_iter().map(|(_, surface)| surface).collect(),
+        declared,
         (s.endpoint)(),
     )
 }
 
-fn table(matrix: &Matrix, bounded: bool) -> Vec<Provider> {
+fn table(matrix: &Matrix, bounded: bool, kinds: &[Kind]) -> Vec<Provider> {
     specs()
         .iter()
-        .map(|s| provider_for(s, matrix, bounded))
+        .map(|s| provider_for(s, matrix, bounded, kinds))
         .collect()
 }
 
@@ -524,7 +652,7 @@ impl Listing {
     }
 }
 
-fn listing(s: &Sorted, bounded: bool) -> Listing {
+fn listing(s: &Sorted, bounded: bool, kinds: &[Kind]) -> Listing {
     let spec = specs()
         .into_iter()
         .find(|x| x.id == s.provider.name())
@@ -542,6 +670,11 @@ fn listing(s: &Sorted, bounded: bool) -> Listing {
             if bounded {
                 n.push(
                     "kv.bounded_call: holds only when opened with a call bound (OpenOptions::call_bound); open_named refuses the open without one.",
+                );
+            }
+            if kinds.len() > 1 {
+                n.push(
+                    "The need names more than one kind: the durability shown is the weakest of them, and a speed ranking uses the first kind named.",
                 );
             }
             n
@@ -564,8 +697,9 @@ pub fn providers_ranked(
 ) -> Result<Vec<Listing>, Unmet> {
     let m = matrix();
     let bounded = wants_bound(needs);
-    let sorted = provider::select(&table(m, bounded), needs, m, speed)?;
-    Ok(sorted.iter().map(|s| listing(s, bounded)).collect())
+    let kinds = kinds_named(needs);
+    let sorted = provider::select(&table(m, bounded, &kinds), needs, m, speed)?;
+    Ok(sorted.iter().map(|s| listing(s, bounded, &kinds)).collect())
 }
 
 /// A key-value backend of whichever provider was opened. A closed set: the build decides which
@@ -770,8 +904,20 @@ pub async fn open_named_with(
             got: endpoint.kind(),
         });
     }
-    let p = provider_for(spec, m, options.call_bound.is_some());
+    let kinds = kinds_named(needs);
+    let p = provider_for(spec, m, options.call_bound.is_some(), &kinds);
     provider::providers(std::slice::from_ref(&p), needs, m).map_err(OpenError::Unmet)?;
+    // Listed, gated, but not yet opened: the handle serves the key-value kind only (the blob and
+    // relational handles are the next work orders of docs/DESIGN-REGISTRY-KINDS.md).
+    if let Some(kind) = kinds.iter().find(|k| **k != Kind::Kv) {
+        return Err(OpenError::KindNotServed {
+            id: spec.id,
+            kind: match kind {
+                Kind::Blob => "blob",
+                _ => "rel",
+            },
+        });
+    }
     let kv = open_kv(spec.id, endpoint, options.call_bound).await?;
     if kv.backend() != spec.kv_backend {
         return Err(OpenError::ServerMismatch {
