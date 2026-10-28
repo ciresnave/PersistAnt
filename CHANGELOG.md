@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.12
+
+### Added
+- `docs/DESIGN-REGISTRY-KINDS.md`: design note (no code) for serving the blob and relational kinds through the registry (audit row 11): providers list one surface per kind, `Handle::blob()` / `rel()`, a shared-namespace rule for `fs` (`kv/`, `kvx/` reserved), the second gate per kind, weakest-class durability, four work orders, and one finding (`sqlite-full` has no relational matrix rows). Three decisions asked of the PM.
+
 ## 0.11.11
 
 ### Changed
