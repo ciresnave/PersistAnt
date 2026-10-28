@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.11
+
+### Changed
+- Dependencies to their latest (portfolio rule): `unisql`, `unisql-core`, `unisql-embed` and `unisql-macro-core` 0.27.0 to 0.27.10 (minimum raised in each crate; includes 0.27.6, which refuses `date_trunc('week'|'quarter', <param>)` on MySQL/MariaDB: PersistAnt uses no `date_trunc`), and the lockfile's `asyncband`, `ctutils`, `rustix`, `xattr`. No API change here.
+
 ## 0.11.10
 
 ### Added
