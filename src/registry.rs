@@ -39,11 +39,12 @@
 //! is a fact of that binary, not a runtime accident.
 //!
 //! # What the handle serves
-//! This release's [`Handle`] serves the key-value kind only. A provider is **listed** on `kv.*`,
+//! This release's [`Handle`] serves the key-value kind (always) and the blob kind ([`Handle::blob`],
+//! present when the needs name a `blob.*` id). A provider is **listed** on `kv.*`,
 //! `blob.*` and `rel.*` capabilities alike: it has one matrix surface per kind it serves (`fs` the
 //! blob store under its key-value store, `sqlite` the relational database), the gate needs every id
 //! on one of them, and the durability shown is the weakest of the kinds the need names. A need for
-//! `blob.*` or `rel.*` ids that passes the gate is refused at open with
+//! `rel.*` ids that passes the gate is refused at open with
 //! [`OpenError::KindNotServed`] until the handle serves that kind
 //! (`docs/DESIGN-REGISTRY-KINDS.md`), rather than promised and not delivered. `lock.*` is not offered.
 
@@ -52,6 +53,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use persistant_blob::{BlobBackend, BlobError, Entry, KeyLayout, Page};
 use persistant_core::choose::{Declared, Durability, Need};
 use persistant_core::provider::{
     self, EndpointSpec, Provider, ProviderNeeds, Sorted, Surface, Unmet,
@@ -190,12 +192,12 @@ pub enum OpenError {
         /// The directory that was probed.
         path: PathBuf,
     },
-    /// The gate passed for a kind this release lists but cannot yet open: the needs name `blob.*` or
-    /// `rel.*` capabilities and the handle serves the key-value kind only. Nothing was touched.
+    /// The gate passed for a kind this release lists but cannot yet open: the needs name `rel.*`
+    /// capabilities and the handle does not serve that kind yet. Nothing was touched.
     KindNotServed {
         /// The id asked for.
         id: &'static str,
-        /// The kind (`blob` or `rel`).
+        /// The kind (`rel`).
         kind: &'static str,
     },
     /// The backend failed to open.
@@ -236,7 +238,7 @@ impl fmt::Display for OpenError {
             ),
             OpenError::KindNotServed { id, kind } => write!(
                 f,
-                "backend `{id}` has every {kind}.* capability asked for, but this release's handle serves the key-value kind only"
+                "backend `{id}` has every {kind}.* capability asked for, but this release's handle does not serve that kind yet"
             ),
             OpenError::Open(m) => write!(f, "could not open: {m}"),
         }
@@ -838,6 +840,109 @@ impl KvBackend for AnyKv {
 pub struct Handle {
     id: &'static str,
     kv: AnyKv,
+    blob: Option<AnyBlob>,
+}
+
+/// The key prefixes the key-value store keeps its own files under on the `fs` provider (`kvx/` the
+/// current layout, `kv/` a directory written by 0.9.41 or earlier).
+const RESERVED: [&str; 2] = ["kv", "kvx"];
+
+/// Whether `key` is one of the reserved names or lies under one.
+fn reserved(key: &str) -> Option<&'static str> {
+    RESERVED.into_iter().find(|r| {
+        key == *r
+            || key
+                .strip_prefix(r)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
+}
+
+fn refuse(key: &str, prefix: &str) -> BlobError {
+    BlobError::Backend(format!(
+        "key `{key}` is under `{prefix}/`, which the registry keeps for the key-value store; choose another key"
+    ))
+}
+
+/// The blob store of whichever provider was opened. It implements [`BlobBackend`], forwarding every
+/// method, so a program's calls do not name a backend.
+///
+/// The keys `kv`, `kvx` and anything under `kv/` or `kvx/` are **reserved** on every provider, not
+/// only on `fs` where the key-value store shares the directory: a program must not behave
+/// differently by the id in its configuration. A call naming a reserved key returns
+/// [`BlobError::Backend`] naming the prefix and touches nothing; a listing leaves reserved entries
+/// out and refuses a prefix that lies inside a reserved one.
+#[derive(Debug)]
+pub struct AnyBlob {
+    inner: OpendalBlob,
+}
+
+impl AnyBlob {
+    /// The facts a matrix row for this backend is recorded under.
+    pub fn config(&self) -> &Config {
+        self.inner.config()
+    }
+}
+
+fn check(key: &str) -> Result<(), BlobError> {
+    match reserved(key) {
+        Some(r) => Err(refuse(key, r)),
+        None => Ok(()),
+    }
+}
+
+impl BlobBackend for AnyBlob {
+    fn backend(&self) -> &str {
+        self.inner.backend()
+    }
+    fn version(&self) -> &str {
+        self.inner.version()
+    }
+    fn key_layout(&self) -> KeyLayout {
+        self.inner.key_layout()
+    }
+    async fn read(&self, key: &str) -> Result<Option<Vec<u8>>, BlobError> {
+        check(key)?;
+        self.inner.read(key).await
+    }
+    async fn write(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        check(key)?;
+        self.inner.write(key, bytes).await
+    }
+    async fn delete(&self, key: &str) -> Result<(), BlobError> {
+        check(key)?;
+        self.inner.delete(key).await
+    }
+    async fn stat(&self, key: &str) -> Result<Option<Entry>, BlobError> {
+        check(key)?;
+        self.inner.stat(key).await
+    }
+    async fn list(
+        &self,
+        prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Page, BlobError> {
+        // A prefix inside a reserved name (`kv/`, `kvx/a`) is refused; a shorter one (``, `k`) lists
+        // everything else.
+        if let Some(r) = reserved(prefix) {
+            return Err(refuse(prefix, r));
+        }
+        let mut page = self.inner.list(prefix, after, limit).await?;
+        page.entries.retain(|e| reserved(&e.key).is_none());
+        Ok(page)
+    }
+    async fn create_exclusive(&self, key: &str, bytes: Vec<u8>) -> Result<bool, BlobError> {
+        check(key)?;
+        self.inner.create_exclusive(key, bytes).await
+    }
+    async fn replace_atomic(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        check(key)?;
+        self.inner.replace_atomic(key, bytes).await
+    }
+    async fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        check(key)?;
+        self.inner.append(key, bytes).await
+    }
 }
 
 impl Handle {
@@ -849,6 +954,12 @@ impl Handle {
     /// The key-value store.
     pub fn kv(&self) -> &AnyKv {
         &self.kv
+    }
+
+    /// The blob store: `Some` exactly when the needs named a `blob.*` capability, so a program that
+    /// asked for none is not handed one it did not gate on.
+    pub fn blob(&self) -> Option<&AnyBlob> {
+        self.blob.as_ref()
     }
 
     /// The key-value store, owned: for a consumer that is generic over `K: KvBackend` and keeps the
@@ -907,15 +1018,12 @@ pub async fn open_named_with(
     let kinds = kinds_named(needs);
     let p = provider_for(spec, m, options.call_bound.is_some(), &kinds);
     provider::providers(std::slice::from_ref(&p), needs, m).map_err(OpenError::Unmet)?;
-    // Listed, gated, but not yet opened: the handle serves the key-value kind only (the blob and
-    // relational handles are the next work orders of docs/DESIGN-REGISTRY-KINDS.md).
-    if let Some(kind) = kinds.iter().find(|k| **k != Kind::Kv) {
+    // Listed and gated, but the relational handle is the next work order of
+    // docs/DESIGN-REGISTRY-KINDS.md: refuse before any I/O.
+    if kinds.contains(&Kind::Rel) {
         return Err(OpenError::KindNotServed {
             id: spec.id,
-            kind: match kind {
-                Kind::Blob => "blob",
-                _ => "rel",
-            },
+            kind: "rel",
         });
     }
     let kv = open_kv(spec.id, endpoint, options.call_bound).await?;
@@ -925,19 +1033,60 @@ pub async fn open_named_with(
             found: kv.backend().to_string(),
         });
     }
-    // Again, for what was actually opened.
+    let blob = if kinds.contains(&Kind::Blob) {
+        Some(open_blob(spec.id, endpoint)?)
+    } else {
+        None
+    };
+    // Again, for what was actually opened: one surface per kind the needs name, from the real
+    // `backend()` / `version()` / config of that object.
+    let kv_surface = Surface::new(
+        kv.backend(),
+        kv.version(),
+        with_bound(
+            &surface_for(spec, m, kv.call_bound().is_some()).config,
+            kv.call_bound().is_some(),
+        ),
+    );
+    let mut opened: Vec<(Kind, Surface)> = Vec::new();
+    if kinds.contains(&Kind::Kv) {
+        opened.push((Kind::Kv, kv_surface.clone()));
+    }
+    if let Some(b) = &blob {
+        opened.push((
+            Kind::Blob,
+            Surface::new(b.backend(), b.version(), b.config().clone()),
+        ));
+    }
+    let declared = weakest_declared(&opened);
     let actual = Provider::new(
         spec.id,
-        vec![Surface::new(
-            kv.backend(),
-            kv.version(),
-            with_bound(&p.primary().config, kv.call_bound().is_some()),
-        )],
-        persistant_kv::choose::declared_durability(kv.backend()),
+        opened.into_iter().map(|(_, surface)| surface).collect(),
+        declared,
         p.endpoint().clone(),
     );
     provider::providers(std::slice::from_ref(&actual), needs, m).map_err(OpenError::Unmet)?;
-    Ok(Handle { id: spec.id, kv })
+    Ok(Handle {
+        id: spec.id,
+        kv,
+        blob,
+    })
+}
+
+/// Open the blob store of provider `id`: the same directory the key-value store sits on for `fs`, a
+/// store of its own for `memory`. The scratch directory is the one the key-value store uses.
+fn open_blob(id: &str, endpoint: &Endpoint) -> Result<AnyBlob, OpenError> {
+    let open = |e: &dyn fmt::Display| OpenError::Open(e.to_string());
+    let inner = match (id, endpoint) {
+        ("memory", _) => OpendalBlob::memory().map_err(|e| open(&e))?,
+        ("fs", Endpoint::Path(root)) => {
+            let mut scratch = root.clone().into_os_string();
+            scratch.push(".persistant-atomic");
+            OpendalBlob::fs(root, Some(&PathBuf::from(scratch))).map_err(|e| open(&e))?
+        }
+        _ => return Err(OpenError::Open(format!("no blob opener for `{id}`"))),
+    };
+    Ok(AnyBlob { inner })
 }
 
 /// Open the key-value store of provider `id`. With a `bound`, the database backends are opened

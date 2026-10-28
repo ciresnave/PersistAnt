@@ -441,33 +441,133 @@ fn a_relational_need_lists_sqlite_and_not_the_blob_stores() {
     assert!(!ids.contains(&"sqlite-full"), "{ids:?}");
 }
 
+#[cfg(feature = "registry-sqlite")]
 #[tokio::test]
-async fn a_listed_blob_need_is_refused_at_open_until_the_handle_serves_it() {
+async fn a_listed_rel_need_is_refused_at_open_until_the_handle_serves_it() {
     let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("blobs");
-    let e = registry::open_named(
-        "fs",
-        &Endpoint::path(&root),
-        &blob_need(Durability::Process),
-    )
-    .await
-    .unwrap_err();
+    let file = dir.path().join("db").join("x.sqlite");
+    let needs = ProviderNeeds::new(
+        vec![id("rel.values"), id("rel.transaction")],
+        Durability::Volatile,
+    );
+    let e = registry::open_named("sqlite", &Endpoint::path(&file), &needs)
+        .await
+        .unwrap_err();
     assert!(
         matches!(
             e,
             OpenError::KindNotServed {
-                id: "fs",
-                kind: "blob"
+                id: "sqlite",
+                kind: "rel"
             }
         ),
         "{e:?}"
     );
-    assert!(e.to_string().contains("key-value kind only"), "{e}");
     // Nothing was touched.
-    assert!(!root.exists());
-    // Control: the same directory opens for a kv need.
-    registry::open_named("fs", &Endpoint::path(&root), &basic(Durability::Process))
+    assert!(!file.parent().unwrap().exists());
+}
+
+fn summary(rows: &[persistant::blob::conformance::Certified]) -> Vec<(String, bool)> {
+    rows.iter()
+        .map(|c| (c.leaf.id().to_string(), c.row.enabled))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_blob_handle_passes_the_same_contract_as_the_driver_on_memory_and_fs() {
+    use persistant::blob::BlobBackend;
+    use persistant::blob::conformance::certify;
+    use persistant::capability::Config;
+    use persistant::opendal_driver::OpendalBlob;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("blobs");
+    let direct_dir = dir.path().join("direct");
+    std::fs::create_dir_all(&direct_dir).unwrap();
+    let scratch = dir.path().join("direct.persistant-atomic");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let cases: [(&str, Endpoint, OpendalBlob); 2] = [
+        ("memory", Endpoint::None, OpendalBlob::memory().unwrap()),
+        (
+            "fs",
+            Endpoint::path(&root),
+            OpendalBlob::fs(&direct_dir, Some(&scratch)).unwrap(),
+        ),
+    ];
+    for (name, endpoint, direct) in cases {
+        let h = registry::open_named(name, &endpoint, &blob_need(Durability::Volatile))
+            .await
+            .unwrap();
+        let blob = h.blob().expect("a blob need gets a blob handle");
+        let through = certify(blob, blob.config(), &Config::new()).await;
+        let plain = certify(&direct, direct.config(), &Config::new()).await;
+        assert_eq!(summary(&through), summary(&plain), "{name}");
+        // Control: the contract ran (a result per leaf, and at least one on).
+        assert!(through.iter().any(|c| c.row.enabled), "{name}");
+        assert_eq!(blob.backend(), direct.backend());
+    }
+}
+
+#[tokio::test]
+async fn the_blob_handle_refuses_the_keys_the_key_value_store_keeps() {
+    use persistant::blob::BlobBackend;
+
+    let dir = tempfile::tempdir().unwrap();
+    for (name, endpoint) in [
+        ("memory", Endpoint::None),
+        ("fs", Endpoint::path(dir.path().join("b"))),
+    ] {
+        let both = ProviderNeeds::new(
+            vec![
+                id("kv.get"),
+                id("kv.put"),
+                id("blob.read"),
+                id("blob.write"),
+            ],
+            Durability::Volatile,
+        );
+        let h = registry::open_named(name, &endpoint, &both).await.unwrap();
+        let blob = h.blob().unwrap();
+        for key in ["kv", "kvx", "kv/a", "kvx/6b/x"] {
+            let e = blob.write(key, b"x".to_vec()).await.unwrap_err();
+            assert!(
+                e.to_string().contains("key-value store"),
+                "{name} {key}: {e}"
+            );
+            assert!(blob.read(key).await.is_err(), "{name} {key}");
+            assert!(blob.delete(key).await.is_err(), "{name} {key}");
+            assert!(blob.stat(key).await.is_err(), "{name} {key}");
+        }
+        assert!(blob.list("kv/", None, 10).await.is_err());
+        assert!(blob.list("kvx/", None, 10).await.is_err());
+        // Control: names that only start like a reserved one are ordinary keys.
+        for key in ["kvs/a", "kvx2", "kvx.txt", "k"] {
+            blob.write(key, b"ok".to_vec()).await.unwrap();
+            assert_eq!(
+                blob.read(key).await.unwrap().unwrap(),
+                b"ok",
+                "{name} {key}"
+            );
+        }
+        // The key-value store writes through the same directory, and a listing never shows it.
+        h.kv().put("some key", b"v".to_vec(), None).await.unwrap();
+        let page = blob.list("", None, 100).await.unwrap();
+        let keys: Vec<&str> = page.entries.iter().map(|e| e.key.as_str()).collect();
+        assert_eq!(keys, vec!["k", "kvs/a", "kvx.txt", "kvx2"], "{name}");
+        assert_eq!(h.kv().get("some key").await.unwrap().unwrap(), b"v");
+    }
+}
+
+#[tokio::test]
+async fn the_blob_handle_exists_only_for_a_need_that_named_a_blob_id() {
+    let h = registry::open_named("memory", &Endpoint::None, &basic(Durability::Volatile))
         .await
         .unwrap();
-    assert!(root.exists());
+    assert!(h.blob().is_none());
+    let h = registry::open_named("memory", &Endpoint::None, &blob_need(Durability::Volatile))
+        .await
+        .unwrap();
+    assert!(h.blob().is_some());
+    // The key-value store is always there (additive).
+    h.kv().put("k", b"v".to_vec(), None).await.unwrap();
 }

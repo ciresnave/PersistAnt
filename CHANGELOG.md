@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.14
+
+### Added
+- Registry, work order 2 of `docs/DESIGN-REGISTRY-KINDS.md` (audit row 11): `Handle::blob() -> Option<&AnyBlob>`, `Some` exactly when the needs named a `blob.*` id. `AnyBlob` wraps the OpenDAL store of `memory` / `fs` and implements `BlobBackend` (all nine operations and `key_layout`); `fs` opens the same directory the key-value store sits on. A needs list naming `blob.*` ids is no longer refused at open; one naming `rel.*` still is (`KindNotServed`, order 3). The second gate now builds one surface per kind from what was opened.
+- Reserved keys: `kv`, `kvx` and anything under `kv/` or `kvx/` are refused by `AnyBlob` with `BlobError::Backend` naming the prefix (the key-value store keeps its files there on `fs`); a listing leaves them out. Applied on `memory` too, so a program does not behave differently by the id in its configuration. PM-approved 2026-10-28.
+- Tests: the blob contract (`conformance::certify`) through `AnyBlob` gives the same leaves as the driver on `memory` and `fs`; reserved keys refused on every operation with lookalike names (`kvs/a`, `kvx2`) accepted as a control.
+
 ## 0.11.13
 
 ### Added
