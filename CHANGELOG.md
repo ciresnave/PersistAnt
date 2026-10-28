@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.16
+
+### Added
+- `easyants-card.toml` (the EasyAnts hub card, read from this repository on every hub build) and `examples/hello.rs`, the 10-line program it shows: open `memory` through the registry, put and get one key. CI runs the example (`cargo run --example hello`), and `tests/easyants_card.rs` checks the card against the hub rules (sentence length, the example exists, at most 10 lines shown, the range is the whole program). Stacked on 0.11.15 (#167).
+
 ## 0.11.15
 
 ### Added

@@ -49,6 +49,10 @@ jobs:
       - name: cargo test --locked persistant --features registry
         run: cargo test --locked -p persistant --features registry --test registry --no-fail-fast
 
+      # The README-sized example the EasyAnts card shows (easyants-card.toml): run, not only built.
+      - name: cargo run --locked persistant --example hello
+        run: cargo run --locked -q -p persistant --features registry --example hello
+
   msrv:
     name: MSRV (rust-version in Cargo.toml)
     runs-on: ubuntu-latest
