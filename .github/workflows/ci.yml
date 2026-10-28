@@ -49,6 +49,10 @@ jobs:
       - name: cargo test --locked persistant --features registry
         run: cargo test --locked -p persistant --features registry --test registry --no-fail-fast
 
+      # The README-sized example the EasyAnts card shows (easyants-card.toml): run, not only built.
+      - name: cargo run --locked persistant --example hello
+        run: cargo run --locked -q -p persistant --features registry --example hello
+
   msrv:
     name: MSRV (rust-version in Cargo.toml)
     runs-on: ubuntu-latest
@@ -411,4 +415,4 @@ jobs:
   portfolio:
     permissions:
       contents: read
-    uses: ciresnave/coderipper/.github/workflows/portfolio.yml@d14a22b67e5533d0188f067e01693878065ca071 # 0.9.14
+    uses: ciresnave/coderipper/.github/workflows/portfolio.yml@ee9c3950c510fae136d316fed3bd9ecda343cede # 0.9.24

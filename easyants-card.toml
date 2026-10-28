@@ -1,0 +1,8 @@
+name = "PersistAnt"
+sentence = "Say what storage guarantees your program needs; PersistAnt opens a backend that has them, or refuses."
+status = "ready"
+install_url = "https://crates.io/crates/persistant"
+install_snippet = "cargo add persistant --features registry"
+docs = "https://github.com/ciresnave/PersistAnt"
+example_path = "examples/hello.rs"
+example_lines = [2, 11]
