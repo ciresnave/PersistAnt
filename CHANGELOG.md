@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.13
+
+### Added
+- Registry, work order 1 of `docs/DESIGN-REGISTRY-KINDS.md` (audit row 11): providers are **listed** on `blob.*` and `rel.*` capabilities as well as `kv.*`. Each provider has one matrix surface per kind it serves (`memory` and `fs` the blob store under their key-value store, `sqlite`, `postgres`, `mysql` and `mariadb` their relational database), the first kind a need names is the primary surface, and the durability shown is the weakest of the kinds the need names. A kind a provider does not serve is "no row" and unmet, never a closest match.
+- `OpenError::KindNotServed`: a need on `blob.*` or `rel.*` that passes the gate is refused at open, before any I/O, until `Handle::blob()` / `rel()` exist (work orders 2 and 3). Until then the listing promises what open does not deliver for those kinds, and says so.
+- Known gap, pinned by a test: `sqlite-full` has no relational matrix rows (only `sqlite` does), so it is not listed for `rel.*` needs.
+
 ## 0.11.12
 
 ### Added

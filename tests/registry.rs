@@ -341,3 +341,133 @@ async fn sqlite_lists_kv_bounded_call_and_opens_bounded_only_with_a_bound() {
     .unwrap();
     assert_eq!(h.kv().call_bound(), None);
 }
+
+// ---- the blob and relational kinds are listed (docs/DESIGN-REGISTRY-KINDS.md, work order 1) ----
+
+fn blob_need(min: Durability) -> ProviderNeeds {
+    ProviderNeeds::new(
+        vec![id("blob.read"), id("blob.write"), id("blob.stat")],
+        min,
+    )
+}
+
+fn listed(needs: &ProviderNeeds) -> Vec<&'static str> {
+    registry::providers(needs)
+        .unwrap()
+        .iter()
+        .map(|l| l.id)
+        .collect()
+}
+
+#[test]
+fn a_blob_need_lists_the_blob_backends_and_no_sql_database() {
+    let ids = listed(&blob_need(Durability::Volatile));
+    assert!(ids.contains(&"memory") && ids.contains(&"fs"), "{ids:?}");
+    // Control: the same build lists SQL backends for a kv need, so their absence here is the need's doing.
+    let kv_ids = listed(&basic(Durability::Volatile));
+    #[cfg(feature = "registry-sqlite")]
+    {
+        assert!(kv_ids.contains(&"sqlite"), "{kv_ids:?}");
+        assert!(
+            !ids.contains(&"sqlite") && !ids.contains(&"sqlite-full"),
+            "{ids:?}"
+        );
+    }
+    assert!(kv_ids.len() >= ids.len());
+}
+
+#[test]
+fn the_durability_of_a_blob_need_is_the_blob_stores() {
+    // opendal-memory declares Volatile, opendal-fs Process.
+    let ids = listed(&blob_need(Durability::Process));
+    assert_eq!(ids, ["fs"]);
+    let e = registry::providers(&blob_need(Durability::Machine)).unwrap_err();
+    assert!(
+        e.providers
+            .iter()
+            .any(|p| p.provider == "fs" && p.durability.is_some()),
+        "{e}"
+    );
+}
+
+#[test]
+fn a_need_naming_two_kinds_is_met_only_where_both_are_served() {
+    let both = ProviderNeeds::new(
+        vec![id("kv.get"), id("kv.put"), id("blob.stat")],
+        Durability::Volatile,
+    );
+    let ids = listed(&both);
+    assert!(ids.contains(&"memory") && ids.contains(&"fs"), "{ids:?}");
+    #[cfg(feature = "registry-sqlite")]
+    assert!(!ids.contains(&"sqlite"), "{ids:?}");
+    let list = registry::providers(&both).unwrap();
+    assert!(
+        list.iter()
+            .all(|l| l.why().iter().any(|w| w.contains("weakest"))),
+        "a multi-kind need says whose durability is shown"
+    );
+}
+
+#[test]
+fn a_need_no_provider_serves_is_unmet_and_names_each_backends_missing_id() {
+    // Blob and relational at once: no provider has both layers.
+    let n = ProviderNeeds::new(
+        vec![id("blob.stat"), id("rel.transaction")],
+        Durability::Volatile,
+    );
+    let e = registry::providers(&n).unwrap_err();
+    let fs = e.providers.iter().find(|p| p.provider == "fs").unwrap();
+    assert!(
+        fs.missing
+            .iter()
+            .any(|(i, _)| i.as_str() == "rel.transaction")
+            && !fs.missing.iter().any(|(i, _)| i.as_str() == "blob.stat"),
+        "{e}"
+    );
+}
+
+#[cfg(feature = "registry-sqlite")]
+#[test]
+fn a_relational_need_lists_sqlite_and_not_the_blob_stores() {
+    let n = ProviderNeeds::new(
+        vec![id("rel.values"), id("rel.transaction")],
+        Durability::Volatile,
+    );
+    let ids = listed(&n);
+    assert!(ids.contains(&"sqlite"), "{ids:?}");
+    assert!(!ids.contains(&"memory") && !ids.contains(&"fs"), "{ids:?}");
+    // `sqlite-full` has no relational rows yet (docs/DESIGN-REGISTRY-KINDS.md 5.1): no row is off, so it is
+    // not listed. This pins the gap; certifying the relational leaves for it ends the gap and this line.
+    assert!(!ids.contains(&"sqlite-full"), "{ids:?}");
+}
+
+#[tokio::test]
+async fn a_listed_blob_need_is_refused_at_open_until_the_handle_serves_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("blobs");
+    let e = registry::open_named(
+        "fs",
+        &Endpoint::path(&root),
+        &blob_need(Durability::Process),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(
+            e,
+            OpenError::KindNotServed {
+                id: "fs",
+                kind: "blob"
+            }
+        ),
+        "{e:?}"
+    );
+    assert!(e.to_string().contains("key-value kind only"), "{e}");
+    // Nothing was touched.
+    assert!(!root.exists());
+    // Control: the same directory opens for a kv need.
+    registry::open_named("fs", &Endpoint::path(&root), &basic(Durability::Process))
+        .await
+        .unwrap();
+    assert!(root.exists());
+}
