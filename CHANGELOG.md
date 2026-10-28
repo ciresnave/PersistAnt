@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.15
+
+### Added
+- Registry, work order 3 of `docs/DESIGN-REGISTRY-KINDS.md` (audit row 11): `Handle::rel() -> Option<&AnyRel>`, `Some` exactly when the needs named a `rel.*` id. `AnyRel` is the enum of the built drivers (`sqlite`, `postgres`, `mysql`/`mariadb`, each plain and through `Bounded` when a call bound is given) and implements `RelationalBackend`; `AnyTx` implements `RelationalTx`. The second gate adds the relational surface from what was opened (backend, version, `dialect`). Tests: the relational contract through `AnyRel` equals the driver's on `sqlite`; statements, a rolled-back and a committed transaction, the call bound carried through; the same on each server in reach (CI containers).
+- `OpenError::KindNotServed` is no longer returned (every kind a provider is listed for now opens); the variant stays so a `match` written against 0.11.13 or 0.11.14 compiles.
+- Known gap, unchanged: `sqlite-full` has no relational matrix rows, so a `rel.*` need is not met by it.
+
 ## 0.11.14
 
 ### Added

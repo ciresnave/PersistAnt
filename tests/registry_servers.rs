@@ -186,3 +186,49 @@ async fn a_bounded_need_opens_a_server_only_with_a_bound() {
         roundtrip(&h).await;
     }
 }
+
+/// The relational handle of each server in reach: a statement, a rolled-back transaction, and the
+/// call bound carried through. Reads only (`SELECT`), so it leaves the shared server as it found it.
+#[tokio::test]
+async fn the_rel_handle_works_on_each_server_in_reach() {
+    use persistant::relational::{Isolation, RelationalBackend, RelationalTx};
+
+    let id = |s| CapabilityId::new(s).unwrap();
+    let rel_needs = ProviderNeeds::new(
+        vec![id("rel.values"), id("rel.transaction")],
+        Durability::Volatile,
+    );
+    let mut cases: Vec<(&str, String)> = Vec::new();
+    #[cfg(feature = "registry-postgres")]
+    if let Some(v) = url_var(
+        "PERSISTANT_TEST_DATABASE_URL",
+        "PERSISTANT_REQUIRE_DATABASE",
+    ) {
+        cases.push(("postgres", v));
+    }
+    #[cfg(feature = "registry-mysql")]
+    if let Some(v) = url_var("PERSISTANT_TEST_MYSQL_URL", "PERSISTANT_REQUIRE_MYSQL") {
+        let maria = std::env::var("PERSISTANT_TEST_MYSQL_FLAVOR").as_deref() == Ok("mariadb");
+        cases.push((if maria { "mariadb" } else { "mysql" }, v));
+    }
+    for (name, var) in cases {
+        let ep = Endpoint::url_env(&var);
+        let h = registry::open_named(name, &ep, &rel_needs).await.unwrap();
+        let rel = h.rel().expect("a rel need gets a relational handle");
+        assert_eq!(rel.backend(), name);
+        assert_eq!(rel.query("SELECT 1 AS one", &[]).await.unwrap().len(), 1);
+        let mut tx = rel.begin(Isolation::default()).await.unwrap();
+        assert_eq!(tx.query("SELECT 1 AS one", &[]).await.unwrap().len(), 1);
+        tx.rollback().await.unwrap();
+        // Control: a kv-only need gets no relational handle.
+        let k = registry::open_named(name, &ep, &needs(Durability::Volatile))
+            .await
+            .unwrap();
+        assert!(k.rel().is_none());
+        let opts = OpenOptions::new().call_bound(Duration::from_secs(10));
+        let b = registry::open_named_with(name, &ep, &rel_needs, &opts)
+            .await
+            .unwrap();
+        assert_eq!(b.rel().unwrap().call_bound(), Some(Duration::from_secs(10)));
+    }
+}

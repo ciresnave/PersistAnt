@@ -39,17 +39,19 @@
 //! is a fact of that binary, not a runtime accident.
 //!
 //! # What the handle serves
-//! This release's [`Handle`] serves the key-value kind (always) and the blob kind ([`Handle::blob`],
-//! present when the needs name a `blob.*` id). A provider is **listed** on `kv.*`,
+//! This release's [`Handle`] serves the key-value kind (always), the blob kind ([`Handle::blob`],
+//! present when the needs name a `blob.*` id) and the relational kind ([`Handle::rel`], present when
+//! they name a `rel.*` id). A provider is **listed** on `kv.*`,
 //! `blob.*` and `rel.*` capabilities alike: it has one matrix surface per kind it serves (`fs` the
 //! blob store under its key-value store, `sqlite` the relational database), the gate needs every id
 //! on one of them, and the durability shown is the weakest of the kinds the need names. A need for
-//! `rel.*` ids that passes the gate is refused at open with
-//! [`OpenError::KindNotServed`] until the handle serves that kind
-//! (`docs/DESIGN-REGISTRY-KINDS.md`), rather than promised and not delivered. `lock.*` is not offered.
+//! `lock.*` ids is reported unmet: `lock.*` is not offered.
 
 use std::fmt;
+use std::future::Future;
+use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -68,19 +70,21 @@ use persistant_opendal::OpendalBlob;
     feature = "registry-mysql"
 ))]
 use persistant_kv::KvOnRelational;
-use persistant_relational::ConnectionSecret;
+use persistant_relational::{
+    ConnectionSecret, Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
+};
 #[cfg(any(
     feature = "registry-sqlite",
     feature = "registry-postgres",
     feature = "registry-mysql"
 ))]
-use persistant_sqlx::Bounded;
+use persistant_sqlx::{Bounded, BoundedTx};
 #[cfg(feature = "registry-mysql")]
-use persistant_sqlx::MysqlBackend;
+use persistant_sqlx::{MysqlBackend, MysqlTx};
 #[cfg(feature = "registry-postgres")]
-use persistant_sqlx::PgBackend;
+use persistant_sqlx::{PgBackend, PgTx};
 #[cfg(feature = "registry-sqlite")]
-use persistant_sqlx::SqliteBackend;
+use persistant_sqlx::{SqliteBackend, SqliteTx};
 
 /// Where a provider is opened: what [`EndpointSpec`] asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,12 +196,13 @@ pub enum OpenError {
         /// The directory that was probed.
         path: PathBuf,
     },
-    /// The gate passed for a kind this release lists but cannot yet open: the needs name `rel.*`
-    /// capabilities and the handle does not serve that kind yet. Nothing was touched.
+    /// Not returned since 0.11.15 (every kind a provider is listed for is now opened); kept so a
+    /// `match` written against 0.11.13 or 0.11.14 still compiles. It meant: the gate passed for a
+    /// kind the handle did not yet serve, and nothing was touched.
     KindNotServed {
         /// The id asked for.
         id: &'static str,
-        /// The kind (`rel`).
+        /// The kind.
         kind: &'static str,
     },
     /// The backend failed to open.
@@ -835,12 +840,199 @@ impl KvBackend for AnyKv {
     }
 }
 
+/// The relational database of whichever provider was opened. A closed set: the build decides which
+/// variants exist. It implements [`RelationalBackend`], forwarding every method, so a program's
+/// calls do not name a backend; statements are still written in the dialect it reports
+/// ([`RelationalBackend::dialect`]).
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum AnyRel {
+    /// No relational provider is built into this binary; never constructed.
+    #[doc(hidden)]
+    Never(std::convert::Infallible),
+    /// `sqlite` and `sqlite-full`.
+    #[cfg(feature = "registry-sqlite")]
+    Sqlite(SqliteBackend),
+    /// `sqlite` and `sqlite-full`, opened with a call bound.
+    #[cfg(feature = "registry-sqlite")]
+    SqliteBounded(Bounded<SqliteBackend>),
+    /// `postgres`.
+    #[cfg(feature = "registry-postgres")]
+    Postgres(PgBackend),
+    /// `postgres`, opened with a call bound.
+    #[cfg(feature = "registry-postgres")]
+    PostgresBounded(Bounded<PgBackend>),
+    /// `mysql` and `mariadb`.
+    #[cfg(feature = "registry-mysql")]
+    Mysql(MysqlBackend),
+    /// `mysql` and `mariadb`, opened with a call bound.
+    #[cfg(feature = "registry-mysql")]
+    MysqlBounded(Bounded<MysqlBackend>),
+}
+
+/// A transaction of an [`AnyRel`]. Dropping it without `commit` rolls it back.
+#[non_exhaustive]
+pub enum AnyTx<'a> {
+    /// Never constructed (see [`AnyRel::Never`]); carries the lifetime when no driver is built in.
+    #[doc(hidden)]
+    Never(std::convert::Infallible, PhantomData<&'a ()>),
+    /// A `sqlite` transaction.
+    #[cfg(feature = "registry-sqlite")]
+    Sqlite(SqliteTx),
+    /// A bounded `sqlite` transaction.
+    #[cfg(feature = "registry-sqlite")]
+    SqliteBounded(BoundedTx<SqliteTx>),
+    /// A `postgres` transaction.
+    #[cfg(feature = "registry-postgres")]
+    Postgres(PgTx<'a>),
+    /// A bounded `postgres` transaction.
+    #[cfg(feature = "registry-postgres")]
+    PostgresBounded(BoundedTx<PgTx<'a>>),
+    /// A `mysql` or `mariadb` transaction.
+    #[cfg(feature = "registry-mysql")]
+    Mysql(MysqlTx),
+    /// A bounded `mysql` or `mariadb` transaction.
+    #[cfg(feature = "registry-mysql")]
+    MysqlBounded(BoundedTx<MysqlTx>),
+}
+
+macro_rules! each_rel {
+    ($self:ident, $r:ident => $e:expr) => {
+        match $self {
+            AnyRel::Never(n) => match *n {},
+            #[cfg(feature = "registry-sqlite")]
+            AnyRel::Sqlite($r) => $e,
+            #[cfg(feature = "registry-sqlite")]
+            AnyRel::SqliteBounded($r) => $e,
+            #[cfg(feature = "registry-postgres")]
+            AnyRel::Postgres($r) => $e,
+            #[cfg(feature = "registry-postgres")]
+            AnyRel::PostgresBounded($r) => $e,
+            #[cfg(feature = "registry-mysql")]
+            AnyRel::Mysql($r) => $e,
+            #[cfg(feature = "registry-mysql")]
+            AnyRel::MysqlBounded($r) => $e,
+        }
+    };
+}
+
+macro_rules! each_tx {
+    ($self:ident, $t:ident => $e:expr) => {
+        match $self {
+            // An `Infallible` is behind it, so this arm cannot run; `n` may be a reference or a value
+            // depending on the caller, hence no empty `match`.
+            AnyTx::Never(..) => unreachable!("AnyTx::Never is never constructed"),
+            #[cfg(feature = "registry-sqlite")]
+            AnyTx::Sqlite($t) => $e,
+            #[cfg(feature = "registry-sqlite")]
+            AnyTx::SqliteBounded($t) => $e,
+            #[cfg(feature = "registry-postgres")]
+            AnyTx::Postgres($t) => $e,
+            #[cfg(feature = "registry-postgres")]
+            AnyTx::PostgresBounded($t) => $e,
+            #[cfg(feature = "registry-mysql")]
+            AnyTx::Mysql($t) => $e,
+            #[cfg(feature = "registry-mysql")]
+            AnyTx::MysqlBounded($t) => $e,
+        }
+    };
+}
+
+#[cfg_attr(
+    not(any(
+        feature = "registry-sqlite",
+        feature = "registry-postgres",
+        feature = "registry-mysql"
+    )),
+    allow(
+        unused_variables,
+        reason = "with no relational driver built in, every arm but `Never` is compiled out"
+    )
+)]
+impl RelationalBackend for AnyRel {
+    type Tx<'a>
+        = AnyTx<'a>
+    where
+        Self: 'a;
+
+    fn backend(&self) -> &str {
+        each_rel!(self, r => r.backend())
+    }
+    fn version(&self) -> &str {
+        each_rel!(self, r => r.version())
+    }
+    fn dialect(&self) -> Dialect {
+        each_rel!(self, r => r.dialect())
+    }
+    async fn execute(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        each_rel!(self, r => r.execute(sql, params).await)
+    }
+    async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
+        each_rel!(self, r => r.query(sql, params).await)
+    }
+    async fn begin(&self, isolation: Isolation) -> Result<AnyTx<'_>, RelError> {
+        match self {
+            AnyRel::Never(n) => match *n {},
+            #[cfg(feature = "registry-sqlite")]
+            AnyRel::Sqlite(r) => Ok(AnyTx::Sqlite(r.begin(isolation).await?)),
+            #[cfg(feature = "registry-sqlite")]
+            AnyRel::SqliteBounded(r) => Ok(AnyTx::SqliteBounded(r.begin(isolation).await?)),
+            #[cfg(feature = "registry-postgres")]
+            AnyRel::Postgres(r) => Ok(AnyTx::Postgres(r.begin(isolation).await?)),
+            #[cfg(feature = "registry-postgres")]
+            AnyRel::PostgresBounded(r) => Ok(AnyTx::PostgresBounded(r.begin(isolation).await?)),
+            #[cfg(feature = "registry-mysql")]
+            AnyRel::Mysql(r) => Ok(AnyTx::Mysql(r.begin(isolation).await?)),
+            #[cfg(feature = "registry-mysql")]
+            AnyRel::MysqlBounded(r) => Ok(AnyTx::MysqlBounded(r.begin(isolation).await?)),
+        }
+    }
+    fn call_bound(&self) -> Option<Duration> {
+        each_rel!(self, r => r.call_bound())
+    }
+    async fn with_lock_held<'a>(
+        &'a self,
+        lock_sql: &'a str,
+        at_most: Duration,
+        during: Pin<Box<dyn Future<Output = ()> + Send + 'a>>,
+    ) -> Result<(), RelError> {
+        each_rel!(self, r => r.with_lock_held(lock_sql, at_most, during).await)
+    }
+}
+
+#[cfg_attr(
+    not(any(
+        feature = "registry-sqlite",
+        feature = "registry-postgres",
+        feature = "registry-mysql"
+    )),
+    allow(
+        unused_variables,
+        reason = "with no relational driver built in, every arm but `Never` is compiled out"
+    )
+)]
+impl RelationalTx for AnyTx<'_> {
+    async fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        each_tx!(self, t => t.execute(sql, params).await)
+    }
+    async fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
+        each_tx!(self, t => t.query(sql, params).await)
+    }
+    async fn commit(self) -> Result<(), RelError> {
+        each_tx!(self, t => t.commit().await)
+    }
+    async fn rollback(self) -> Result<(), RelError> {
+        each_tx!(self, t => t.rollback().await)
+    }
+}
+
 /// An opened backend. Use [`Handle::kv`] for backend-agnostic calls.
 #[derive(Debug)]
 pub struct Handle {
     id: &'static str,
     kv: AnyKv,
     blob: Option<AnyBlob>,
+    rel: Option<AnyRel>,
 }
 
 /// The key prefixes the key-value store keeps its own files under on the `fs` provider (`kvx/` the
@@ -962,6 +1154,12 @@ impl Handle {
         self.blob.as_ref()
     }
 
+    /// The relational database: `Some` exactly when the needs named a `rel.*` capability. Statements
+    /// are written in the dialect it reports.
+    pub fn rel(&self) -> Option<&AnyRel> {
+        self.rel.as_ref()
+    }
+
     /// The key-value store, owned: for a consumer that is generic over `K: KvBackend` and keeps the
     /// store (the handle's id is dropped; read it with [`Handle::id`] first if it is wanted).
     pub fn into_kv(self) -> AnyKv {
@@ -1018,14 +1216,6 @@ pub async fn open_named_with(
     let kinds = kinds_named(needs);
     let p = provider_for(spec, m, options.call_bound.is_some(), &kinds);
     provider::providers(std::slice::from_ref(&p), needs, m).map_err(OpenError::Unmet)?;
-    // Listed and gated, but the relational handle is the next work order of
-    // docs/DESIGN-REGISTRY-KINDS.md: refuse before any I/O.
-    if kinds.contains(&Kind::Rel) {
-        return Err(OpenError::KindNotServed {
-            id: spec.id,
-            kind: "rel",
-        });
-    }
     let kv = open_kv(spec.id, endpoint, options.call_bound).await?;
     if kv.backend() != spec.kv_backend {
         return Err(OpenError::ServerMismatch {
@@ -1035,6 +1225,11 @@ pub async fn open_named_with(
     }
     let blob = if kinds.contains(&Kind::Blob) {
         Some(open_blob(spec.id, endpoint)?)
+    } else {
+        None
+    };
+    let rel = if kinds.contains(&Kind::Rel) {
+        Some(open_rel(spec.id, endpoint, options.call_bound).await?)
     } else {
         None
     };
@@ -1058,6 +1253,17 @@ pub async fn open_named_with(
             Surface::new(b.backend(), b.version(), b.config().clone()),
         ));
     }
+    if let Some(r) = &rel {
+        let dialect = r.backend().to_string();
+        opened.push((
+            Kind::Rel,
+            Surface::new(
+                r.backend(),
+                r.version(),
+                Config::new().with("dialect", dialect),
+            ),
+        ));
+    }
     let declared = weakest_declared(&opened);
     let actual = Provider::new(
         spec.id,
@@ -1070,6 +1276,7 @@ pub async fn open_named_with(
         id: spec.id,
         kv,
         blob,
+        rel,
     })
 }
 
@@ -1087,6 +1294,58 @@ fn open_blob(id: &str, endpoint: &Endpoint) -> Result<AnyBlob, OpenError> {
         _ => return Err(OpenError::Open(format!("no blob opener for `{id}`"))),
     };
     Ok(AnyBlob { inner })
+}
+
+/// Open the relational database of provider `id`, plain or through `Bounded`. The tables of the
+/// key-value store were created first (by [`open_kv`]), so a bound never covers setup.
+async fn open_rel(
+    id: &str,
+    endpoint: &Endpoint,
+    bound: Option<Duration>,
+) -> Result<AnyRel, OpenError> {
+    #[cfg(any(
+        feature = "registry-sqlite",
+        feature = "registry-postgres",
+        feature = "registry-mysql"
+    ))]
+    let open = |e: &dyn fmt::Display| OpenError::Open(e.to_string());
+    match (id, endpoint) {
+        #[cfg(feature = "registry-sqlite")]
+        ("sqlite" | "sqlite-full", Endpoint::Path(file)) => {
+            let db = if id == "sqlite-full" {
+                SqliteBackend::open_durable(file).await
+            } else {
+                SqliteBackend::open(file).await
+            }
+            .map_err(|e| open(&e))?;
+            Ok(match bound {
+                None => AnyRel::Sqlite(db),
+                Some(b) => AnyRel::SqliteBounded(Bounded::new(db, b)),
+            })
+        }
+        #[cfg(feature = "registry-postgres")]
+        ("postgres", Endpoint::Url(_) | Endpoint::Secret(_)) => {
+            let url = endpoint.url()?.unwrap_or_default();
+            let db = PgBackend::connect(&url).await.map_err(|e| open(&e))?;
+            Ok(match bound {
+                None => AnyRel::Postgres(db),
+                Some(b) => AnyRel::PostgresBounded(Bounded::new(db, b)),
+            })
+        }
+        #[cfg(feature = "registry-mysql")]
+        ("mysql" | "mariadb", Endpoint::Url(_) | Endpoint::Secret(_)) => {
+            let url = endpoint.url()?.unwrap_or_default();
+            let db = MysqlBackend::connect(&url).await.map_err(|e| open(&e))?;
+            Ok(match bound {
+                None => AnyRel::Mysql(db),
+                Some(b) => AnyRel::MysqlBounded(Bounded::new(db, b)),
+            })
+        }
+        _ => {
+            let _ = (endpoint, bound);
+            Err(OpenError::Open(format!("no relational opener for `{id}`")))
+        }
+    }
 }
 
 /// Open the key-value store of provider `id`. With a `bound`, the database backends are opened
@@ -1175,6 +1434,9 @@ async fn open_kv(
                 }
             }
         }
-        _ => Err(OpenError::Open(format!("no opener for `{id}`"))),
+        _ => {
+            let _ = bound;
+            Err(OpenError::Open(format!("no opener for `{id}`")))
+        }
     }
 }
