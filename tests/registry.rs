@@ -442,29 +442,129 @@ fn a_relational_need_lists_sqlite_and_not_the_blob_stores() {
 }
 
 #[cfg(feature = "registry-sqlite")]
-#[tokio::test]
-async fn a_listed_rel_need_is_refused_at_open_until_the_handle_serves_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("db").join("x.sqlite");
-    let needs = ProviderNeeds::new(
+fn rel_need() -> ProviderNeeds {
+    ProviderNeeds::new(
         vec![id("rel.values"), id("rel.transaction")],
         Durability::Volatile,
-    );
-    let e = registry::open_named("sqlite", &Endpoint::path(&file), &needs)
+    )
+}
+
+#[cfg(feature = "registry-sqlite")]
+#[tokio::test]
+async fn the_rel_handle_passes_the_same_contract_as_the_driver() {
+    use persistant::capability::Config;
+    use persistant::relational::RelationalBackend;
+    use persistant::relational::conformance::certify;
+    use persistant::sqlx_driver::SqliteBackend;
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("x.sqlite");
+    let h = registry::open_named("sqlite", &Endpoint::path(&file), &rel_need())
+        .await
+        .unwrap();
+    let rel = h.rel().expect("a rel need gets a relational handle");
+    let direct = SqliteBackend::open(&dir.path().join("direct.sqlite"))
+        .await
+        .unwrap();
+    let through = certify(
+        rel,
+        &Config::new().with("dialect", "sqlite"),
+        &Config::new(),
+    )
+    .await;
+    let plain = certify(
+        &direct,
+        &Config::new().with("dialect", "sqlite"),
+        &Config::new(),
+    )
+    .await;
+    let sum = |rows: &[persistant::relational::conformance::Certified]| -> Vec<(String, bool)> {
+        rows.iter()
+            .map(|c| (c.leaf.id().to_string(), c.row.enabled))
+            .collect()
+    };
+    assert_eq!(sum(&through), sum(&plain));
+    // Control: the contract ran, and something passed.
+    assert!(through.iter().any(|c| c.row.enabled));
+    assert_eq!(rel.backend(), direct.backend());
+}
+
+#[cfg(feature = "registry-sqlite")]
+#[tokio::test]
+async fn the_rel_handle_runs_statements_and_transactions_and_exists_only_when_asked_for() {
+    use persistant::relational::{Isolation, RelationalBackend, RelationalTx, Value};
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("x.sqlite");
+    // A kv-only need: no relational handle (the kv store is there regardless).
+    let h = registry::open_named(
+        "sqlite",
+        &Endpoint::path(&file),
+        &basic(Durability::Volatile),
+    )
+    .await
+    .unwrap();
+    assert!(h.rel().is_none());
+    drop(h);
+
+    let h = registry::open_named("sqlite", &Endpoint::path(&file), &rel_need())
+        .await
+        .unwrap();
+    let rel = h.rel().unwrap();
+    assert_eq!(rel.dialect(), persistant::relational::Dialect::Sqlite);
+    assert_eq!(rel.call_bound(), None);
+    rel.execute("CREATE TABLE t (a INTEGER)", &[])
+        .await
+        .unwrap();
+    // A rolled-back transaction leaves nothing; a committed one does.
+    let mut tx = rel.begin(Isolation::default()).await.unwrap();
+    tx.execute("INSERT INTO t (a) VALUES (?)", &[Value::Int(1)])
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    assert!(rel.query("SELECT a FROM t", &[]).await.unwrap().is_empty());
+    let mut tx = rel.begin(Isolation::default()).await.unwrap();
+    tx.execute("INSERT INTO t (a) VALUES (?)", &[Value::Int(2)])
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(rel.query("SELECT a FROM t", &[]).await.unwrap().len(), 1);
+    // The key-value store shares the file and is untouched by the table.
+    h.kv().put("k", b"v".to_vec(), None).await.unwrap();
+    assert_eq!(h.kv().get("k").await.unwrap().unwrap(), b"v");
+
+    // A call bound is carried through to the relational handle.
+    let opts = OpenOptions::new().call_bound(Duration::from_secs(7));
+    let b = registry::open_named_with("sqlite", &Endpoint::path(&file), &rel_need(), &opts)
+        .await
+        .unwrap();
+    assert_eq!(b.rel().unwrap().call_bound(), Some(Duration::from_secs(7)));
+    let mut tx = b.rel().unwrap().begin(Isolation::default()).await.unwrap();
+    assert_eq!(tx.query("SELECT a FROM t", &[]).await.unwrap().len(), 1);
+    tx.rollback().await.unwrap();
+}
+
+#[cfg(feature = "registry-sqlite")]
+#[tokio::test]
+async fn blob_and_rel_together_open_both_and_a_rel_need_on_a_blob_store_is_refused_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("blobs");
+    let e = registry::open_named("fs", &Endpoint::path(&root), &rel_need())
         .await
         .unwrap_err();
-    assert!(
-        matches!(
-            e,
-            OpenError::KindNotServed {
-                id: "sqlite",
-                kind: "rel"
-            }
-        ),
-        "{e:?}"
+    assert!(matches!(e, OpenError::Unmet(_)), "{e:?}");
+    assert!(!root.exists());
+    let file = dir.path().join("y.sqlite");
+    let both = ProviderNeeds::new(
+        vec![id("rel.values"), id("blob.read")],
+        Durability::Volatile,
     );
-    // Nothing was touched.
-    assert!(!file.parent().unwrap().exists());
+    // No provider serves blob and rel both (sqlite has no blob row): unmet, nothing opened.
+    let e = registry::open_named("sqlite", &Endpoint::path(&file), &both)
+        .await
+        .unwrap_err();
+    assert!(matches!(e, OpenError::Unmet(_)), "{e:?}");
+    assert!(!file.exists());
 }
 
 fn summary(rows: &[persistant::blob::conformance::Certified]) -> Vec<(String, bool)> {
