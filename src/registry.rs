@@ -709,6 +709,17 @@ pub fn providers_ranked(
     Ok(sorted.iter().map(|s| listing(s, bounded, &kinds)).collect())
 }
 
+/// `capant`'s account of provider `id` against `needs`: one line per need, exactly as
+/// `Evaluation::explain` renders it (`kv.ttl: yes (probe ..., ...)`), whether or not the provider
+/// qualified. `None` for an id this build does not offer. A caller that shows a reason per backend
+/// (ConfigurAnt joins these lines with `"; "`) uses this instead of building its own wording.
+pub fn explain(needs: &ProviderNeeds, id: &str) -> Option<Vec<String>> {
+    let m = matrix();
+    let bounded = wants_bound(needs);
+    let kinds = kinds_named(needs);
+    provider::explain(&table(m, bounded, &kinds), needs, m, id)
+}
+
 /// A key-value backend of whichever provider was opened. A closed set: the build decides which
 /// variants exist. It implements [`KvBackend`], forwarding every method, so a program's calls do not
 /// name a backend.

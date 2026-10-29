@@ -408,6 +408,21 @@ pub fn providers(
     Ok(ok.into_iter().map(|i| table[i].clone()).collect())
 }
 
+/// `capant`'s own account of one provider against `needs`: one line per need, in the words of
+/// `Evaluation::explain` (`kv.ttl: yes (probe ..., ...)`, `kv.ttl: unverified ...`), not reworded here.
+/// `None` when no provider in `table` has that name (an empty list would read as "nothing needed").
+/// For callers that show a reason per provider, whether it qualified or not.
+pub fn explain(
+    table: &[Provider],
+    needs: &ProviderNeeds,
+    matrix: &Matrix,
+    name: &str,
+) -> Option<Vec<String>> {
+    let i = table.iter().position(|p| p.name == name)?;
+    let (ev, _) = evaluate(table, needs, matrix);
+    ev.explain(&i.to_string())
+}
+
 /// Order `qualified` (the result of [`providers`]) with [`choose`](crate::choose::choose): fastest
 /// median first for `need.rank_by` in `need.environment`, matched on each provider's primary surface.
 /// Eligibility comes from the recorded rows already checked, so `need.leaves` is not consulted. A
@@ -636,6 +651,30 @@ mod tests {
         let text = e.to_string();
         assert!(text.contains("[a: kv.ttl unverified(no row)]"), "{text}");
         assert!(text.contains("[b: kv.get off(wrong)]"), "{text}");
+    }
+
+    #[test]
+    fn explain_gives_one_line_per_need_as_capant_renders_it() {
+        let table = [
+            prov("a", &["a"], decl(Durability::Machine)),
+            prov("b", &["b"], decl(Durability::Machine)),
+        ];
+        let m = matrix(&[
+            ("kv.get", "a", true),
+            ("kv.ttl", "a", true),
+            ("kv.get", "b", true),
+        ]);
+        let n = needs(&["kv.get", "kv.ttl"], Durability::Volatile);
+        let a = explain(&table, &n, &m, "a").unwrap();
+        assert_eq!(a.len(), 2, "{a:?}");
+        assert!(a[0].starts_with("kv.get: yes"), "{a:?}");
+        assert!(a[1].starts_with("kv.ttl: yes"), "{a:?}");
+        // Negative control: `b` has no kv.ttl row, so its line says unverified, not yes.
+        let b = explain(&table, &n, &m, "b").unwrap();
+        assert_eq!(b.len(), 2, "{b:?}");
+        assert!(b[1].starts_with("kv.ttl: unverified"), "{b:?}");
+        // Unknown provider name: None, not an empty list.
+        assert_eq!(explain(&table, &n, &m, "zzz"), None);
     }
 
     #[test]
