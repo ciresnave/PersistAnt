@@ -50,13 +50,13 @@ pub trait BlobSink: Send {
 
 The sink is a boxed trait object because the trait uses `impl Future` returns (no associated types today) and the sink's type differs per backend; one allocation per stream, not per chunk. `write` takes a borrowed slice so a caller reuses one buffer; the backend copies what it must keep.
 
-Why two write methods and not a flag: `write_stream` is the weaker promise (on `s3` it is a multipart upload, which is invisible until completed but is not "replace atomically" in the sense a reader of the old value sees); a backend that can only do the first must not be asked for the second, and the matrix says which it did.
+Why two write methods and not a flag: `write_stream` is the weaker promise (a backend that can stream but cannot make `finish` replace the value as a whole must not be asked for the second, and the matrix says which it did); on `s3` a multipart upload is invisible until completed and its completion replaces the object whole, so `s3` is a candidate for both (3.3), decided by the tests, not by this note.
 
 ### 3.2 Helpers (in `persistant-blob`, not in the trait)
 
-- `read_chunks(backend, key, chunk) -> impl Stream`-like loop over `read_range` with a default 8 MiB chunk and `stat` for the end. Memory bound: one chunk.
+- `read_chunks(backend, key, chunk)`: a loop over `read_range` with a default 8 MiB chunk. It reads the entry's version tag (3.7) before the first range and after the last and returns `BlobError::Changed` if they differ; on a backend with no tag it can detect only a length change and says so in its doc, so a same-length replacement during the loop is **not** detected there. Memory bound: one chunk.
 - `copy_in(sink, reader, chunk)` for a `Read`/`AsyncRead` source. Memory bound: one chunk.
-- A sink's abort-on-drop cannot be async; `Drop` marks it aborted and the staged file is removed on the next open of the same store (recorded as a caveat, section 5).
+- A sink's abort-on-drop cannot be async. `Drop` marks the sink aborted and queues its staging for removal; the backend removes queued staging **before it begins the next stream on the same store** and at open (3.8), so a dropped sink never outlives the next `write_stream` call on that store. Callers who care call `abort`.
 
 ### 3.3 Backends
 
@@ -64,39 +64,48 @@ Why two write methods and not a flag: `write_stream` is the weaker promise (on `
 |---|---|---|---|---|
 | `memory` | slice of the stored vector | buffer in the sink, insert on `finish` | yes (one insert under the lock) | the reference for the contract test |
 | `opendal-fs` | OpenDAL ranged read | OpenDAL writer into the scratch directory | yes **only with `atomic_write_dir` set**, as `replace_atomic` today | to confirm in work order 2 that the writer's close is a rename; if not, stage by hand in the scratch dir and rename |
-| `opendal-s3` (not a PersistAnt backend today) | ranged GET | multipart upload | no (a completed multipart upload replaces the object, but the contract test decides) | listed so the trait is not fs-shaped |
+| `opendal-s3` (not a PersistAnt backend today) | ranged GET | multipart upload | **candidate yes**: completing a multipart upload replaces the object as a whole, which meets the whole-old-or-whole-new contract; on only if test 5 passes against it | listed so the trait is not fs-shaped |
 
 I have not run OpenDAL's reader/writer here; the table is the plan, and every cell is "on" only after its test.
 
 ### 3.4 Tests (the contract, with a known-bad control for each)
 
 1. **Range equals slice:** write a 3 MiB value of a position-dependent pattern; `read_range` at offsets 0, 1, mid, `len-1`, past the end and `len` 0 equals the same slice of `read`. Known-bad: a backend whose range ignores the offset must fail the mid-offset case.
-2. **Streamed write equals whole write:** chunks of 1, 1000 and 1 MiB produce a value equal to `write` of the concatenation; nothing at `key` before `finish` (`stat` is `None`, or the old value stays).
-3. **Abort and drop leave the old value:** old value present; write a stream; `abort` and (separately) drop; `read` returns the old value; a second stream then works (no stale staging).
-4. **Crash:** a child process streaming into `key` is killed before `finish`; the parent finds the old value (or none) and the staging area is cleaned on reopen. Known-bad control: the same child writing straight to `key` (the ordinary `write`) leaves a partial value, which the test must see.
-5. **Concurrent reader** (`.atomic` only): the existing `blob.replace_atomic.concurrent_read` harness against `write_stream_atomic`.
-6. **Bounded memory:** a 256 MiB value copied through `copy_in` with an 8 MiB chunk stays under a stated peak (measured by the test's own allocator count, not by host RAM, which varies).
+2. **Streamed write equals whole write:** chunks of 1, 1000 and 1 MiB produce a value equal to `write` of the concatenation. Before `finish`, for an **existing** key `read` returns bytes equal to the complete old value (a length check is not enough: a same-length in-place overwrite must fail), and for a new key `read` is `None`. Known-bad control: a test-only backend whose sink writes through to `key` as chunks arrive must fail both assertions.
+3. **Abort and drop leave the old value:** old value present; write a stream; `abort` and (separately) drop; `read` returns the old value; a second `write_stream` on the same open store then succeeds and, before it finishes, the store holds no staging from the dropped sink (the backend removes queued staging before beginning it, 3.2). Known-bad control: a sink whose `abort` and drop leave the staging file in place must fail the staging assertion.
+4. **Crash, two kill points.** (a) A child streaming into `key` is killed before `finish`; the parent finds the old value (or none) and, after reopen, no staging. (b) For `write_stream_atomic`, a child is killed **during** `finish` (the test-only failpoint pauses inside the publish step and the parent kills it there); the parent must read the complete old value or the complete new value, never a mix, and a later `write_stream_atomic` on the key works. Known-bad controls: a test-only **in-place** writer (it opens `key` itself and writes straight into it, bypassing the scratch directory and rename) must be left with a partial value by (a) and (b); the ordinary backend `write` is **not** used as the control, because with `atomic_write_dir` set it also goes through scratch-and-rename and would leave the old value.
+5. **Concurrent reader** (`.atomic` only): the existing `blob.replace_atomic.concurrent_read` harness against `write_stream_atomic`. Known-bad control: the test-only in-place writer as `write_stream_atomic` must be caught showing a torn read.
+6. **Bounded memory:** a 256 MiB value copied through `copy_in` with an 8 MiB chunk stays under a stated peak (measured by the test's own allocator count, not by host RAM, which varies). Known-bad control: a `copy_in` variant that buffers the whole value must exceed the peak.
+7. **Through the wrappers:** tests 1 to 3 and 5 run against `Traced` and `Instrumented` around `memory` and give the same results as unwrapped (3.5). Known-bad control: a wrapper that does not forward must fail with `Unsupported`.
 
 ### 3.5 Registry and blocking mirror
 
-`AnyBlob` forwards the three; `blocking::registry::BlobHandle` gets `read_range` and a blocking sink (`write`, `finish`, `abort`) on the same worker, so one worker serves every kind as today. A need naming `blob.read_range` etc. is met only by providers whose matrix rows say yes, through `capant::evaluate` as for every other id (a missing row is `unverified`, not a closest match).
+`AnyBlob` forwards the three, and **each forwarded operation first calls the existing reserved-key check (`check(key)`) exactly as the current nine do**, so `read_range` and the streams cannot reach `kv`, `kvx` or anything under `kv/` or `kvx/` (test: the reserved keys are refused on `read_range`, `write_stream` and `write_stream_atomic`, with lookalike names accepted as the control, as in 0.11.14). `blocking::registry::BlobHandle` gets `read_range` and a blocking sink (`write`, `finish`, `abort`) on the same worker, so one worker serves every kind as today. **`Traced` and `Instrumented` forward the new operations to the inner backend** (otherwise they inherit the `Unsupported` defaults and `stats::measure` cannot certify the capabilities through them); a Traced span per ranged read and per sink open, write, finish, abort uses the shared tracing names. A need naming `blob.read_range` etc. is met only by providers whose matrix rows say yes, through `capant::evaluate` as for every other id (a missing row is `unverified`, not a closest match).
 
 ### 3.6 Vocabulary and matrix
 
 Three new leaves, append-only: `blob.read_range`, `blob.write_stream`, `blob.write_stream.atomic`. Rows are written by `conformance::certify` and regenerated by CI; the matrix job turns red once when the new rows first appear, and the rows are committed from the CI artifact (rows carry the crate version's first two numbers, so a 0.12.x release keeps its existing rows). The PM rules these additive (section 8), so they ship as 0.12.x; the PM allocates each number.
 
+### 3.7 Version tags for multi-range reads
+
+`Entry` gains `tag: Option<String>`, a backend's version token for the stored value (OpenDAL's etag or last-modified plus length where it has them; a counter on `memory`). `read_range_if(key, offset, len, tag)` returns `BlobError::Changed` when the stored tag differs. A backend with no tag returns `tag: None` and says so in its matrix row (`blob.read_range.consistent` off); callers who need one version across ranges then hold their own lock. A length comparison is **not** offered as protection.
+
+### 3.8 Staging ownership across processes
+
+Staging names carry an owner id (process id plus a random token) and the sink holds an advisory file lock on its staging file for as long as it lives. Cleanup (at open and before a new stream) removes only staging whose lock it can take, that is, staging whose owner is gone; staging held by a live sink in another process is left alone. Test: store opened in a second process while a sink in the first is mid-stream; the first sink's `finish` still succeeds with the whole value. Known-bad control: a cleanup that removes every staging file fails it.
+
 ## 4. Work orders (each a PR; none starts before this note merges)
 
-1. Vocabulary ids, `read_range` and `BlobSink` in the trait with `Unsupported` defaults, `memory` implementation, the contract tests (1 to 3, 5) with their known-bad controls, the chunk helpers.
+1. Vocabulary ids, `read_range`, `read_range_if` with `Entry.tag` (3.7) and `BlobSink` in the trait with `Unsupported` defaults, `memory` implementation, the contract tests (1 to 3, 5 and 7) with their known-bad controls, the chunk helpers, and `Traced` and `Instrumented` forwarding the new operations.
 2. `opendal-fs`: `read_range`, `write_stream`, `.atomic` with the scratch directory; confirm OpenDAL's writer semantics first and record what was found.
-3. Crash test (4) and bounded-memory test (6); matrix rows; `docs/DESIGN-KINDS.md` section 3 table gains the three ids.
-4. Registry (`AnyBlob`) and blocking mirror; `docs/REGISTRY-FOR-STORE-USERS.md`; an example `examples/registry_blob_stream.rs` run by CI.
+3. Crash tests (4a and 4b, with the in-place control), the cross-process staging test (3.8), bounded-memory test (6); matrix rows; `docs/DESIGN-KINDS.md` section 3 table gains the three ids.
+4. Registry (`AnyBlob`, each operation through `check(key)`; reserved-key test) and blocking mirror; `docs/REGISTRY-FOR-STORE-USERS.md`; an example `examples/registry_blob_stream.rs` run by CI.
 5. Patent re-sweep for the new family (see section 7) before the publish.
 
 ## 5. Caveats stated now
 
-- `Drop` cannot await, so a dropped, unfinished sink leaves staging that is removed at the next open of the store, not at once. Callers who care call `abort`.
-- `read_range` on a value being replaced concurrently sees one version per call (the backend's own guarantee, stated per backend), not a consistent view across calls. A caller reading a file in ranges while it is replaced must `stat` first and compare `len`, or hold its own lock; the note says so rather than promising a snapshot.
+- `Drop` cannot await; its cleanup is queued and runs before the next stream on the same store and at open (3.2), not at the moment of the drop. Callers who care call `abort`.
+- `read_range` on a value being replaced concurrently sees one version per call (the backend's own guarantee, stated per backend). Across calls, only the version tag (3.7) detects a replacement, and only on a backend that has one.
 - Nothing here makes `blob.durable` true for a streamed write; durability stays its own capability with its own VM test.
 
 ## 6. Questions for the mlmf lane (ask before work order 1)
