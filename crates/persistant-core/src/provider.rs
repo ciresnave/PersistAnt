@@ -8,11 +8,17 @@
 //! The rules are `docs/DESIGN-KINDS.md` section 2.1's, applied to a field of providers instead of one
 //! named backend:
 //!
-//! - A capability is a boolean. A provider has it only if the [`Matrix`] says [`Lookup::On`] on one of
-//!   its [`Surface`]s and [`Lookup::Off`] on none. No row is off.
+//! - Selection is `capant`'s (`capant::evaluate`), asked about this crate's rows through
+//!   [`Matrix::to_capant`]. A provider has a capability only if a row says yes **with its probe id**
+//!   on one of its [`Surface`]s and none says no. A row without evidence, and no row at all, are
+//!   *unverified*, not off: the unmet text says `unverified(<why>)`.
+//! - The minimum durability is a capability too (`durability.process`, `durability.machine`): a
+//!   provider that declares a class has a row for it and for every lower class, with the declared
+//!   basis as its evidence. `Volatile` is asked for nothing, so a provider that declares nothing
+//!   still qualifies for it.
 //! - **No closest match.** If no provider satisfies every need, the answer is [`Unmet`]: for each
-//!   provider, each needed id it lacks (with the matrix's own word, [`Lookup`]) and any durability
-//!   shortfall. A partial list is never returned.
+//!   provider, each needed id it lacks (with the matrix's own word, [`Lookup`], and for an
+//!   unverified one the reason) and any durability shortfall. A partial list is never returned.
 //! - The table is data the caller passes in; this module holds no registry and does no I/O.
 //!
 //! ```
@@ -21,7 +27,7 @@
 //! use persistant_core::provider::{providers, EndpointSpec, Provider, ProviderNeeds, Surface};
 //!
 //! let matrix = Matrix::parse("subject_kind\tsubject\tbackend\tversion\tconfig\tenabled\treason\tmetadata\tnote\n\
-//!     capability\tkv.get\tmem\t1\t\tyes\t\t\t\n").unwrap();
+//!     capability\tkv.get\tmem\t1\t\tyes\t\tprobe=kv::kv.get\t\n").unwrap();
 //! let table = [Provider::new("mem", vec![Surface::new("mem", "1", Config::new())], None, EndpointSpec::None)];
 //! let needs = ProviderNeeds::new(vec![CapabilityId::new("kv.get").unwrap()], Durability::Volatile);
 //! assert_eq!(providers(&table, &needs, &matrix).unwrap().len(), 1);
@@ -37,7 +43,7 @@
 //! 5. pass it and your endpoint to the registry's `open` for a handle.
 
 use crate::choose::{Candidate, Declared, Durability, Eligibility, Need, NoneEligible};
-use crate::{CapabilityId, Config, Lookup, Matrix};
+use crate::{CapabilityId, Config, Lookup, Matrix, Reason};
 use std::fmt;
 
 /// What a provider needs to be told to open: the endpoint information a configuration cannot guess.
@@ -137,25 +143,6 @@ impl Provider {
     pub fn endpoint(&self) -> &EndpointSpec {
         &self.endpoint
     }
-
-    fn lookup(&self, matrix: &Matrix, id: &CapabilityId) -> Lookup {
-        let mut on = false;
-        let mut off = None;
-        for s in &self.surfaces {
-            match matrix.lookup(id, &s.backend, &s.version, &s.config) {
-                Lookup::On => on = true,
-                Lookup::Off(r) => {
-                    off.get_or_insert(r);
-                }
-                _ => {}
-            }
-        }
-        match (on, off) {
-            (_, Some(r)) => Lookup::Off(r),
-            (true, None) => Lookup::On,
-            (false, None) => Lookup::NoRow,
-        }
-    }
 }
 
 /// What the program needs: capability ids that must all be on, and the lowest durability class.
@@ -217,6 +204,9 @@ pub struct ProviderUnmet {
     /// Each needed id it does not have, with what the matrix said ([`Lookup::Off`] or
     /// [`Lookup::NoRow`]). Never contains [`Lookup::On`].
     pub missing: Vec<(CapabilityId, Lookup)>,
+    /// For each id in `missing` that is [`Lookup::NoRow`], why it is unverified (`no row`,
+    /// `no evidence`, `stale`, ...), in the words of `capant`. Empty for an id that is off.
+    pub unverified: Vec<(CapabilityId, String)>,
     /// Set if its durability is below the minimum.
     pub durability: Option<DurabilityShortfall>,
 }
@@ -239,7 +229,14 @@ impl fmt::Display for Unmet {
             for (id, l) in &p.missing {
                 match l {
                     Lookup::Off(r) => write!(f, " {} off({r})", id.as_str())?,
-                    _ => write!(f, " {} no-row", id.as_str())?,
+                    _ => {
+                        let why = p
+                            .unverified
+                            .iter()
+                            .find(|(i, _)| i == id)
+                            .map_or("no row", |(_, w)| w.as_str());
+                        write!(f, " {} unverified({why})", id.as_str())?
+                    }
                 }
             }
             match p.durability {
@@ -255,49 +252,160 @@ impl fmt::Display for Unmet {
 
 impl std::error::Error for Unmet {}
 
+/// The id of the durability capability for `class`: what a provider that declares it has, and what a
+/// need for at least that class requires.
+fn durability_id(class: Durability) -> CapabilityId {
+    CapabilityId::new(format!("durability.{}", class.as_str()))
+        .expect("`durability.` and a lower-case word is inside the id grammar")
+}
+
+/// The classes up to and including `class`, lowest first. A `match` with no wildcard: a class added
+/// to [`Durability`] stops this compiling until it is placed.
+fn classes_up_to(class: Durability) -> Vec<Durability> {
+    let rank = |c: Durability| match c {
+        Durability::Volatile => 0,
+        Durability::Process => 1,
+        Durability::Machine => 2,
+    };
+    [
+        Durability::Volatile,
+        Durability::Process,
+        Durability::Machine,
+    ]
+    .into_iter()
+    .filter(|c| rank(*c) <= rank(class))
+    .collect()
+}
+
+fn cap(id: &CapabilityId) -> capant::CapabilityId {
+    capant::CapabilityId::new(id.as_str()).expect("this crate's id grammar is inside capant's")
+}
+
+/// `capant`'s answer for `table` against `needs`. Each provider is given to `capant` under its
+/// position in the table (two providers may share a name here; `capant` refuses that), with one
+/// extra surface of its own that carries the durability rows it declares.
+fn evaluate(
+    table: &[Provider],
+    needs: &ProviderNeeds,
+    matrix: &Matrix,
+) -> (capant::Evaluation, Option<CapabilityId>) {
+    let durable =
+        (needs.min_durability > Durability::Volatile).then(|| durability_id(needs.min_durability));
+    let mut rows = matrix.to_capant().rows().to_vec();
+    let cap_table: Vec<capant::Provider> = table
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let mut surfaces: Vec<capant::Surface> = p
+                .surfaces
+                .iter()
+                .map(|s| {
+                    capant::Surface::new(
+                        s.backend.clone(),
+                        s.version.clone(),
+                        crate::adapter::config_to(&s.config, None),
+                    )
+                })
+                .collect();
+            if let Some(d) = p.declared {
+                let backend = format!("declared-durability:{i}");
+                for class in classes_up_to(d.class) {
+                    rows.push(capant::Row {
+                        subject_kind: "capability".to_owned(),
+                        subject: cap(&durability_id(class)),
+                        backend: backend.clone(),
+                        version: String::new(),
+                        config: capant::Config::new(),
+                        state: capant::State::Yes,
+                        evidence: capant::Evidence::probe(format!("declared: {}", d.basis)),
+                        note: String::new(),
+                        metadata: capant::Config::new(),
+                        extra: std::collections::BTreeMap::new(),
+                    });
+                }
+                surfaces.push(capant::Surface::new(
+                    backend,
+                    String::new(),
+                    capant::Config::new(),
+                ));
+            }
+            capant::Provider::new(i.to_string(), surfaces).expect("a provider has a surface")
+        })
+        .collect();
+    let mut required: Vec<capant::CapabilityId> = needs.ids.iter().map(cap).collect();
+    required.extend(durable.iter().map(cap));
+    let mut need = capant::Need::new(required);
+    need.preferred = needs.preferred.iter().map(cap).collect();
+    let ctx = capant::Context::new(0, capant::Config::new());
+    let ev = capant::evaluate(&cap_table, &need, &capant::Matrix::from_rows(rows), &ctx)
+        .expect("positions are unique");
+    (ev, durable)
+}
+
+/// The provider's position in the table, from the id it was given to `capant` under.
+fn position(e: &capant::Entry) -> usize {
+    e.provider.parse().expect("an id this module gave")
+}
+
+fn unmet_of(p: &Provider, e: &capant::Entry, durable: Option<&CapabilityId>) -> ProviderUnmet {
+    use capant::{Reason as R, State};
+    let mut missing = Vec::new();
+    let mut unverified = Vec::new();
+    let mut durability = None;
+    for o in e.unmet() {
+        let id = CapabilityId::new(o.id.as_str()).expect("an id this crate gave");
+        if Some(&id) == durable {
+            durability = Some(match p.declared {
+                Some(d) => DurabilityShortfall::Below(d.class),
+                None => DurabilityShortfall::Unknown,
+            });
+            continue;
+        }
+        let lookup = match &o.state {
+            State::No(R::Missing) => Lookup::Off(Reason::Missing),
+            State::No(R::Wrong) => Lookup::Off(Reason::Wrong),
+            State::No(R::Other(t)) if t == "untested" => Lookup::Off(Reason::Untested),
+            State::Unverified(w) => {
+                unverified.push((id.clone(), w.to_string()));
+                Lookup::NoRow
+            }
+            _ => Lookup::NoRow,
+        };
+        missing.push((id, lookup));
+    }
+    ProviderUnmet {
+        provider: p.name.clone(),
+        missing,
+        unverified,
+        durability,
+    }
+}
+
 /// Every provider in `table` that has all of `needs`, in table order.
 ///
-/// A provider qualifies if each needed id is [`Lookup::On`] on at least one of its surfaces and
-/// [`Lookup::Off`] on none, and its declared durability is at least `needs.min_durability()`
-/// (undeclared fails unless `Volatile` is enough). If none qualifies the error names, for every
-/// provider, what it lacks. No closest match is offered.
+/// Asked of `capant::evaluate`: a provider qualifies if each needed id is shown to hold (a yes row
+/// with its probe id) on one of its [`Surface`]s and none says no, and its declared durability is at
+/// least `needs.min_durability()` (undeclared fails unless `Volatile` is enough). If none qualifies
+/// the error names, for every provider, what it lacks. No closest match is offered.
 pub fn providers(
     table: &[Provider],
     needs: &ProviderNeeds,
     matrix: &Matrix,
 ) -> Result<Vec<Provider>, Unmet> {
-    let mut ok = Vec::new();
-    let mut unmet = Vec::new();
-    for p in table {
-        let missing: Vec<_> = needs
-            .ids
-            .iter()
-            .filter_map(|id| match p.lookup(matrix, id) {
-                Lookup::On => None,
-                other => Some((id.clone(), other)),
-            })
-            .collect();
-        let durability = match p.declared {
-            Some(d) if d.class < needs.min_durability => Some(DurabilityShortfall::Below(d.class)),
-            None if needs.min_durability > Durability::Volatile => {
-                Some(DurabilityShortfall::Unknown)
-            }
-            _ => None,
-        };
-        if missing.is_empty() && durability.is_none() {
-            ok.push(p.clone());
-        } else {
-            unmet.push(ProviderUnmet {
-                provider: p.name.clone(),
-                missing,
-                durability,
-            });
-        }
-    }
+    let (ev, durable) = evaluate(table, needs, matrix);
+    let mut ok: Vec<usize> = ev.satisfying().map(position).collect();
     if ok.is_empty() {
-        return Err(Unmet { providers: unmet });
+        let mut entries: Vec<&capant::Entry> = ev.entries().iter().collect();
+        entries.sort_by_key(|e| position(e));
+        return Err(Unmet {
+            providers: entries
+                .into_iter()
+                .map(|e| unmet_of(&table[position(e)], e, durable.as_ref()))
+                .collect(),
+        });
     }
-    Ok(ok)
+    ok.sort_unstable();
+    Ok(ok.into_iter().map(|i| table[i].clone()).collect())
 }
 
 /// Order `qualified` (the result of [`providers`]) with [`choose`](crate::choose::choose): fastest
@@ -351,48 +459,67 @@ pub fn sorted(
     speed: Option<(&Need, &crate::bench::SpeedTable)>,
 ) -> Vec<Sorted> {
     use crate::bench::Outcome;
-    let mut out: Vec<Sorted> = qualified
-        .iter()
-        .map(|p| {
-            let p50_ns = speed.and_then(|(need, table)| {
-                let s = p.primary();
-                table.rows().iter().find_map(|r| match r.outcome {
-                    Outcome::Measured(st)
-                        if r.workload == need.rank_by
-                            && r.backend == s.backend
-                            && r.version == s.version
-                            && r.config == s.config
-                            && r.env.comparable_key() == need.environment =>
-                    {
-                        Some(st.p50_ns)
-                    }
-                    _ => None,
-                })
-            });
-            Sorted {
-                provider: p.clone(),
-                preferred: needs
-                    .preferred
-                    .iter()
-                    .map(|id| (id.clone(), p.lookup(matrix, id) == Lookup::On))
-                    .collect(),
-                p50_ns,
-            }
+    let p50 = |p: &Provider| {
+        speed.and_then(|(need, table)| {
+            let s = p.primary();
+            table.rows().iter().find_map(|r| match r.outcome {
+                Outcome::Measured(st)
+                    if r.workload == need.rank_by
+                        && r.backend == s.backend
+                        && r.version == s.version
+                        && r.config == s.config
+                        && r.env.comparable_key() == need.environment =>
+                {
+                    Some(st.p50_ns)
+                }
+                _ => None,
+            })
         })
-        .collect();
-    out.sort_by(|a, b| {
-        let met = |x: &Sorted| x.preferred.iter().map(|(_, m)| !*m).collect::<Vec<_>>();
+    };
+    let (mut ev, _) = evaluate(qualified, needs, matrix);
+    // `capant` ranks satisfiers by the preferred ids in order of importance; the measured median and
+    // the name break its ties, as the preferred vector is compared again here so the order is this
+    // function's own whatever `capant` does with a tie.
+    let met = |e: &capant::Entry| -> Vec<bool> {
+        e.outcomes
+            .iter()
+            .filter(|o| matches!(o.role, capant::Role::Preferred(_)))
+            .map(|o| o.state != capant::State::Yes)
+            .collect()
+    };
+    ev.reorder_satisfiers(|a, b| {
+        let (pa, pb) = (&qualified[position(a)], &qualified[position(b)]);
         met(a)
             .cmp(&met(b))
-            .then_with(|| match (a.p50_ns, b.p50_ns) {
+            .then_with(|| match (p50(pa), p50(pb)) {
                 (Some(x), Some(y)) => x.cmp(&y),
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 (None, None) => std::cmp::Ordering::Equal,
             })
-            .then_with(|| a.provider.name.cmp(&b.provider.name))
+            .then_with(|| pa.name.cmp(&pb.name))
     });
-    out
+    ev.entries()
+        .iter()
+        .map(|e| {
+            let provider = qualified[position(e)].clone();
+            Sorted {
+                p50_ns: p50(&provider),
+                preferred: needs
+                    .preferred
+                    .iter()
+                    .enumerate()
+                    .map(|(i, id)| {
+                        let yes = e.outcomes.iter().any(|o| {
+                            o.role == capant::Role::Preferred(i) && o.state == capant::State::Yes
+                        });
+                        (id.clone(), yes)
+                    })
+                    .collect(),
+                provider,
+            }
+        })
+        .collect()
 }
 
 /// [`providers`] then [`sorted`]: the one call a setup UI makes.
@@ -416,7 +543,7 @@ mod tests {
 
     fn row(id: &str, backend: &str, yes: bool) -> String {
         let (e, r) = if yes { ("yes", "") } else { ("no", "wrong") };
-        format!("capability\t{id}\t{backend}\t1\t\t{e}\t{r}\t\t\n")
+        format!("capability\t{id}\t{backend}\t1\t\t{e}\t{r}\tprobe=t::{id}\t\n")
     }
 
     fn matrix(rows: &[(&str, &str, bool)]) -> Matrix {
@@ -507,7 +634,7 @@ mod tests {
             vec![(id("kv.get"), Lookup::Off(Reason::Wrong))]
         );
         let text = e.to_string();
-        assert!(text.contains("[a: kv.ttl no-row]"), "{text}");
+        assert!(text.contains("[a: kv.ttl unverified(no row)]"), "{text}");
         assert!(text.contains("[b: kv.get off(wrong)]"), "{text}");
     }
 
@@ -693,5 +820,88 @@ mod tests {
         let m = matrix(&[("kv.ttl", "a", true)]);
         let n = needs(&["kv.get"], Durability::Volatile).prefer(vec![id("kv.ttl")]);
         assert!(select(&table, &n, &m, None).is_err());
+    }
+
+    #[test]
+    fn a_yes_row_without_its_probe_id_is_unverified_and_the_provider_is_rejected() {
+        let table = [prov("a", &["a"], decl(Durability::Machine))];
+        let n = needs(&["kv.get"], Durability::Volatile);
+        // Control: the same row with a probe id qualifies.
+        assert_eq!(
+            providers(&table, &n, &matrix(&[("kv.get", "a", true)]))
+                .unwrap()
+                .len(),
+            1
+        );
+        // Drop the evidence: `capant` does not count a claim without it.
+        let bare = Matrix::parse(&format!(
+            "{HEADER}capability	kv.get	a	1		yes			
+"
+        ))
+        .unwrap();
+        let e = providers(&table, &n, &bare).unwrap_err();
+        assert_eq!(e.providers[0].missing, vec![(id("kv.get"), Lookup::NoRow)]);
+        assert_eq!(
+            e.providers[0].unverified,
+            vec![(id("kv.get"), "no evidence".to_string())]
+        );
+        assert!(
+            e.to_string()
+                .contains("[a: kv.get unverified(no evidence)]"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn the_declared_class_is_what_a_durability_capability_rests_on() {
+        let n = needs(&["kv.get"], Durability::Machine);
+        let m = matrix(&[("kv.get", "a", true), ("kv.get", "b", true)]);
+        let table = [
+            prov("a", &["a"], decl(Durability::Process)),
+            prov("b", &["b"], decl(Durability::Machine)),
+        ];
+        let got = providers(&table, &n, &m).unwrap();
+        assert_eq!(got.iter().map(Provider::name).collect::<Vec<_>>(), ["b"]);
+        // The shortfall names what the other declared, and a missing declaration is unknown.
+        let e = providers(&table[..1], &n, &m).unwrap_err();
+        assert_eq!(
+            e.providers[0].durability,
+            Some(DurabilityShortfall::Below(Durability::Process))
+        );
+        let none = [prov("c", &["a"], None)];
+        let e = providers(&none, &n, &m).unwrap_err();
+        assert_eq!(
+            e.providers[0].durability,
+            Some(DurabilityShortfall::Unknown)
+        );
+        // Control: Volatile asks for no durability capability, so an undeclared provider qualifies.
+        let v = needs(&["kv.get"], Durability::Volatile);
+        assert_eq!(providers(&none, &v, &m).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn providers_keep_table_order_sorted_follows_the_preferences_and_a_repeated_name_is_fine() {
+        let m = matrix(&[
+            ("kv.get", "a", true),
+            ("kv.get", "b", true),
+            ("kv.ttl", "b", true),
+        ]);
+        let table = [
+            prov("a", &["a"], decl(Durability::Machine)),
+            prov("b", &["b"], decl(Durability::Machine)),
+        ];
+        let n = needs(&["kv.get"], Durability::Volatile).prefer(vec![id("kv.ttl")]);
+        let q = providers(&table, &n, &m).unwrap();
+        assert_eq!(q.iter().map(Provider::name).collect::<Vec<_>>(), ["a", "b"]);
+        let s = sorted(&q, &n, &m, None);
+        assert_eq!(
+            s.iter().map(|x| x.provider.name()).collect::<Vec<_>>(),
+            ["b", "a"]
+        );
+        assert_eq!(s[0].preferred, vec![(id("kv.ttl"), true)]);
+        assert_eq!(s[1].preferred, vec![(id("kv.ttl"), false)]);
+        // Two providers under one name no longer trip `capant`: both are returned.
+        let twice = [table[0].clone(), table[0].clone()];
+        assert_eq!(providers(&twice, &n, &m).unwrap().len(), 2);
     }
 }

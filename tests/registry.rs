@@ -424,6 +424,13 @@ fn a_need_no_provider_serves_is_unmet_and_names_each_backends_missing_id() {
             && !fs.missing.iter().any(|(i, _)| i.as_str() == "blob.stat"),
         "{e}"
     );
+    // The wording is `capant`'s: a capability nothing shows is unverified, not "no row".
+    let text = e.to_string();
+    assert!(
+        text.contains("rel.transaction unverified(no row)"),
+        "{text}"
+    );
+    assert!(!text.contains("no-row"), "{text}");
 }
 
 #[cfg(feature = "registry-sqlite")]
