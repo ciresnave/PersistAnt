@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.6
+
+### Fixed
+- `persistant-migrate`: `--help`/`-h` print the usage on stdout and `--version`/`-V` print `persistant-migrate <version>`, both exit 0, wherever they appear and before any other parsing (they were a usage error, exit 2); an unknown subcommand is refused (exit 2) before a URL is read or a connection tried. CodeRipper OPS-011 `cli-basics` (PM [TASK] 2026-10-29). Test `tests/cli_basics.rs` runs the real binary, with a URL-that-cannot-connect control for the ordering.
+
 ## 0.12.5
 
 ### Added
