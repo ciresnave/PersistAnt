@@ -3,7 +3,7 @@
 ## 0.12.3
 
 ### Changed
-- `docs/PATENT-SWEEP.md`: addendum for the 0.12.x ideas (evaluation by `capant::evaluate` with unverified, durability as a capability, version-tied evidence, the registry serving three kinds, reserved keys, the blocking mirror, Traced and Faulty wrappers, sized and concurrent timing) with proposed queries, none yet run, and the still-unread hits in priority order. Docs only.
+- `docs/PATENT-SWEEP.md`: addendum for the 0.12.x ideas (evaluation by `capant::evaluate` with unverified, durability as a capability, version-tied evidence, the registry serving three kinds, reserved keys, the blocking mirror, Traced and Faulty wrappers, sized and concurrent timing) with proposed queries, none yet run, and the still-unread hits in priority order. The addendum carries the PM's claim-read verdicts (21 priority hits and the searches for ideas 14-22, 3, 4, 8: all outside as read except US20140280259A1, arguable medium, and US12079210B2, arguable low) and **corrects the record**: it said SQL translation is compile-time only with no run-time cache, but the key-value adapter translates its own constant PostgreSQL statements at run time through `unisql::translate` with a lazily filled cache; `docs/PATENT-SWEEP.md` and the `ROADMAP.md` patent-conditions row now say so and state the conditions that hold (own constant statements only; no provider declares `rel.source_dialect`). Docs only.
 
 ## 0.12.2
 
