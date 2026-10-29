@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.4
+
+### Added
+- `docs/DESIGN-BLOB-STREAMS.md`: design note (no code) for ranged and streamed blob I/O (ROADMAP "Portfolio adoption" row 4, blocks mlmf): three capabilities (`blob.read_range`, `blob.write_stream`, `blob.write_stream.atomic`), `BlobSink`, backends and tests with known-bad controls, five work orders, questions for the mlmf lane, three decisions asked of the PM. Docs only.
+
 ## 0.12.3
 
 ### Changed
