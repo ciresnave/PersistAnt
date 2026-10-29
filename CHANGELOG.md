@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.2
+
+### Changed
+- `README` opens with a 10-line hello-world (`cargo add`, then the registry opening `memory` and putting and getting one key) before the `Store` and `Record` example (ROADMAP row 22, portfolio rule 6.24 "Easy gets users"). The block is `examples/hello.rs`; CI builds and runs that file and `tests/readme_hello.rs` fails if the README block and the file differ.
+
 ## 0.12.1
 
 ### Fixed
