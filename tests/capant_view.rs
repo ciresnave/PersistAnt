@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! `Matrix::to_capant()` is a view of this crate's rows that `capant` can be asked about (capant step 2,
-//! PR-a); selection goes through it since 0.11.18 (PR-b, `provider.rs`). This proves the view says what `Matrix::lookup` says: for
+//! PR-a); selection goes through it since 0.12.0 (PR-b, `provider.rs`). This proves the view says what `Matrix::lookup` says: for
 //! every row of the five checked-in matrices against every configuration they name, `capant::resolve`
 //! gives the verdict the gate gives (`Yes` / `No(reason)` / `Unverified(no row)`), and
 //! `capant::evaluate` says a provider satisfies a need exactly when the gate turns every capability on.
