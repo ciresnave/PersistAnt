@@ -443,9 +443,9 @@ fn a_relational_need_lists_sqlite_and_not_the_blob_stores() {
     let ids = listed(&n);
     assert!(ids.contains(&"sqlite"), "{ids:?}");
     assert!(!ids.contains(&"memory") && !ids.contains(&"fs"), "{ids:?}");
-    // `sqlite-full` has no relational rows yet (docs/DESIGN-REGISTRY-KINDS.md 5.1): no row is off, so it is
-    // not listed. This pins the gap; certifying the relational leaves for it ends the gap and this line.
-    assert!(!ids.contains(&"sqlite-full"), "{ids:?}");
+    // `sqlite-full` is the same engine with a stricter flush and has its own relational rows since
+    // 0.12.1 (the matrix job certifies the kind on both profiles): it is listed too.
+    assert!(ids.contains(&"sqlite-full"), "{ids:?}");
 }
 
 #[cfg(feature = "registry-sqlite")]
