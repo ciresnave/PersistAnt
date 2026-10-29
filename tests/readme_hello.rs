@@ -10,7 +10,7 @@ fn the_readme_hello_is_the_example_file() {
         .expect("the README has a Hello section")
         .1;
     let block = after
-        .split_once("```rust,ignore\n")
+        .split_once("```text\n")
         .expect("the Hello section has its rust block")
         .1
         .split_once("```")
