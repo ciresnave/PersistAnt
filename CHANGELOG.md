@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.7
+
+### Added
+- Ranged and streamed blob I/O, work order 1 of `docs/DESIGN-BLOB-STREAMS.md` (ROADMAP "Portfolio adoption" row 4; additive, every new `BlobBackend` method defaults to `Unsupported`): `read_range`, `read_range_if` (with `Entry::tag`, the backend's version token, set by `stat` on `MemoryBlob`), `write_stream` and `write_stream_atomic` returning a boxed `BlobSink` (`write`, `finish`, `abort`; nothing is visible before `finish`, and abort or drop leaves the old value and no listed staging); `BlobError::Changed`. Four new capability ids and conformance leaves: `blob.read_range`, `blob.read_range.consistent`, `blob.write_stream`, `blob.write_stream.atomic`, each with known-bad `MemoryBlob` defects (`RangeIgnoresOffset`, `RangeShort`, `RangeIfIgnoresTag`, `TagIgnoresContent`, `StreamWritesThrough`, `StreamDropsTail`, `AbortLeavesStaging`, `StreamAtomicTears`) that must turn their leaf off. Helpers `persistant_blob::stream::{ChunkReader, copy_in}` (one chunk of memory; a replacement between chunks is `Changed`, with a tag; without one only a length change is seen). `Traced` and `Instrumented` forward the new operations (a span per sink open, write, finish and abort).
+- Only `memory` implements them in this release: `opendal-memory` and `opendal-fs` get `off(missing)` rows for the four new ids until work order 2, and the matrices carry those rows. Not yet in the registry (`AnyBlob` still answers `Unsupported`; work order 4).
+
 ## 0.12.6
 
 ### Fixed

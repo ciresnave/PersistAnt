@@ -62,6 +62,7 @@ impl<'a, B: BlobBackend> Instrumented<'a, B> {
                 Ok(_) => e.ok += 1,
                 Err(BlobError::Backend(_)) => e.backend += 1,
                 Err(BlobError::Unsupported(_)) => e.unsupported += 1,
+                Err(BlobError::Changed(_)) => e.backend += 1,
             }
         }
         r
@@ -122,6 +123,39 @@ impl<B: BlobBackend> BlobBackend for Instrumented<'_, B> {
 
     async fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
         self.note("append", self.inner.append(key, bytes).await)
+    }
+
+    async fn read_range(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+    ) -> Result<Option<Vec<u8>>, BlobError> {
+        self.note("read_range", self.inner.read_range(key, offset, len).await)
+    }
+
+    async fn read_range_if(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+        tag: &str,
+    ) -> Result<Option<Vec<u8>>, BlobError> {
+        self.note(
+            "read_range_if",
+            self.inner.read_range_if(key, offset, len, tag).await,
+        )
+    }
+
+    async fn write_stream(&self, key: &str) -> Result<Box<dyn crate::BlobSink>, BlobError> {
+        self.note("write_stream", self.inner.write_stream(key).await)
+    }
+
+    async fn write_stream_atomic(&self, key: &str) -> Result<Box<dyn crate::BlobSink>, BlobError> {
+        self.note(
+            "write_stream_atomic",
+            self.inner.write_stream_atomic(key).await,
+        )
     }
 }
 
