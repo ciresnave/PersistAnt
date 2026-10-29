@@ -20,10 +20,11 @@ pub mod contract;
 mod memory;
 pub mod speed;
 pub mod stats;
+pub mod stream;
 #[cfg(feature = "tracing")]
 mod traced;
 
-pub use backend::{BlobBackend, BlobError, Entry, KeyLayout, Page};
+pub use backend::{BlobBackend, BlobError, BlobSink, BoxFuture, Entry, KeyLayout, Page};
 pub use memory::{Defect, MemoryBlob};
 #[cfg(feature = "tracing")]
 pub use traced::Traced;

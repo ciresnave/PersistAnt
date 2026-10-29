@@ -63,6 +63,22 @@ pub const SEED: &[(&str, &str)] = &[
         "of concurrent appends to one key, every call's bytes appear whole and exactly once, none interleaved with another's",
     ),
     (
+        "blob.read_range",
+        "the bytes from an offset for a length are returned without reading the rest, a range past the end returns what exists, and an absent key is reported absent",
+    ),
+    (
+        "blob.read_range.consistent",
+        "a range read that names the version tag from stat fails if the value was replaced since, even by a value of the same length",
+    ),
+    (
+        "blob.write_stream",
+        "a value written in chunks through a handle is visible only after finish, abort or drop leaves the old value and no listed staging",
+    ),
+    (
+        "blob.write_stream.atomic",
+        "as blob.write_stream, and finish replaces so that a concurrent reader sees the whole old value or the whole new value, never a mix",
+    ),
+    (
         "blob.max_value_size",
         "one value of the stated size is stored and returned intact",
     ),

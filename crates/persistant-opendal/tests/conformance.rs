@@ -63,8 +63,12 @@ async fn memory_service_gives_everything_but_append() {
     let b = OpendalBlob::memory().unwrap();
     let rows = certify(&b, b.config(), &Config::new()).await;
     for c in &rows {
-        let append = c.leaf.id().starts_with("blob.append");
-        // Finding: OpenDAL's memory service does not support append.
+        // Finding: OpenDAL's memory service does not support append. The ranged and streamed leaves
+        // (`blob.read_range*`, `blob.write_stream*`) are not implemented by this driver yet
+        // (`docs/DESIGN-BLOB-STREAMS.md` work order 2), so they are off as missing until then.
+        let append = c.leaf.id().starts_with("blob.append")
+            || c.leaf.id().starts_with("blob.read_range")
+            || c.leaf.id().starts_with("blob.write_stream");
         assert_eq!(c.row.enabled, !append, "{}", summary(&rows));
         if append {
             assert_eq!(c.row.reason, Some(Reason::Missing), "{}", summary(&rows));

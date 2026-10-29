@@ -6,7 +6,7 @@
 //! call returns, its outcome (`ok` or the error's kind). It never carries a key, a value or an
 //! error's text: keys can be secrets and error text can quote them. Spans are at `DEBUG`.
 
-use crate::{BlobBackend, BlobError, Entry, KeyLayout, Page};
+use crate::{BlobBackend, BlobError, BlobSink, BoxFuture, Entry, KeyLayout, Page};
 use std::future::Future;
 use tracing::Instrument;
 
@@ -48,9 +48,69 @@ impl<B: BlobBackend> Traced<B> {
                 Ok(_) => "ok",
                 Err(BlobError::Backend(_)) => "backend",
                 Err(BlobError::Unsupported(_)) => "unsupported",
+                Err(BlobError::Changed(_)) => "changed",
             },
         );
         r
+    }
+}
+
+/// A [`BlobSink`] whose every call is inside a `persist` span, like the calls that opened it.
+struct TracedSink {
+    inner: Box<dyn BlobSink>,
+    backend: String,
+    capability: &'static str,
+}
+
+fn sink_span(backend: &str, op: &'static str, capability: &'static str) -> tracing::Span {
+    tracing::debug_span!(
+        "persist",
+        persist.kind = "blob",
+        persist.backend = backend,
+        persist.op = op,
+        persist.capability = capability,
+        persist.outcome = tracing::field::Empty,
+    )
+}
+
+fn record_outcome(span: &tracing::Span, r: &Result<(), BlobError>) {
+    span.record(
+        "persist.outcome",
+        match r {
+            Ok(()) => "ok",
+            Err(BlobError::Backend(_)) => "backend",
+            Err(BlobError::Unsupported(_)) => "unsupported",
+            Err(BlobError::Changed(_)) => "changed",
+        },
+    );
+}
+
+impl BlobSink for TracedSink {
+    fn write<'a>(&'a mut self, chunk: &'a [u8]) -> BoxFuture<'a, Result<(), BlobError>> {
+        Box::pin(async move {
+            let span = sink_span(&self.backend, "stream_write", self.capability);
+            let r = self.inner.write(chunk).instrument(span.clone()).await;
+            record_outcome(&span, &r);
+            r
+        })
+    }
+
+    fn finish(self: Box<Self>) -> BoxFuture<'static, Result<(), BlobError>> {
+        Box::pin(async move {
+            let span = sink_span(&self.backend, "stream_finish", self.capability);
+            let r = self.inner.finish().instrument(span.clone()).await;
+            record_outcome(&span, &r);
+            r
+        })
+    }
+
+    fn abort(self: Box<Self>) -> BoxFuture<'static, Result<(), BlobError>> {
+        Box::pin(async move {
+            let span = sink_span(&self.backend, "stream_abort", self.capability);
+            let r = self.inner.abort().instrument(span.clone()).await;
+            record_outcome(&span, &r);
+            r
+        })
     }
 }
 
@@ -116,6 +176,64 @@ impl<B: BlobBackend> BlobBackend for Traced<B> {
     async fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
         self.span("append", "blob.append", self.inner.append(key, bytes))
             .await
+    }
+    async fn read_range(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+    ) -> Result<Option<Vec<u8>>, BlobError> {
+        self.span(
+            "read_range",
+            "blob.read_range",
+            self.inner.read_range(key, offset, len),
+        )
+        .await
+    }
+
+    async fn read_range_if(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+        tag: &str,
+    ) -> Result<Option<Vec<u8>>, BlobError> {
+        self.span(
+            "read_range_if",
+            "blob.read_range.consistent",
+            self.inner.read_range_if(key, offset, len, tag),
+        )
+        .await
+    }
+
+    async fn write_stream(&self, key: &str) -> Result<Box<dyn BlobSink>, BlobError> {
+        let inner = self
+            .span(
+                "write_stream",
+                "blob.write_stream",
+                self.inner.write_stream(key),
+            )
+            .await?;
+        Ok(Box::new(TracedSink {
+            inner,
+            backend: self.inner.backend().to_string(),
+            capability: "blob.write_stream",
+        }))
+    }
+
+    async fn write_stream_atomic(&self, key: &str) -> Result<Box<dyn BlobSink>, BlobError> {
+        let inner = self
+            .span(
+                "write_stream_atomic",
+                "blob.write_stream.atomic",
+                self.inner.write_stream_atomic(key),
+            )
+            .await?;
+        Ok(Box::new(TracedSink {
+            inner,
+            backend: self.inner.backend().to_string(),
+            capability: "blob.write_stream.atomic",
+        }))
     }
 }
 

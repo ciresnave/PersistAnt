@@ -33,11 +33,19 @@ pub enum Leaf {
     Append,
     /// `blob.append.concurrent_whole`, by sampled concurrency
     AppendConcurrentWhole,
+    /// `blob.read_range`
+    ReadRange,
+    /// `blob.read_range.consistent`
+    ReadRangeConsistent,
+    /// `blob.write_stream`
+    WriteStream,
+    /// `blob.write_stream.atomic`, by sampled concurrency
+    WriteStreamAtomic,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 9] = [
+    pub const ALL: [Leaf; 13] = [
         Leaf::Read,
         Leaf::Write,
         Leaf::Delete,
@@ -47,6 +55,10 @@ impl Leaf {
         Leaf::ReplaceConcurrentRead,
         Leaf::Append,
         Leaf::AppendConcurrentWhole,
+        Leaf::ReadRange,
+        Leaf::ReadRangeConsistent,
+        Leaf::WriteStream,
+        Leaf::WriteStreamAtomic,
     ];
 
     /// The capability id.
@@ -61,6 +73,10 @@ impl Leaf {
             Leaf::ReplaceConcurrentRead => "blob.replace_atomic.concurrent_read",
             Leaf::Append => "blob.append",
             Leaf::AppendConcurrentWhole => "blob.append.concurrent_whole",
+            Leaf::ReadRange => "blob.read_range",
+            Leaf::ReadRangeConsistent => "blob.read_range.consistent",
+            Leaf::WriteStream => "blob.write_stream",
+            Leaf::WriteStreamAtomic => "blob.write_stream.atomic",
         }
     }
 
@@ -71,6 +87,7 @@ impl Leaf {
             Leaf::CreateExclusive => "contenders=16;rounds=20;value_bytes=4096",
             Leaf::ReplaceConcurrentRead => "readers=4;replaces=40;value_bytes=65536",
             Leaf::AppendConcurrentWhole => "contenders=16;records=10;value_bytes=64",
+            Leaf::WriteStreamAtomic => "readers=4;replaces=40;value_bytes=65536",
             _ => "",
         }
     }
@@ -90,6 +107,18 @@ impl Leaf {
             Leaf::ReplaceConcurrentRead => &[Defect::ReplaceTearsReads],
             Leaf::Append => &[Defect::AppendOverwrites],
             Leaf::AppendConcurrentWhole => &[Defect::AppendTearsRecords, Defect::AppendOverwrites],
+            Leaf::ReadRange => &[Defect::RangeIgnoresOffset, Defect::RangeShort],
+            Leaf::ReadRangeConsistent => &[Defect::RangeIfIgnoresTag, Defect::TagIgnoresContent],
+            Leaf::WriteStream => &[
+                Defect::StreamWritesThrough,
+                Defect::StreamDropsTail,
+                Defect::AbortLeavesStaging,
+            ],
+            Leaf::WriteStreamAtomic => &[
+                Defect::StreamAtomicTears,
+                Defect::StreamWritesThrough,
+                Defect::AbortLeavesStaging,
+            ],
         }
     }
 }
@@ -126,6 +155,10 @@ pub async fn run_leaf<B: BlobBackend>(leaf: Leaf, b: &B) -> Result<(), Failure> 
         Leaf::ReplaceConcurrentRead => replace_concurrent_read(b, &base).await,
         Leaf::Append => append(b, &base).await,
         Leaf::AppendConcurrentWhole => append_concurrent_whole(b, &base).await,
+        Leaf::ReadRange => read_range(b, &base).await,
+        Leaf::ReadRangeConsistent => read_range_consistent(b, &base).await,
+        Leaf::WriteStream => write_stream(b, &base, false).await,
+        Leaf::WriteStreamAtomic => write_stream_atomic(b, &base).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.list(&base, None, usize::MAX).await {
@@ -428,6 +461,264 @@ async fn append_concurrent_whole<B: BlobBackend>(b: &B, base: &str) -> Result<()
         return wrong(format!(
             "records per appender {counts:?}, want {RECORDS} each"
         ));
+    }
+    Ok(())
+}
+
+/// A position-dependent pattern, so a range read from the wrong offset differs from the right one.
+fn pattern(len: usize, seed: u8) -> Vec<u8> {
+    (0..len)
+        .map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed))
+        .collect()
+}
+
+async fn read_range<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
+    const LEN: usize = 300_000;
+    let k = format!("{base}k");
+    let v = pattern(LEN, 7);
+    b.write(&k, v.clone()).await?;
+    let l = LEN as u64;
+    let cases: [(u64, u64); 9] = [
+        (0, 10),
+        (1, 10),
+        (l / 2, 100),
+        (l - 1, 10),
+        (l + 5, 10),
+        (l, 5),
+        (5, 0),
+        (0, l),
+        (0, l * 2),
+    ];
+    for (offset, len) in cases {
+        let start = (offset as usize).min(LEN);
+        let end = (start + len as usize).min(LEN);
+        match b.read_range(&k, offset, len).await? {
+            Some(got) if got == v[start..end] => {}
+            other => {
+                return wrong(format!(
+                    "range ({offset}, {len}) gave {} bytes, want the {} bytes of the whole value at that place: {}",
+                    other.as_ref().map_or(0, Vec::len),
+                    end - start,
+                    if other.is_some() {
+                        "different bytes"
+                    } else {
+                        "None"
+                    },
+                ));
+            }
+        }
+    }
+    if b.read_range(&format!("{base}absent"), 0, 10)
+        .await?
+        .is_some()
+    {
+        return wrong("a range of an absent key was not None");
+    }
+    Ok(())
+}
+
+async fn read_range_consistent<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
+    let k = format!("{base}k");
+    let a = pattern(1000, 1);
+    b.write(&k, a.clone()).await?;
+    let Some(tag) = b.stat(&k).await?.and_then(|e| e.tag) else {
+        return Err(Failure::Backend(BlobError::Unsupported(
+            "stat returns no version tag".to_string(),
+        )));
+    };
+    match b.read_range_if(&k, 10, 20, &tag).await? {
+        Some(got) if got == a[10..30] => {}
+        other => return wrong(format!("a range under the current tag gave {other:?}")),
+    }
+    // Same length, other bytes: a length comparison cannot see it, the tag must.
+    let c = pattern(1000, 2);
+    b.write(&k, c.clone()).await?;
+    match b.read_range_if(&k, 10, 20, &tag).await {
+        Err(BlobError::Changed(_)) => {}
+        Ok(r) => return wrong(format!("a same-length replacement went unnoticed: {r:?}")),
+        Err(e) => return Err(Failure::from(e)),
+    }
+    let Some(fresh) = b.stat(&k).await?.and_then(|e| e.tag) else {
+        return wrong("stat lost its tag");
+    };
+    if fresh == tag {
+        return wrong("the tag did not change with the value");
+    }
+    match b.read_range_if(&k, 10, 20, &fresh).await? {
+        Some(got) if got == c[10..30] => {}
+        other => return wrong(format!("a range under the new tag gave {other:?}")),
+    }
+    if b.read_range_if(&format!("{base}absent"), 0, 1, &fresh)
+        .await?
+        .is_some()
+    {
+        return wrong("a conditional range of an absent key was not None");
+    }
+    Ok(())
+}
+
+async fn open_sink<B: BlobBackend>(
+    b: &B,
+    key: &str,
+    atomic: bool,
+) -> Result<Box<dyn crate::BlobSink>, BlobError> {
+    if atomic {
+        b.write_stream_atomic(key).await
+    } else {
+        b.write_stream(key).await
+    }
+}
+
+/// The keys under `base` that a `list` shows: a streamed write leaves no staging among them.
+async fn keys_under<B: BlobBackend>(b: &B, base: &str) -> Result<Vec<String>, Failure> {
+    let page = b.list(base, None, usize::MAX).await?;
+    Ok(page.entries.into_iter().map(|e| e.key).collect())
+}
+
+async fn write_stream<B: BlobBackend>(b: &B, base: &str, atomic: bool) -> Result<(), Failure> {
+    let k = format!("{base}k");
+    // Chunked writes of 1, 1000 and 65536 bytes make the same value as one whole write.
+    for chunk in [1usize, 1000, 65_536] {
+        let want = pattern(200_000, chunk as u8);
+        let mut sink = open_sink(b, &k, atomic).await?;
+        if chunk == 1 {
+            // Only a prefix is streamed byte by byte, to keep the test fast; the rest in one piece.
+            for byte in &want[..64] {
+                sink.write(std::slice::from_ref(byte)).await?;
+            }
+            sink.write(&want[64..]).await?;
+        } else {
+            for piece in want.chunks(chunk) {
+                sink.write(piece).await?;
+            }
+        }
+        if chunk == 1 && b.read(&k).await?.is_some() {
+            return wrong("a value was visible at a new key before finish");
+        }
+        sink.finish().await?;
+        match b.read(&k).await? {
+            Some(got) if got == want => {}
+            other => {
+                return wrong(format!(
+                    "chunks of {chunk} bytes left {:?} bytes, want the {} written",
+                    other.as_ref().map(Vec::len),
+                    want.len()
+                ));
+            }
+        }
+    }
+    // An existing key keeps its complete old bytes until finish (a same-length overwrite in place
+    // must be seen, so the bytes are compared, not the length).
+    let old = pattern(50_000, 9);
+    let new = pattern(50_000, 10);
+    b.write(&k, old.clone()).await?;
+    let mut sink = open_sink(b, &k, atomic).await?;
+    sink.write(&new[..25_000]).await?;
+    if b.read(&k).await?.as_deref() != Some(&old[..]) {
+        return wrong("the old value changed before finish");
+    }
+    sink.write(&new[25_000..]).await?;
+    if b.read(&k).await?.as_deref() != Some(&old[..]) {
+        return wrong("the old value changed before finish");
+    }
+    sink.finish().await?;
+    if b.read(&k).await?.as_deref() != Some(&new[..]) {
+        return wrong("finish did not publish the new value");
+    }
+    // Abort and drop leave the old value and no staging a list can see; the next stream works.
+    for how in ["abort", "drop"] {
+        b.write(&k, old.clone()).await?;
+        let mut sink = open_sink(b, &k, atomic).await?;
+        sink.write(&new[..10_000]).await?;
+        if how == "abort" {
+            sink.abort().await?;
+        } else {
+            drop(sink);
+        }
+        if b.read(&k).await?.as_deref() != Some(&old[..]) {
+            return wrong(format!("{how} changed the old value"));
+        }
+        let mut next = open_sink(b, &k, atomic).await?;
+        next.write(&new[..100]).await?;
+        let keys = keys_under(b, base).await?;
+        if keys != [k.clone()] {
+            return wrong(format!(
+                "after {how} the store lists {keys:?}, want only the key"
+            ));
+        }
+        next.abort().await?;
+    }
+    Ok(())
+}
+
+async fn write_stream_atomic<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
+    write_stream(b, base, true).await?;
+    const LEN: usize = 65536;
+    const READERS: usize = 4;
+    const REPLACES: usize = 40;
+    let key = format!("{base}c");
+    let key = key.as_str();
+    let a = vec![b'A'; LEN];
+    let c = vec![b'B'; LEN];
+    b.write(key, a.clone()).await?;
+    let done = std::cell::Cell::new(false);
+    let done = &done;
+    let mut tasks: Vec<Task<'_, Result<(), Failure>>> = Vec::new();
+    tasks.push(Box::pin(async move {
+        for i in 0..REPLACES {
+            let v = if i % 2 == 0 { &c } else { &a };
+            let r = async {
+                let mut sink = b.write_stream_atomic(key).await?;
+                sink.write(&v[..LEN / 2]).await?;
+                sink.write(&v[LEN / 2..]).await?;
+                sink.finish().await
+            }
+            .await;
+            if let Err(e) = r {
+                done.set(true);
+                return Err(Failure::from(e));
+            }
+            yield_now().await;
+        }
+        done.set(true);
+        Ok(())
+    }));
+    for _ in 0..READERS {
+        tasks.push(Box::pin(async move {
+            for _ in 0..(REPLACES * 20) {
+                match b.read(key).await {
+                    Ok(Some(v)) => {
+                        let uniform = v.len() == LEN
+                            && v.iter().all(|x| *x == v[0])
+                            && (v[0] == b'A' || v[0] == b'B');
+                        if !uniform {
+                            done.set(true);
+                            return wrong(format!(
+                                "a reader saw a mix of old and new ({} bytes, first {:?})",
+                                v.len(),
+                                v.first()
+                            ));
+                        }
+                    }
+                    Ok(None) => {
+                        done.set(true);
+                        return wrong("the key vanished during a streamed replace");
+                    }
+                    Err(e) => {
+                        done.set(true);
+                        return Err(Failure::from(e));
+                    }
+                }
+                if done.get() {
+                    break;
+                }
+                yield_now().await;
+            }
+            Ok(())
+        }));
+    }
+    for r in join_all(tasks).await {
+        r?;
     }
     Ok(())
 }
