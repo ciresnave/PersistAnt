@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.12.0
+
+### Changed (breaking)
+- CapAnt step 2, PR-b: `persistant_core::provider::{providers, sorted, select}` and so the registry's listing and `open_named` gates are decided by `capant::evaluate` over `Matrix::to_capant()` (capant 0.0.7), where they were decided by this crate's own lookup. Same answer for every checked-in row; what changes:
+  - **A `yes` row needs its probe id.** A row with no `probe` (or `test`) metadata is *unverified* (`no evidence`), not on, so a hand-written matrix without probe ids no longer qualifies a provider. Every checked-in matrix and every `certify` output carries one.
+  - **Unmet wording**: `kv.ttl no-row` is now `kv.ttl unverified(no row)` (capant DESIGN Q3); `ProviderUnmet` gains a public field `unverified: Vec<(CapabilityId, String)>`, the reason for each id that is `Lookup::NoRow` (`no row`, `no evidence`, ...), so code that builds or exhaustively destructures `ProviderUnmet` must add it.
+  - **Durability is a capability** (`durability.process`, `durability.machine`): a provider that declares a class has a row for it and every lower class, its declared basis the evidence; a need for more than `Volatile` requires the id. The shortfall (`DurabilityShortfall`) is reported as before.
+  - Two providers sharing a name no longer matter to selection (each is given to capant under its table position). `providers()` still returns table order; `sorted` orders by the preferred ids, then measured speed, then name, now through `Evaluation::reorder_satisfiers`.
+- The recorded matrices (`matrix/*.tsv`) are regenerated at 0.12 (their rows carry the crate version's first two numbers, so evidence is earned per version); the registry refuses a provider whose rows are for another version.
+- **Consumers** (read from each repository's `origin/main` on 2026-10-29): none of auth-framework (optional `persistant-storage` feature, depends on `persistant-kv` and `persistant-sqlx` only), lightbulb, commy or agentlife parses a matrix or builds `ProviderNeeds`, so none carries a hand-written matrix; a bump of their `persistant` requirement from 0.9/0.11 is a normal minor move. configurant (`src/persistant.rs`, the GUI and TUI transfer tests) and synapse (`synapse-mailbox-persistant/src/needs.rs`) build `ProviderNeeds` and call `registry::providers`: they get the new unmet wording (`unverified(no row)` for `no-row`), and must add `unverified` to any `ProviderUnmet` they construct or destructure exhaustively. Anyone with their own `Matrix::parse` of a hand-written file must add a `probe=<id>` metadata key to each `yes` row.
+- Tests: a yes row without its probe is rejected where the same row with one qualifies; durability rests on the declared class (Process rejected for Machine, undeclared unknown, Volatile asks for nothing); the registry's unmet text says `unverified(no row)`.
+
 ## 0.11.17
 
 ### Added

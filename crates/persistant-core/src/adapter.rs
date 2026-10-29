@@ -174,7 +174,7 @@ fn row_from(r: &capant::Row, line: usize, reason_text: &str) -> Result<Row, Pars
 
 /// A `capant` config with the same facts (and none of this crate's key checks: `capant` writes
 /// what it is given, as this crate did).
-fn config_to(c: &Config, skip: Option<&str>) -> capant::Config {
+pub(crate) fn config_to(c: &Config, skip: Option<&str>) -> capant::Config {
     c.iter()
         .filter(|(k, _)| Some(*k) != skip)
         .fold(capant::Config::new(), |acc, (k, v)| acc.with(k, v))
