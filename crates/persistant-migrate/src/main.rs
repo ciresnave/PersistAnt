@@ -287,10 +287,25 @@ async fn run(cmd: &str, db: &Db, migrations: &[Migration]) -> ExitCode {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let mut args = std::env::args().skip(1);
+    // The basics come first, before any other parsing: `--help` and `--version` print on stdout and
+    // exit 0 wherever they appear; a subcommand this tool does not have exits 2 before a URL is read
+    // or a connection tried.
+    let all: Vec<String> = std::env::args().skip(1).collect();
+    if all.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    if all.iter().any(|a| a == "--version" || a == "-V") {
+        println!("persistant-migrate {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
+    let mut args = all.into_iter();
     let Some(cmd) = args.next() else {
         return fail(USAGE, 2);
     };
+    if !matches!(cmd.as_str(), "up" | "status" | "verify-fresh" | "snapshot") {
+        return fail(USAGE, 2);
+    }
     let mut dir = None::<PathBuf>;
     let mut url = std::env::var("PERSISTANT_DATABASE_URL").ok();
     let mut allow_remote = false;
