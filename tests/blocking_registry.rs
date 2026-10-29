@@ -164,3 +164,89 @@ fn eight_threads_taking_one_key_on_sqlite_get_it_once() {
         assert_eq!(got, 1, "round {round}");
     }
 }
+
+#[test]
+fn the_blocking_blob_handle_exists_only_when_asked_for_and_refuses_the_reserved_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let kv_only = open_memory();
+    assert!(kv_only.blob().is_none() && kv_only.rel().is_none());
+    for (id, endpoint) in [
+        ("memory", Endpoint::None),
+        ("fs", Endpoint::path(dir.path().join("b"))),
+    ] {
+        let wants = needs(
+            &[
+                "kv.get",
+                "kv.put",
+                "blob.read",
+                "blob.write",
+                "blob.stat",
+                "blob.list",
+            ],
+            Durability::Volatile,
+        );
+        let kv = registry::open_named(id, &endpoint, &wants).unwrap();
+        let blob = kv.blob().expect("a blob need gets a blob handle");
+        assert_eq!(blob.read("a").unwrap(), None);
+        blob.write("a", b"1".to_vec()).unwrap();
+        assert_eq!(blob.read("a").unwrap(), Some(b"1".to_vec()));
+        assert_eq!(blob.stat("a").unwrap().unwrap().len, 1);
+        let keys: Vec<String> = blob
+            .list("", None, 10)
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|e| e.key)
+            .collect();
+        assert_eq!(keys, vec!["a".to_string()], "{id}");
+        // Reserved keys are refused here as on the async handle; the key-value store is untouched.
+        let e = blob.write("kvx/6b", b"x".to_vec()).unwrap_err();
+        assert!(e.to_string().contains("key-value store"), "{e}");
+        kv.put("k", b"v".to_vec(), None).unwrap();
+        assert_eq!(kv.get("k").unwrap(), Some(b"v".to_vec()));
+        blob.delete("a").unwrap();
+        assert_eq!(blob.read("a").unwrap(), None);
+    }
+}
+
+#[cfg(feature = "registry-sqlite")]
+#[test]
+fn the_blocking_rel_handle_runs_statements_and_a_failed_transaction_keeps_nothing() {
+    use persistant::relational::{Isolation, Value};
+
+    let dir = tempfile::tempdir().unwrap();
+    let wants = needs(&["rel.values", "rel.transaction"], Durability::Volatile);
+    let kv =
+        registry::open_named("sqlite", &Endpoint::path(dir.path().join("r.db")), &wants).unwrap();
+    let rel = kv.rel().expect("a rel need gets a rel handle");
+    assert_eq!(rel.backend().0, "sqlite");
+    rel.execute("CREATE TABLE t (a INTEGER PRIMARY KEY)", &[])
+        .unwrap();
+    let n = rel
+        .transaction(
+            Isolation::default(),
+            &[
+                ("INSERT INTO t (a) VALUES (?)", &[Value::Int(1)]),
+                ("INSERT INTO t (a) VALUES (?)", &[Value::Int(2)]),
+            ],
+        )
+        .unwrap();
+    assert_eq!(n, vec![1, 1]);
+    // The second insert breaks the primary key: the first one of this transaction is rolled back.
+    let e = rel.transaction(
+        Isolation::default(),
+        &[
+            ("INSERT INTO t (a) VALUES (?)", &[Value::Int(3)]),
+            ("INSERT INTO t (a) VALUES (?)", &[Value::Int(1)]),
+        ],
+    );
+    assert!(e.is_err());
+    assert_eq!(rel.query("SELECT a FROM t", &[]).unwrap().len(), 2);
+    // Control: the same statement alone, without the duplicate, commits.
+    rel.transaction(
+        Isolation::default(),
+        &[("INSERT INTO t (a) VALUES (?)", &[Value::Int(3)])],
+    )
+    .unwrap();
+    assert_eq!(rel.query("SELECT a FROM t", &[]).unwrap().len(), 3);
+}
