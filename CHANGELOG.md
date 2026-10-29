@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.3
+
+### Changed
+- `docs/PATENT-SWEEP.md`: addendum for the 0.12.x ideas (evaluation by `capant::evaluate` with unverified, durability as a capability, version-tied evidence, the registry serving three kinds, reserved keys, the blocking mirror, Traced and Faulty wrappers, sized and concurrent timing) with proposed queries, none yet run, and the still-unread hits in priority order. Docs only.
+
 ## 0.12.2
 
 ### Changed
