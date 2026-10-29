@@ -160,7 +160,7 @@ Depends on UniSQL 0.24.4 or later from crates.io.
 ## Patent conditions (docs/PATENT-SWEEP.md second pass, 2026-10-25): do not build without re-reading the patent
 | Do not build | Re-read first |
 |---|---|
-| A runtime translation cache, library, driver, interception or ML step for `sql!` translation (keep it compile-time) | US12204528B2, US9582500B2, US20140280259A1, US12079210B2, US12147422B2 |
+| Run-time translation of a **caller's** SQL, a pre-populated or pre-verified translation library, a custom driver, interception or an ML step. The `sql!` macro stays compile-time; the run-time translator in `persistant-kv` (lazy cache) is allowed only for this crate's own constant statements, and no provider may declare `rel.source_dialect` without re-reading these and CireSnave's call (corrected 2026-10-29: the earlier row said no run-time cache anywhere, which the code contradicts) | US20140280259A1 (arguable, medium), US12079210B2 (arguable, low), US9582500B2, US12204528B2, US12147422B2 |
 | SQL grammar encoded as a type state machine | US9177017B2 |
 | The `sql!` check as a synthetic-type provider replaced at compile time | US8813027B2 |
 | Backend selection that returns a closest match (an unmet need stays an error) | US9100343B1 |
