@@ -106,6 +106,15 @@ Three new leaves, append-only: `blob.read_range`, `blob.write_stream`, `blob.wri
 3. Does the download cache resume a `.part` file (needs `read_range` of the partial and an append, which `blob.append` gives on `fs`), or restart?
 4. Which backend does mlmf run on (`fs` only, or S3 for checkpoints)?
 
+### 6.1 Answers (mlmf lane via the PM, 2026-10-29, evidence from mlmf origin/main `4c6d47b`; not re-read here)
+
+1. **mmap is not required.** mlmf's seam is `ByteSource::as_bytes()` (a whole slice) plus `RangedSource::read_range` (no caller outside its own implementation); parsers take whole slices, so range-only parsing is not built yet. `blob.local_path` is declined.
+2. **No sizes are encoded.** Writes are one whole `Vec<u8>` today (no chunking); reads are whole-file. The default chunk (8 MiB) and the bounded-memory test stand on this note's own numbers, not mlmf's.
+3. **No resume.** `HubSource::download` does `File::create(.part)`, `io::copy`, `rename` (source-hub `lib.rs:222-250`); a retry restarts at 0 with no Range header. So the resume use of `read_range` and `append` in section 2 is not demanded.
+4. **`fs` only**; no S3 or `object_store` dependency anywhere. So work orders 1 to 3 (memory, then `opendal-fs`, then the crash test and rows) are what mlmf needs; S3 qualification is not demanded by mlmf and stays a design property of the trait, not a work order.
+
+**Work order 1 may start once this note merges.**
+
 ## 7. Patent note
 
 A new capability family, so `docs/PATENT-SWEEP.md` asks for a re-sweep before it ships. Ideas to sweep (queries not yet run): ranged read of a stored value through a uniform storage trait; staged streamed write invisible until a finish call, with abort-on-drop and staging cleanup at next open; a streamed-write contract tested with a killed writer and a known-bad control. Standing conditions in `ROADMAP.md` are untouched.
