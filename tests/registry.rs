@@ -54,6 +54,25 @@ fn a_need_lists_only_the_backends_that_have_all_of_it_and_says_why() {
 }
 
 #[test]
+fn explain_is_capants_line_per_need_for_one_provider() {
+    let needs = ProviderNeeds::new(
+        vec![id("kv.get"), id("kv.no_such_capability")],
+        Durability::Volatile,
+    );
+    let lines = registry::explain(&needs, "memory").expect("memory is a known id");
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].starts_with("kv.get: yes"), "{lines:?}");
+    // Known-bad control: the id nobody certifies is not "yes" for a provider that qualifies on kv.get.
+    assert!(
+        lines[1].starts_with("kv.no_such_capability: unverified"),
+        "{lines:?}"
+    );
+    // An id that is not in the table is None, and registry::providers still refuses the same need.
+    assert_eq!(registry::explain(&needs, "no-such-backend"), None);
+    assert!(registry::providers(&needs).is_err());
+}
+
+#[test]
 fn nothing_satisfying_is_an_error_naming_each_backends_unmet_id() {
     let needs = ProviderNeeds::new(
         vec![id("kv.get"), id("kv.no_such_capability")],

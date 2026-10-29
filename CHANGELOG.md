@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.5
+
+### Added
+- `registry::explain(needs, id) -> Option<Vec<String>>` and `persistant_core::provider::explain`: `capant`'s own account of one provider against a need, one line per need exactly as `Evaluation::explain` renders it (`kv.ttl: yes (probe ..., ...)`, `kv.ttl: unverified ...`), whether or not the provider qualified; `None` for an id not offered. For callers that show a reason per backend (ConfigurAnt joins the lines with `"; "` into `Choice.reason`); `Unmet` and the listing text are unchanged. Additive. Tests: one line per need, an uncertified id is `unverified` not `yes`, an unknown id is `None`.
+
 ## 0.12.4
 
 ### Added
