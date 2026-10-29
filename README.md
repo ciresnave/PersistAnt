@@ -11,7 +11,31 @@ give them, instead of silently doing something weaker.
 > [`docs/DESIGN-KINDS.md`](https://github.com/ciresnave/PersistAnt/blob/main/docs/DESIGN-KINDS.md) and `ROADMAP.md`.
 > The main API is async.
 
-## Usage
+## Hello
+
+```sh
+cargo add persistant --features registry
+```
+
+```text
+use persistant::blocking::registry;
+use persistant::capability::{CapabilityId, choose::Durability, provider::ProviderNeeds};
+use persistant::registry::Endpoint;
+fn main() {
+    let ids = ["kv.get", "kv.put"].map(|s| CapabilityId::new(s).unwrap());
+    let needs = ProviderNeeds::new(ids.to_vec(), Durability::Volatile); // lost at exit is fine
+    let kv = registry::open_named("memory", &Endpoint::None, &needs).unwrap(); // None: no path
+    kv.put("hello", b"world".to_vec(), None).unwrap(); // None: never expires
+    assert_eq!(kv.get("hello").unwrap(), Some(b"world".to_vec()));
+}
+```
+
+It states what the program needs (`kv.get`, `kv.put`; `Volatile` means losing the data at exit is fine), asks the
+registry for the backend named `memory`, and uses it. A backend that cannot give what was asked is refused at the
+open, by name. This block is the file `examples/hello.rs` (shown as plain text because it needs the `registry` feature, which a doc test of the default build does not have): CI builds and runs that file, and `tests/readme_hello.rs`
+fails if the two differ.
+
+## Records and the `Store`
 
 ```rust
 use persistant::{Config, Need, Needs, Record, Store};
