@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Certify `KvOnRelational` over a real SQLite file and print the matrix file on stdout.
+//! Certify `KvOnRelational` and the relational kind over a real SQLite file (the plain and the durable
+//! profile) and print the matrix file on stdout.
 //!
 //! `cargo run -q -p persistant-sqlx --features sqlite --example matrix_sqlite > matrix/sqlx-sqlite.tsv`
 //!
@@ -45,15 +46,29 @@ async fn main() {
     // `sqlite-full`. Key-value leaves only: that is the layer a registry handle serves.
     let full_path =
         std::env::temp_dir().join(format!("persistant-matrix-full-{}.db", std::process::id()));
-    let full = KvOnRelational::open(
-        SqliteBackend::open_durable(&full_path)
-            .await
-            .expect("open durable"),
-    )
-    .await
-    .expect("open kv durable");
+    let full_db = SqliteBackend::open_durable(&full_path)
+        .await
+        .expect("open durable");
+    let full_rel = full_db.clone();
+    let full = KvOnRelational::open(full_db)
+        .await
+        .expect("open kv durable");
     rows.extend(
         persistant_kv::conformance::certify(&full, &config, &env)
+            .await
+            .into_iter()
+            .map(|c| c.row),
+    );
+    // The relational kind's leaves and the migration ledger on the durable profile too, so a
+    // registry `rel.*` need finds rows for `sqlite-full` (it was listed for key-value only).
+    rows.extend(
+        persistant_relational::conformance::certify(&full_rel, &config, &env)
+            .await
+            .into_iter()
+            .map(|c| c.row),
+    );
+    rows.extend(
+        persistant_relational::migrate_conformance::certify(&full_rel, &config, &env)
             .await
             .into_iter()
             .map(|c| c.row),
