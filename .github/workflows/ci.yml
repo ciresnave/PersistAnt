@@ -53,6 +53,9 @@ jobs:
       - name: cargo run --locked persistant --example hello
         run: cargo run --locked -q -p persistant --features registry --example hello
 
+      - name: cargo run --locked persistant --example registry_blob
+        run: cargo run --locked -q -p persistant --features registry --example registry_blob
+
   msrv:
     name: MSRV (rust-version in Cargo.toml)
     runs-on: ubuntu-latest

@@ -17,12 +17,17 @@
 //! A failure of the worker itself (it is gone, a task panicked) is reported as
 //! [`KvError::Backend`] with the reason; an operation's own errors are returned as they are.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::blob::{BlobBackend, BlobError, Entry, KeyLayout, Page};
 use crate::capability::provider::ProviderNeeds;
 use crate::kv::{BatchOp, KeyPage, KvBackend, KvError, ValuePage};
 use crate::registry::{Endpoint, Handle, OpenError, OpenOptions};
+use crate::relational::{
+    Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
+};
 
 pub use crate::registry::{Listing, providers, providers_ranked};
 
@@ -113,6 +118,31 @@ impl KvHandle {
         self.worker
             .run(async move { Ok(fut.await) })
             .map_err(|e| KvError::Backend(e.to_string()))?
+    }
+
+    /// Run `fut` on the worker and wait; a failure of the worker itself becomes the error type's
+    /// `Backend` text through `worker_failed`.
+    fn call_as<T, E, Fut>(&self, fut: Fut, worker_failed: fn(String) -> E) -> Result<T, E>
+    where
+        T: Send + 'static,
+        E: Send + 'static,
+        Fut: Future<Output = Result<T, E>> + Send + 'static,
+    {
+        self.worker
+            .run(async move { Ok(fut.await) })
+            .map_err(|e| worker_failed(e.to_string()))?
+    }
+
+    /// The blob store, blocking: `Some` exactly when the needs named a `blob.*` capability. It
+    /// borrows this handle, so the worker is shared and one handle serves every kind.
+    pub fn blob(&self) -> Option<BlobHandle<'_>> {
+        self.handle().blob().map(|_| BlobHandle { owner: self })
+    }
+
+    /// The relational database, blocking: `Some` exactly when the needs named a `rel.*`
+    /// capability.
+    pub fn rel(&self) -> Option<RelHandle<'_>> {
+        self.handle().rel().map(|_| RelHandle { owner: self })
     }
 
     /// See [`KvBackend::get`].
@@ -241,5 +271,188 @@ impl Drop for KvHandle {
                 Ok(())
             });
         }
+    }
+}
+
+/// The blob store of an opened [`KvHandle`], blocking. Methods are those of [`BlobBackend`]. The
+/// keys `kv`, `kvx` and anything under `kv/` or `kvx/` are reserved, as on the async handle
+/// ([`crate::registry::AnyBlob`]).
+#[derive(Debug, Clone, Copy)]
+pub struct BlobHandle<'a> {
+    owner: &'a KvHandle,
+}
+
+impl BlobHandle<'_> {
+    fn run<T, Fut>(&self, f: impl FnOnce(Arc<Handle>) -> Fut) -> Result<T, BlobError>
+    where
+        T: Send + 'static,
+        Fut: Future<Output = Result<T, BlobError>> + Send + 'static,
+    {
+        let fut = f(self.owner.handle().clone());
+        self.owner.call_as(fut, BlobError::Backend)
+    }
+
+    fn blob(&self) -> &crate::registry::AnyBlob {
+        self.owner
+            .handle()
+            .blob()
+            .expect("a blob handle has a blob")
+    }
+
+    /// The backend's name and version as the matrix has them.
+    pub fn backend(&self) -> (String, String) {
+        (
+            self.blob().backend().to_string(),
+            self.blob().version().to_string(),
+        )
+    }
+
+    /// See [`BlobBackend::key_layout`].
+    pub fn key_layout(&self) -> KeyLayout {
+        self.blob().key_layout()
+    }
+
+    /// See [`BlobBackend::read`].
+    pub fn read(&self, key: &str) -> Result<Option<Vec<u8>>, BlobError> {
+        let key = key.to_string();
+        self.run(|h| async move { h.blob().expect("present").read(&key).await })
+    }
+
+    /// See [`BlobBackend::write`].
+    pub fn write(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        let key = key.to_string();
+        self.run(|h| async move { h.blob().expect("present").write(&key, bytes).await })
+    }
+
+    /// See [`BlobBackend::delete`].
+    pub fn delete(&self, key: &str) -> Result<(), BlobError> {
+        let key = key.to_string();
+        self.run(|h| async move { h.blob().expect("present").delete(&key).await })
+    }
+
+    /// See [`BlobBackend::stat`].
+    pub fn stat(&self, key: &str) -> Result<Option<Entry>, BlobError> {
+        let key = key.to_string();
+        self.run(|h| async move { h.blob().expect("present").stat(&key).await })
+    }
+
+    /// See [`BlobBackend::list`].
+    pub fn list(&self, prefix: &str, after: Option<&str>, limit: usize) -> Result<Page, BlobError> {
+        let (prefix, after) = (prefix.to_string(), after.map(str::to_string));
+        self.run(|h| async move {
+            h.blob()
+                .expect("present")
+                .list(&prefix, after.as_deref(), limit)
+                .await
+        })
+    }
+
+    /// See [`BlobBackend::create_exclusive`].
+    pub fn create_exclusive(&self, key: &str, bytes: Vec<u8>) -> Result<bool, BlobError> {
+        let key = key.to_string();
+        self.run(|h| async move {
+            h.blob()
+                .expect("present")
+                .create_exclusive(&key, bytes)
+                .await
+        })
+    }
+
+    /// See [`BlobBackend::replace_atomic`].
+    pub fn replace_atomic(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        let key = key.to_string();
+        self.run(|h| async move { h.blob().expect("present").replace_atomic(&key, bytes).await })
+    }
+
+    /// See [`BlobBackend::append`].
+    pub fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        let key = key.to_string();
+        self.run(|h| async move { h.blob().expect("present").append(&key, bytes).await })
+    }
+}
+
+/// The relational database of an opened [`KvHandle`], blocking. Statements are written in the
+/// dialect it reports.
+///
+/// A transaction whose later statements depend on the rows of earlier ones cannot be held open
+/// across blocking calls (it borrows the connection on the worker); [`RelHandle::transaction`] runs
+/// a list of statements in one transaction instead. Logic that needs more is the async handle's
+/// `begin`.
+#[derive(Debug, Clone, Copy)]
+pub struct RelHandle<'a> {
+    owner: &'a KvHandle,
+}
+
+impl RelHandle<'_> {
+    fn run<T, Fut>(&self, f: impl FnOnce(Arc<Handle>) -> Fut) -> Result<T, RelError>
+    where
+        T: Send + 'static,
+        Fut: Future<Output = Result<T, RelError>> + Send + 'static,
+    {
+        let fut = f(self.owner.handle().clone());
+        self.owner.call_as(fut, RelError::Backend)
+    }
+
+    fn rel(&self) -> &crate::registry::AnyRel {
+        self.owner.handle().rel().expect("a rel handle has a rel")
+    }
+
+    /// The backend's name and version as the matrix has them.
+    pub fn backend(&self) -> (String, String) {
+        (
+            self.rel().backend().to_string(),
+            self.rel().version().to_string(),
+        )
+    }
+
+    /// The dialect statements must be written in.
+    pub fn dialect(&self) -> Dialect {
+        self.rel().dialect()
+    }
+
+    /// The per-call bound the handle was opened with, if any.
+    pub fn call_bound(&self) -> Option<Duration> {
+        self.rel().call_bound()
+    }
+
+    /// See [`RelationalBackend::execute`].
+    pub fn execute(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        let (sql, params) = (sql.to_string(), params.to_vec());
+        self.run(|h| async move { h.rel().expect("present").execute(&sql, &params).await })
+    }
+
+    /// See [`RelationalBackend::query`].
+    pub fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
+        let (sql, params) = (sql.to_string(), params.to_vec());
+        self.run(|h| async move { h.rel().expect("present").query(&sql, &params).await })
+    }
+
+    /// Run `statements` in order in one transaction at (at least) `isolation` and commit. The
+    /// result is the rows affected by each. If any statement fails the transaction is rolled back,
+    /// nothing is kept, and that statement's error is returned.
+    pub fn transaction(
+        &self,
+        isolation: Isolation,
+        statements: &[(&str, &[Value])],
+    ) -> Result<Vec<u64>, RelError> {
+        let statements: Vec<(String, Vec<Value>)> = statements
+            .iter()
+            .map(|(sql, params)| (sql.to_string(), params.to_vec()))
+            .collect();
+        self.run(|h| async move {
+            let mut tx = h.rel().expect("present").begin(isolation).await?;
+            let mut affected = Vec::with_capacity(statements.len());
+            for (sql, params) in &statements {
+                match tx.execute(sql, params).await {
+                    Ok(n) => affected.push(n),
+                    Err(e) => {
+                        let _ = tx.rollback().await;
+                        return Err(e);
+                    }
+                }
+            }
+            tx.commit().await?;
+            Ok(affected)
+        })
     }
 }

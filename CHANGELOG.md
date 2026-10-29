@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.17
+
+### Added
+- Registry, work order 4 of `docs/DESIGN-REGISTRY-KINDS.md` (audit row 11, now complete): the blocking mirror. `blocking::registry::KvHandle::blob()` returns a `BlobHandle` (all nine `BlobBackend` operations, blocking) and `rel()` a `RelHandle` (`execute`, `query`, `dialect`, `call_bound`, and `transaction(isolation, statements)`, which runs the statements in one transaction and rolls back if one fails); both borrow the `KvHandle`, so one worker serves every kind. A transaction held open across blocking calls is not offered (the async handle has `begin`).
+- `examples/registry_blob.rs` (listing, `append`, `replace_atomic`, `stat`, `list`, a reserved key refused), run by CI. `docs/REGISTRY-FOR-STORE-USERS.md`: `Stat`, append, `replace_atomic` and listing now map to `blob()`, `rel()` is described, and the reserved-key limit is stated.
+
 ## 0.11.16
 
 ### Added
