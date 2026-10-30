@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.3
+
+- Dependencies to their latest: `sha2` 0.10.9 -> 0.11.1 (`persistant-macros`, `persistant-migrate`, `persistant-sqlx`; breaking upstream, our call sites only use `digest()` and need no change; SHA-256/SHA-384 outputs are unchanged and the existing checksum tests pin them). Lock-only: `ctutils` 0.4.7, `js-sys` 0.3.107, `log` 0.4.35, `utf8_iter` 1.1.0 (adds `utf_types` 1.0.0), `wasm-bindgen` and its macro/macro-support/shared crates 0.2.130, Held back, not by our manifests: `crypto-common` 0.1.6 (0.1.7 would downgrade `generic-array` 0.14.9 to 0.14.7, `cargo update -p crypto-common --precise 0.1.7`); `sha2` 0.10.9 remains in the lock only as `sqlx-core` 0.9.0's own dependency (sqlx 0.9.0 is the latest).
+
 ## 0.13.1
 
 - Fix a Windows CI flake: `persistant-opendal` and `persistant-sqlx` each had examples named `matrix` and `speed`, which share `target/<profile>/examples/<name>.exe`; cargo warned of an output filename collision and a parallel build then failed at random with `LNK1104: cannot open file ...\examples\matrix.exe`. The four examples are now `opendal_matrix`, `opendal_speed`, `sqlx_matrix`, `sqlx_speed`; the CI steps, the example doc comments and recorded rerun commands, and `matrix/README.md` follow. New `tests/example_names.rs` fails if two workspace members declare an example of the same name (its positive control feeds it the old names). Recorded history in `bench/*.tsv` and older CHANGELOG entries keeps the old command text. Anyone running these by hand: `--example opendal_matrix` etc.
