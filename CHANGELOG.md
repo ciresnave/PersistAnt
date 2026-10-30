@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.1
+
+- Blob streams work order 3, first step (red-first, DRAFT): `crates/persistant-opendal/tests/stream_staging.rs`. A killed writer's staging in the `fs` scratch directory must be removed when a store is opened (fails today: OpenDAL names and owns those files, nothing cleans them), and staging held by a live writer in another process must be left alone (passes today; guards the fix). The fix follows in this PR.
+
 ## 0.13.0
 
 - **Breaking:** `capant` 0.0.16 -> 0.1.0 (root dev-dependency and `persistant-core`). `Matrix::to_capant()` and `capant_provider(..)` are public and return capant types, so the change reaches this crate's API; capant 0.1.0 also makes its result types, `Role` and `Outcome` `#[non_exhaustive]`. **Migration:** depend on `capant = "0.1"` in your own crate (two capant versions in one build give two incompatible sets of types), and give any `match` on those enums a wildcard arm. No source change was needed in this repository.
