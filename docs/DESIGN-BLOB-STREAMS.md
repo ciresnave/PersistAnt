@@ -94,6 +94,10 @@ Three new leaves, append-only: `blob.read_range`, `blob.write_stream`, `blob.wri
 
 Staging names carry an owner id (process id plus a random token) and the sink holds an advisory file lock on its staging file for as long as it lives. Cleanup (at open and before a new stream) removes only staging whose lock it can take, that is, staging whose owner is gone; staging held by a live sink in another process is left alone. Test: store opened in a second process while a sink in the first is mid-stream; the first sink's `finish` still succeeds with the whole value. Known-bad control: a cleanup that removes every staging file fails it.
 
+### 3.9 Findings from work order 2 (0.12.8)
+
+Read from `opendal-service-fs` 0.59.5 and pinned by `crates/persistant-opendal/tests/conformance.rs`: with `atomic_write_dir` the writer stages in a temp file, `close` renames it and `abort` removes it; **without it the writer opens the target in place and has no abort**, so both streamed writes are refused (`Unsupported`) there rather than offered with a contract they cannot keep. Neither the memory nor the fs service gives a version token, so `blob.read_range.consistent` is off as missing on both; the `fs` tag in 3.7 is not built (an mtime tag fails a quick same-length replacement, an inode is not portable to Windows). Dropping an unfinished sink aborts on the current runtime if there is one; with none, the scratch file waits for the cleanup of 3.8, which is work order 3.
+
 ## 4. Work orders (each a PR; none starts before this note merges)
 
 1. Vocabulary ids, `read_range`, `read_range_if` with `Entry.tag` (3.7) and `BlobSink` in the trait with `Unsupported` defaults, `memory` implementation, the contract tests (1 to 3, 5 and 7) with their known-bad controls, the chunk helpers, and `Traced` and `Instrumented` forwarding the new operations.

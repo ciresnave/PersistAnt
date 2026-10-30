@@ -663,6 +663,25 @@ async fn the_blob_handle_refuses_the_keys_the_key_value_store_keeps() {
             assert!(blob.read(key).await.is_err(), "{name} {key}");
             assert!(blob.delete(key).await.is_err(), "{name} {key}");
             assert!(blob.stat(key).await.is_err(), "{name} {key}");
+            // The ranged and streamed operations go through the same check (work order 2): the
+            // refusal names the key-value store, not "does not support".
+            let e = blob.read_range(key, 0, 1).await.unwrap_err();
+            assert!(
+                e.to_string().contains("key-value store"),
+                "{name} {key}: {e}"
+            );
+            for atomic in [false, true] {
+                let r = if atomic {
+                    blob.write_stream_atomic(key).await
+                } else {
+                    blob.write_stream(key).await
+                };
+                let e = r.err().expect("a reserved key opens no stream");
+                assert!(
+                    e.to_string().contains("key-value store"),
+                    "{name} {key}: {e}"
+                );
+            }
         }
         assert!(blob.list("kv/", None, 10).await.is_err());
         assert!(blob.list("kvx/", None, 10).await.is_err());

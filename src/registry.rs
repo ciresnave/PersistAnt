@@ -55,7 +55,7 @@ use std::pin::Pin;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use persistant_blob::{BlobBackend, BlobError, Entry, KeyLayout, Page};
+use persistant_blob::{BlobBackend, BlobError, BlobSink, Entry, KeyLayout, Page};
 use persistant_core::choose::{Declared, Durability, Need};
 use persistant_core::provider::{
     self, EndpointSpec, Provider, ProviderNeeds, Sorted, Surface, Unmet,
@@ -1145,6 +1145,33 @@ impl BlobBackend for AnyBlob {
     async fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
         check(key)?;
         self.inner.append(key, bytes).await
+    }
+    async fn read_range(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+    ) -> Result<Option<Vec<u8>>, BlobError> {
+        check(key)?;
+        self.inner.read_range(key, offset, len).await
+    }
+    async fn read_range_if(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+        tag: &str,
+    ) -> Result<Option<Vec<u8>>, BlobError> {
+        check(key)?;
+        self.inner.read_range_if(key, offset, len, tag).await
+    }
+    async fn write_stream(&self, key: &str) -> Result<Box<dyn BlobSink>, BlobError> {
+        check(key)?;
+        self.inner.write_stream(key).await
+    }
+    async fn write_stream_atomic(&self, key: &str) -> Result<Box<dyn BlobSink>, BlobError> {
+        check(key)?;
+        self.inner.write_stream_atomic(key).await
     }
 }
 
