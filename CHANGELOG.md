@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.12.10
+## 0.13.0
 
-- Dependency: `capant` 0.0.16 -> 0.1.0 (root dev-dependency and `persistant-core`).
+- **Breaking:** `capant` 0.0.16 -> 0.1.0 (root dev-dependency and `persistant-core`). `Matrix::to_capant()` and `capant_provider(..)` are public and return capant types, so the change reaches this crate's API; capant 0.1.0 also makes its result types, `Role` and `Outcome` `#[non_exhaustive]`. **Migration:** depend on `capant = "0.1"` in your own crate (two capant versions in one build give two incompatible sets of types), and give any `match` on those enums a wildcard arm. No source change was needed in this repository.
 
 ## 0.12.9
 
