@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.3
+
+- Dependencies to their latest: `sha2` 0.10.9 -> 0.11.1 (`persistant-macros`, `persistant-migrate`, `persistant-sqlx`; breaking upstream, our call sites only use `digest()` and need no change; SHA-256/SHA-384 outputs are unchanged and the existing checksum tests pin them). Lock-only: `ctutils` 0.4.7, `js-sys` 0.3.107, `log` 0.4.35, `utf8_iter` 1.1.0 (adds `utf_types` 1.0.0), `wasm-bindgen` and its macro/macro-support/shared crates 0.2.130, Held back, not by our manifests: `crypto-common` 0.1.6 (0.1.7 would downgrade `generic-array` 0.14.9 to 0.14.7, `cargo update -p crypto-common --precise 0.1.7`); `sha2` 0.10.9 remains in the lock only as `sqlx-core` 0.9.0's own dependency (sqlx 0.9.0 is the latest).
+
 ## 0.13.2
 
 - Blob streams, work order 3 step 1: staging of streamed writes across processes (`docs/DESIGN-BLOB-STREAMS.md` 3.8). On `fs` with `atomic_write_dir`, `write_stream` and `write_stream_atomic` no longer go through OpenDAL's writer, whose scratch file OpenDAL names and owns (so nothing could tell a dead writer's file from a live one, and nothing ever cleaned them). The sink stages by hand: `<pid>-<seq>-<time>.part` in the scratch directory, held under an exclusive advisory lock (`File::try_lock`) while it lives, synced and renamed onto the key by `finish`; `abort` and drop remove it, with no runtime needed. A store removes `.part` files whose lock it can take when it is opened and before it starts a stream, so a killed writer's staging is cleaned and a live writer's (here or in another process) is left alone. The `memory` service keeps OpenDAL's writer. Tests: `crates/persistant-opendal/tests/stream_staging.rs` (killed writer cleaned at open, red before the sink was rewritten; live writer in a second process finishes with the whole value; a Unix-only known-bad control, a cleanup that removes every staging file, breaks it).
