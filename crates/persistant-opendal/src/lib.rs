@@ -70,6 +70,9 @@ impl OpendalBlob {
             b = b.atomic_write_dir(&dir.to_string_lossy());
         }
         let op = Operator::new(b).map_err(backend)?;
+        if let Some(dir) = atomic_write_dir {
+            clean_staging(dir);
+        }
         let config = Config::new().with(
             "atomic_write_dir",
             if atomic_write_dir.is_some() {
@@ -103,6 +106,14 @@ impl OpendalBlob {
             return Err(BlobError::Unsupported(format!(
                 "{op} without atomic_write_dir writes in place"
             )));
+        }
+        if let Some(FsDirs {
+            root,
+            scratch: Some(scratch),
+        }) = &self.fs
+        {
+            clean_staging(scratch);
+            return HandSink::open(root, scratch, key).await;
         }
         let writer = self.op.writer(key).await.map_err(backend)?;
         Ok(Box::new(OpendalSink {
@@ -341,6 +352,190 @@ impl Drop for OpendalSink {
 }
 
 static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
+
+const STAGING_SUFFIX: &str = ".part";
+
+/// A streamed write on `fs` with a scratch directory, staged by hand (docs/DESIGN-BLOB-STREAMS.md
+/// 3.3, 3.8): OpenDAL's writer names and owns its scratch file, so nothing could tell a dead
+/// writer's file from a live one. This sink creates `<pid>-<seq>-<time>.part` in the scratch
+/// directory, holds an exclusive advisory lock on it while it lives, and on `finish` syncs it and
+/// renames it onto the key. The operating system drops the lock when the process dies, however it
+/// dies, which is what [`clean_staging`] relies on.
+struct HandSink {
+    file: Option<tokio::fs::File>,
+    /// The staging file; `None` once it has been renamed or removed.
+    staged: Option<PathBuf>,
+    target: PathBuf,
+}
+
+impl HandSink {
+    async fn open(root: &Path, scratch: &Path, key: &str) -> Result<Box<dyn BlobSink>, BlobError> {
+        let io = |what: &str, e: std::io::Error| BlobError::Backend(format!("{what}: {e}"));
+        let rel = Path::new(key.trim_start_matches('/'));
+        if rel.as_os_str().is_empty()
+            || rel.components().any(|c| !matches!(c, Component::Normal(_)))
+        {
+            return Err(BlobError::Backend(format!(
+                "write_stream: {key:?} is not a path under the root"
+            )));
+        }
+        let target = root.join(rel);
+        if let Some(parent) = target.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| io("create the key's directory", e))?;
+        }
+        tokio::fs::create_dir_all(scratch)
+            .await
+            .map_err(|e| io("create the scratch directory", e))?;
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let staged = scratch.join(format!(
+            "{}-{}-{nanos:x}{STAGING_SUFFIX}",
+            std::process::id(),
+            SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&staged)
+            .map_err(|e| io("create the staging file", e))?;
+        // Our own new name: the lock cannot be held by anyone else.
+        if let Err(e) = file.try_lock() {
+            drop(file);
+            let _ = std::fs::remove_file(&staged);
+            return Err(io("lock the staging file", std::io::Error::other(e)));
+        }
+        Ok(Box::new(HandSink {
+            file: Some(tokio::fs::File::from_std(file)),
+            staged: Some(staged),
+            target,
+        }))
+    }
+
+    /// Close the handle (releasing the lock), then remove the staging file if it is still there.
+    fn discard(&mut self) {
+        self.file = None;
+        if let Some(p) = self.staged.take() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+impl BlobSink for HandSink {
+    fn write<'a>(&'a mut self, chunk: &'a [u8]) -> BoxFuture<'a, Result<(), BlobError>> {
+        Box::pin(async move {
+            use tokio::io::AsyncWriteExt;
+            let f = self
+                .file
+                .as_mut()
+                .ok_or_else(|| BlobError::Backend("the sink is finished".to_string()))?;
+            f.write_all(chunk)
+                .await
+                .map_err(|e| BlobError::Backend(format!("write the staging file: {e}")))
+        })
+    }
+
+    fn finish(mut self: Box<Self>) -> BoxFuture<'static, Result<(), BlobError>> {
+        Box::pin(async move {
+            let io = |what: &str, e: std::io::Error| BlobError::Backend(format!("{what}: {e}"));
+            let (Some(f), Some(staged)) = (self.file.as_ref(), self.staged.clone()) else {
+                return Err(BlobError::Backend("the sink is finished".to_string()));
+            };
+            if let Err(e) = f.sync_all().await {
+                self.discard();
+                return Err(io("sync the staging file", e));
+            }
+            // The lock is released first. On Windows `LockFileEx` is mandatory, not advisory: a file
+            // renamed onto the key with the lock still held would refuse every reader (os error 33,
+            // seen on CI) until the handle closed. The price is a window between this unlock and the
+            // rename in which a cleanup in another process may remove the staging file; the rename
+            // then fails, `finish` returns an error, and the old value is untouched.
+            if let Some(file) = self.file.take() {
+                let std_file = file.into_std().await;
+                if let Err(e) = std_file.unlock() {
+                    drop(std_file);
+                    self.discard();
+                    return Err(io("release the staging lock", e));
+                }
+            }
+            match rename_retrying(staged, self.target.clone()).await {
+                Ok(()) => {
+                    self.staged = None;
+                    self.file = None;
+                    Ok(())
+                }
+                Err(e) => {
+                    self.discard();
+                    Err(io("rename the staging file onto the key", e))
+                }
+            }
+        })
+    }
+
+    fn abort(mut self: Box<Self>) -> BoxFuture<'static, Result<(), BlobError>> {
+        Box::pin(async move {
+            self.discard();
+            Ok(())
+        })
+    }
+}
+
+impl Drop for HandSink {
+    /// A dropped, unfinished sink removes its own staging; no runtime is needed.
+    fn drop(&mut self) {
+        self.discard();
+    }
+}
+
+/// `rename`, retried for a short while on `PermissionDenied`. On Windows a rename onto a key a
+/// reader has open (or that an indexer or scanner touches at that instant) can fail with a sharing
+/// violation that clears within milliseconds; any other error, and the last one, is returned.
+async fn rename_retrying(from: PathBuf, to: PathBuf) -> std::io::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut attempt = 0;
+        loop {
+            match std::fs::rename(&from, &to) {
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < 50 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                other => return other,
+            }
+        }
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
+/// Remove staging files in `scratch` whose writer is gone: a `.part` file is removed only if its
+/// lock can be taken, so a live sink in this or another process keeps its file. Errors are left
+/// alone (the directory may not exist yet; a file may belong to a writer that is finishing).
+fn clean_staging(scratch: &Path) {
+    let Ok(dir) = std::fs::read_dir(scratch) else {
+        return;
+    };
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some(&STAGING_SUFFIX[1..]) {
+            continue;
+        }
+        let Ok(file) = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+        else {
+            continue;
+        };
+        if file.try_lock().is_ok() {
+            drop(file);
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
 
 /// Exclusive create for `fs` with a scratch directory: write the whole value to a new file in the
 /// scratch directory, then `hard_link` it to the target. The link is atomic and fails if the target
