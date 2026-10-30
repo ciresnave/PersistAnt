@@ -2,7 +2,7 @@
 //! Certify `KvOnRelational` over a real PostgreSQL and print the matrix file on stdout.
 //!
 //! `PERSISTANT_TEST_DATABASE_URL=postgres://... \
-//!    cargo run -q -p persistant-sqlx --example matrix > matrix/sqlx-postgres.tsv`
+//!    cargo run -q -p persistant-sqlx --example sqlx_matrix > matrix/sqlx-postgres.tsv`
 //!
 //! CI regenerates this against its pinned service container and fails if it differs from the
 //! checked-in `matrix/sqlx-postgres.tsv`. Rows are keyed by the *server's* version, so a server

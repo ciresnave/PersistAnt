@@ -1,8 +1,16 @@
 # Changelog
 
+## 0.13.2
+
+- Blob streams, work order 3 step 1: staging of streamed writes across processes (`docs/DESIGN-BLOB-STREAMS.md` 3.8). On `fs` with `atomic_write_dir`, `write_stream` and `write_stream_atomic` no longer go through OpenDAL's writer, whose scratch file OpenDAL names and owns (so nothing could tell a dead writer's file from a live one, and nothing ever cleaned them). The sink stages by hand: `<pid>-<seq>-<time>.part` in the scratch directory, held under an exclusive advisory lock (`File::try_lock`) while it lives, synced and renamed onto the key by `finish`; `abort` and drop remove it, with no runtime needed. A store removes `.part` files whose lock it can take when it is opened and before it starts a stream, so a killed writer's staging is cleaned and a live writer's (here or in another process) is left alone. The `memory` service keeps OpenDAL's writer. Tests: `crates/persistant-opendal/tests/stream_staging.rs` (killed writer cleaned at open, red before the sink was rewritten; live writer in a second process finishes with the whole value; a Unix-only known-bad control, a cleanup that removes every staging file, breaks it).
+- Windows detail found by CI and fixed here: `LockFileEx` is mandatory, not advisory, so a file renamed onto the key with its lock still held refused every reader (os error 33). `finish` releases the lock and closes the handle before the rename; the price is a window in which another process's cleanup could remove the staging file, which makes `finish` return an error with the old value untouched. `finish` also retries a rename that fails with a sharing violation for about half a second.
+- The conformance test summary now prints why a leaf is off, so a failure seen on one runner can be read from its log.
+- Not in this change (named rows in `ROADMAP.md` 4): crash test 4b (kill during `finish`, with the in-place control), the old-value variant of 4a, the bounded-memory test, and the `docs/DESIGN-KINDS.md` section 3 ids.
+
 ## 0.13.1
 
-- Blob streams work order 3, first step (red-first, DRAFT): `crates/persistant-opendal/tests/stream_staging.rs`. A killed writer's staging in the `fs` scratch directory must be removed when a store is opened (fails today: OpenDAL names and owns those files, nothing cleans them), and staging held by a live writer in another process must be left alone (passes today; guards the fix). The fix follows in this PR.
+- Fix a Windows CI flake: `persistant-opendal` and `persistant-sqlx` each had examples named `matrix` and `speed`, which share `target/<profile>/examples/<name>.exe`; cargo warned of an output filename collision and a parallel build then failed at random with `LNK1104: cannot open file ...\examples\matrix.exe`. The four examples are now `opendal_matrix`, `opendal_speed`, `sqlx_matrix`, `sqlx_speed`; the CI steps, the example doc comments and recorded rerun commands, and `matrix/README.md` follow. New `tests/example_names.rs` fails if two workspace members declare an example of the same name (its positive control feeds it the old names). Recorded history in `bench/*.tsv` and older CHANGELOG entries keeps the old command text. Anyone running these by hand: `--example opendal_matrix` etc.
+
 
 ## 0.13.0
 

@@ -3,7 +3,7 @@
 //! (OpenDAL memory and fs) and print the
 //! speed data file on stdout (stage 3 of backend benchmarking, `persistant_kv::speed`).
 //!
-//! `cargo run -q --release -p persistant-opendal --example speed > bench/opendal-speed.tsv`
+//! `cargo run -q --release -p persistant-opendal --example opendal_speed > bench/opendal-speed.tsv`
 //!
 //! A backend that fails the contract for a workload is listed with its reason and not timed. The
 //! file carries the machine, OS, date and this command; a figure is only meaningful there.
@@ -28,7 +28,7 @@ fn merged(a: &Config, b: &Config) -> Config {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let env = Environment::detect(
-        "cargo run -q --release -p persistant-opendal --example speed > bench/opendal-speed.tsv",
+        "cargo run -q --release -p persistant-opendal --example opendal_speed > bench/opendal-speed.tsv",
         None,
     );
     let mut table = SpeedTable::default();

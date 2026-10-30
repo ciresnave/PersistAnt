@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Certify the OpenDAL blob driver and `KvOnBlob` over it, and print the matrix file on stdout.
 //!
-//! `cargo run -q -p persistant-opendal --example matrix > matrix/opendal.tsv`
+//! `cargo run -q -p persistant-opendal --example opendal_matrix > matrix/opendal.tsv`
 //!
 //! CI regenerates this on Linux and fails if it differs from the checked-in `matrix/opendal.tsv`,
 //! so the file is a record of what the code certified, not a claim. No clock field: the commit
