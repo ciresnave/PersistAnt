@@ -8,10 +8,10 @@ capability	blob.create_exclusive	opendal-memory	0.59.5		yes		arch=x86_64;contend
 capability	blob.replace_atomic.concurrent_read	opendal-memory	0.59.5		yes		arch=x86_64;os=linux;probe=blob::blob.replace_atomic.concurrent_read;readers=4;replaces=40;value_bytes=65536	
 capability	blob.append	opendal-memory	0.59.5		no	missing	arch=x86_64;os=linux;probe=blob::blob.append	blob backend does not support: Unsupported (permanent) at write => The service memory does not support the operation write with the arguments append. Please verify if the relevant flags have been enabled, or submit an issue if you believe this is incorrect.
 capability	blob.append.concurrent_whole	opendal-memory	0.59.5		no	missing	arch=x86_64;contenders=16;os=linux;probe=blob::blob.append.concurrent_whole;records=10;value_bytes=64	blob backend does not support: Unsupported (permanent) at write => The service memory does not support the operation write with the arguments append. Please verify if the relevant flags have been enabled, or submit an issue if you believe this is incorrect.
-capability	blob.read_range	opendal-memory	0.59.5		no	missing	arch=x86_64;os=linux;probe=blob::blob.read_range	blob backend does not support: read_range
+capability	blob.read_range	opendal-memory	0.59.5		yes		arch=x86_64;os=linux;probe=blob::blob.read_range	
 capability	blob.read_range.consistent	opendal-memory	0.59.5		no	missing	arch=x86_64;os=linux;probe=blob::blob.read_range.consistent	blob backend does not support: stat returns no version tag
-capability	blob.write_stream	opendal-memory	0.59.5		no	missing	arch=x86_64;os=linux;probe=blob::blob.write_stream	blob backend does not support: write_stream
-capability	blob.write_stream.atomic	opendal-memory	0.59.5		no	missing	arch=x86_64;os=linux;probe=blob::blob.write_stream.atomic;readers=4;replaces=40;value_bytes=65536	blob backend does not support: write_stream_atomic
+capability	blob.write_stream	opendal-memory	0.59.5		yes		arch=x86_64;os=linux;probe=blob::blob.write_stream	
+capability	blob.write_stream.atomic	opendal-memory	0.59.5		yes		arch=x86_64;os=linux;probe=blob::blob.write_stream.atomic;readers=4;replaces=40;value_bytes=65536	
 capability	blob.read	opendal-fs	0.59.5	atomic_write_dir=unset	yes		arch=x86_64;os=linux;probe=blob::blob.read	
 capability	blob.write	opendal-fs	0.59.5	atomic_write_dir=unset	yes		arch=x86_64;os=linux;probe=blob::blob.write	
 capability	blob.delete	opendal-fs	0.59.5	atomic_write_dir=unset	yes		arch=x86_64;os=linux;probe=blob::blob.delete	
@@ -21,10 +21,10 @@ capability	blob.create_exclusive	opendal-fs	0.59.5	atomic_write_dir=unset	yes		a
 capability	blob.replace_atomic.concurrent_read	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;probe=blob::blob.replace_atomic.concurrent_read;readers=4;replaces=40;value_bytes=65536	blob backend does not support: replace_atomic without atomic_write_dir writes in place
 capability	blob.append	opendal-fs	0.59.5	atomic_write_dir=unset	yes		arch=x86_64;os=linux;probe=blob::blob.append	
 capability	blob.append.concurrent_whole	opendal-fs	0.59.5	atomic_write_dir=unset	yes		arch=x86_64;contenders=16;os=linux;probe=blob::blob.append.concurrent_whole;records=10;value_bytes=64	
-capability	blob.read_range	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;probe=blob::blob.read_range	blob backend does not support: read_range
+capability	blob.read_range	opendal-fs	0.59.5	atomic_write_dir=unset	yes		arch=x86_64;os=linux;probe=blob::blob.read_range	
 capability	blob.read_range.consistent	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;probe=blob::blob.read_range.consistent	blob backend does not support: stat returns no version tag
-capability	blob.write_stream	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;probe=blob::blob.write_stream	blob backend does not support: write_stream
-capability	blob.write_stream.atomic	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;probe=blob::blob.write_stream.atomic;readers=4;replaces=40;value_bytes=65536	blob backend does not support: write_stream_atomic
+capability	blob.write_stream	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;probe=blob::blob.write_stream	blob backend does not support: write_stream without atomic_write_dir writes in place
+capability	blob.write_stream.atomic	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;probe=blob::blob.write_stream.atomic;readers=4;replaces=40;value_bytes=65536	blob backend does not support: write_stream_atomic without atomic_write_dir writes in place
 capability	blob.read	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;os=linux;probe=blob::blob.read	
 capability	blob.write	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;os=linux;probe=blob::blob.write	
 capability	blob.delete	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;os=linux;probe=blob::blob.delete	
@@ -34,10 +34,10 @@ capability	blob.create_exclusive	opendal-fs	0.59.5	atomic_write_dir=set	yes		arc
 capability	blob.replace_atomic.concurrent_read	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;os=linux;probe=blob::blob.replace_atomic.concurrent_read;readers=4;replaces=40;value_bytes=65536	
 capability	blob.append	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;os=linux;probe=blob::blob.append	
 capability	blob.append.concurrent_whole	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;contenders=16;os=linux;probe=blob::blob.append.concurrent_whole;records=10;value_bytes=64	
-capability	blob.read_range	opendal-fs	0.59.5	atomic_write_dir=set	no	missing	arch=x86_64;os=linux;probe=blob::blob.read_range	blob backend does not support: read_range
+capability	blob.read_range	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;os=linux;probe=blob::blob.read_range	
 capability	blob.read_range.consistent	opendal-fs	0.59.5	atomic_write_dir=set	no	missing	arch=x86_64;os=linux;probe=blob::blob.read_range.consistent	blob backend does not support: stat returns no version tag
-capability	blob.write_stream	opendal-fs	0.59.5	atomic_write_dir=set	no	missing	arch=x86_64;os=linux;probe=blob::blob.write_stream	blob backend does not support: write_stream
-capability	blob.write_stream.atomic	opendal-fs	0.59.5	atomic_write_dir=set	no	missing	arch=x86_64;os=linux;probe=blob::blob.write_stream.atomic;readers=4;replaces=40;value_bytes=65536	blob backend does not support: write_stream_atomic
+capability	blob.write_stream	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;os=linux;probe=blob::blob.write_stream	
+capability	blob.write_stream.atomic	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;os=linux;probe=blob::blob.write_stream.atomic;readers=4;replaces=40;value_bytes=65536	
 capability	blob.replace_atomic	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;os=linux;probe=crash::replace_atomic	replace_atomic without atomic_write_dir writes in place
 capability	blob.replace_atomic	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;kill=hard;os=linux;probe=crash::replace_atomic;rounds=12;value_bytes=16777216	
 capability	lock.process	std-file-lock	File::try_lock		yes		arch=x86_64;kill=hard;os=linux;probe=process_lock::lock.process	
