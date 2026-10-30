@@ -149,8 +149,15 @@ async fn staging_held_by_a_live_writer_in_another_process_is_left_alone() {
     let (value, finished) = live_sink_while_another_process_opens(false).await;
     let mut whole = vec![1u8; 1 << 20];
     whole.extend(vec![2u8; 1 << 20]);
-    assert!(finished, "finish failed after another process opened the store");
-    assert_eq!(value.as_deref(), Some(&whole[..]), "the value is not the whole stream");
+    assert!(
+        finished,
+        "finish failed after another process opened the store"
+    );
+    assert_eq!(
+        value.as_deref(),
+        Some(&whole[..]),
+        "the value is not the whole stream"
+    );
 }
 
 /// Known-bad control: a cleanup that removes every scratch file breaks the live sink. Unix only:
