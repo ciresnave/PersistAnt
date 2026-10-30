@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.1
+
+- Fix a Windows CI flake: `persistant-opendal` and `persistant-sqlx` each had examples named `matrix` and `speed`, which share `target/<profile>/examples/<name>.exe`; cargo warned of an output filename collision and a parallel build then failed at random with `LNK1104: cannot open file ...\examples\matrix.exe`. The four examples are now `opendal_matrix`, `opendal_speed`, `sqlx_matrix`, `sqlx_speed`; the CI steps, the example doc comments and recorded rerun commands, and `matrix/README.md` follow. New `tests/example_names.rs` fails if two workspace members declare an example of the same name (its positive control feeds it the old names). Recorded history in `bench/*.tsv` and older CHANGELOG entries keeps the old command text. Anyone running these by hand: `--example opendal_matrix` etc.
+
 ## 0.13.0
 
 - **Breaking:** `capant` 0.0.16 -> 0.1.0 (root dev-dependency and `persistant-core`). `Matrix::to_capant()` and `capant_provider(..)` are public and return capant types, so the change reaches this crate's API; capant 0.1.0 also makes its result types, `Role` and `Outcome` `#[non_exhaustive]`. **Migration:** depend on `capant = "0.1"` in your own crate (two capant versions in one build give two incompatible sets of types), and give any `match` on those enums a wildcard arm. No source change was needed in this repository.

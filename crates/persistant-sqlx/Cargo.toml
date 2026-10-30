@@ -50,7 +50,7 @@ name = "matrix_mysql"
 required-features = ["mysql"]
 
 [[example]]
-name = "speed"
+name = "sqlx_speed"
 required-features = ["sqlite"]
 
 [[example]]
