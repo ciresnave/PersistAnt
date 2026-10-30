@@ -162,7 +162,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           mkdir -p generated
-          cargo run --locked -q -p persistant-sqlx --example matrix > generated/sqlx-postgres.tsv
+          cargo run --locked -q -p persistant-sqlx --example sqlx_matrix > generated/sqlx-postgres.tsv
 
       - name: Upload what was generated
         if: always()
@@ -207,7 +207,7 @@ jobs:
       # command that re-runs it, uploaded, and printed. Nothing compares it to a constant.
       - name: Time the key-value workloads on SQLite
         run: |
-          cargo run --locked -q --release -p persistant-sqlx --features sqlite --example speed > generated/sqlx-speed.tsv
+          cargo run --locked -q --release -p persistant-sqlx --features sqlite --example sqlx_speed > generated/sqlx-speed.tsv
           cargo run --locked -q -p persistant-kv --example speed_report -- generated/sqlx-speed.tsv
 
       - name: Time the relational workloads on SQLite
@@ -366,7 +366,7 @@ jobs:
       - name: Regenerate matrix/opendal.tsv
         run: |
           mkdir -p generated
-          cargo run --locked -q -p persistant-opendal --example matrix > generated/opendal.tsv
+          cargo run --locked -q -p persistant-opendal --example opendal_matrix > generated/opendal.tsv
 
       - name: Upload what was generated
         if: always()
@@ -383,7 +383,7 @@ jobs:
       # Stage 3 (speed): data with its environment, not a gate. See the SQLite job.
       - name: Time the key-value workloads
         run: |
-          cargo run --locked -q --release -p persistant-opendal --example speed > generated/opendal-speed.tsv
+          cargo run --locked -q --release -p persistant-opendal --example opendal_speed > generated/opendal-speed.tsv
           cargo run --locked -q -p persistant-kv --example speed_report -- generated/opendal-speed.tsv
 
       - name: Upload the speed data

@@ -3,7 +3,7 @@
 //! (feature `mysql` and `PERSISTANT_TEST_MYSQL_URL`), and print the speed data file on stdout
 //! (stage 3 of backend benchmarking, `persistant_kv::speed`).
 //!
-//! `cargo run -q --release -p persistant-sqlx --features sqlite,mysql --example speed > bench/sqlx-speed.tsv`
+//! `cargo run -q --release -p persistant-sqlx --features sqlite,mysql --example sqlx_speed > bench/sqlx-speed.tsv`
 //!
 //! Set `PERSISTANT_SPEED_POSTGRES_DIGEST` / `PERSISTANT_SPEED_MYSQL_DIGEST` to the server image digest
 //! when a server runs in a container; it is recorded with that backend's rows. A network database includes its round trip: that is the cost a consumer
@@ -19,7 +19,7 @@ const ITERATIONS: u32 = 100;
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let env = Environment::detect(
-        "cargo run -q --release -p persistant-sqlx --features sqlite,mysql --example speed > bench/sqlx-speed.tsv",
+        "cargo run -q --release -p persistant-sqlx --features sqlite,mysql --example sqlx_speed > bench/sqlx-speed.tsv",
         None,
     );
     // A server in a container has an image digest; SQLite is a library and has none.
