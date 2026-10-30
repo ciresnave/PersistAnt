@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.9
+
+- Dependency: `capant` 0.0.7 -> 0.0.16 (root dev-dependency and `persistant-core`). The 0.0.8 to 0.0.16 changelog entries are docs, examples and a CI-check example only; no API change, no source change here.
+
 ## 0.12.8
 
 ### Added
