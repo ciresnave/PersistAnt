@@ -449,7 +449,19 @@ impl BlobSink for HandSink {
                 self.discard();
                 return Err(io("sync the staging file", e));
             }
-            // Renamed while the lock is still held, so a cleanup cannot take the file in between.
+            // The lock is released first. On Windows `LockFileEx` is mandatory, not advisory: a file
+            // renamed onto the key with the lock still held would refuse every reader (os error 33,
+            // seen on CI) until the handle closed. The price is a window between this unlock and the
+            // rename in which a cleanup in another process may remove the staging file; the rename
+            // then fails, `finish` returns an error, and the old value is untouched.
+            if let Some(file) = self.file.take() {
+                let std_file = file.into_std().await;
+                if let Err(e) = std_file.unlock() {
+                    drop(std_file);
+                    self.discard();
+                    return Err(io("release the staging lock", e));
+                }
+            }
             match rename_retrying(staged, self.target.clone()).await {
                 Ok(()) => {
                     self.staged = None;
