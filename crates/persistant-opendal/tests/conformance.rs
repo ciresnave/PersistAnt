@@ -63,12 +63,11 @@ async fn memory_service_gives_everything_but_append() {
     let b = OpendalBlob::memory().unwrap();
     let rows = certify(&b, b.config(), &Config::new()).await;
     for c in &rows {
-        // Finding: OpenDAL's memory service does not support append. The ranged and streamed leaves
-        // (`blob.read_range*`, `blob.write_stream*`) are not implemented by this driver yet
-        // (`docs/DESIGN-BLOB-STREAMS.md` work order 2), so they are off as missing until then.
-        let append = c.leaf.id().starts_with("blob.append")
-            || c.leaf.id().starts_with("blob.read_range")
-            || c.leaf.id().starts_with("blob.write_stream");
+        // Finding: OpenDAL's memory service does not support append.
+        // The memory service has no version token (`stat` gives no tag), so the conditional
+        // range read is off as missing; the plain range and both streamed writes are on.
+        let append =
+            c.leaf.id().starts_with("blob.append") || c.leaf.id() == "blob.read_range.consistent";
         assert_eq!(c.row.enabled, !append, "{}", summary(&rows));
         if append {
             assert_eq!(c.row.reason, Some(Reason::Missing), "{}", summary(&rows));
@@ -100,6 +99,17 @@ async fn fs_without_atomic_write_dir_creates_exclusively_but_replaces_in_place()
     );
     for id in ["blob.append", "blob.append.concurrent_whole"] {
         assert_eq!(state(&rows, id), expected(id, ci), "{}", summary(&rows));
+    }
+    // Ranged reads work; a streamed write is refused rather than offered, because without a
+    // scratch directory OpenDAL writes the target in place (visible at once, no abort).
+    assert_eq!(state(&rows, "blob.read_range"), None, "{}", summary(&rows));
+    for id in ["blob.write_stream", "blob.write_stream.atomic"] {
+        assert_eq!(
+            state(&rows, id),
+            Some(Reason::Missing),
+            "{}",
+            summary(&rows)
+        );
     }
     assert_eq!(rows[0].row.config.get("atomic_write_dir"), Some("unset"));
     let ex = rows
@@ -134,6 +144,23 @@ async fn fs_with_atomic_write_dir_replaces_atomically_and_creates_exclusively() 
     assert_eq!(
         state(&rows, "blob.create_exclusive"),
         None,
+        "{}",
+        summary(&rows)
+    );
+    // Streamed writes stage in the scratch directory and rename on finish: invisible until then,
+    // removed on abort, and a concurrent reader sees the whole old or the whole new value.
+    for id in [
+        "blob.read_range",
+        "blob.write_stream",
+        "blob.write_stream.atomic",
+    ] {
+        assert_eq!(state(&rows, id), None, "{}", summary(&rows));
+    }
+    // No version token from the filesystem service (a coarse mtime cannot see a quick same-length
+    // replacement, and an inode is not portable), so the conditional range read is off as missing.
+    assert_eq!(
+        state(&rows, "blob.read_range.consistent"),
+        Some(Reason::Missing),
         "{}",
         summary(&rows)
     );

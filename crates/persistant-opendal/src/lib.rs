@@ -16,7 +16,7 @@ pub use process_lock::{
     ProcessLock, certify as certify_process_lock, maybe_run_child as maybe_run_lock_child,
 };
 
-use persistant_blob::{BlobBackend, BlobError, Entry, KeyLayout, Page};
+use persistant_blob::{BlobBackend, BlobError, BlobSink, BoxFuture, Entry, KeyLayout, Page};
 use persistant_core::Config;
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -93,6 +93,22 @@ impl OpendalBlob {
     /// The facts a matrix row for this backend is recorded under.
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// A streamed-write handle. Refused where OpenDAL would write the target in place (`fs`
+    /// without `atomic_write_dir`): bytes would be visible before `finish` and there is no abort,
+    /// so the contract cannot hold, and the answer is `Unsupported`, as for `replace_atomic`.
+    async fn open_sink(&self, key: &str, op: &str) -> Result<Box<dyn BlobSink>, BlobError> {
+        if !self.atomic_replace {
+            return Err(BlobError::Unsupported(format!(
+                "{op} without atomic_write_dir writes in place"
+            )));
+        }
+        let writer = self.op.writer(key).await.map_err(backend)?;
+        Ok(Box::new(OpendalSink {
+            writer: Some(writer),
+            memory: self.fs.is_none(),
+        }))
     }
 }
 
@@ -227,6 +243,36 @@ impl BlobBackend for OpendalBlob {
         self.op.write(key, bytes).await.map(|_| ()).map_err(backend)
     }
 
+    async fn read_range(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+    ) -> Result<Option<Vec<u8>>, BlobError> {
+        // The length first: a range past the end is clamped here, not left to each service.
+        let Some(e) = self.stat(key).await? else {
+            return Ok(None);
+        };
+        let start = offset.min(e.len);
+        let end = start.saturating_add(len).min(e.len);
+        if start >= end {
+            return Ok(Some(Vec::new()));
+        }
+        match self.op.read_with(key).range(start..end).await {
+            Ok(buf) => Ok(Some(buf.to_vec())),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(backend(e)),
+        }
+    }
+
+    async fn write_stream(&self, key: &str) -> Result<Box<dyn BlobSink>, BlobError> {
+        self.open_sink(key, "write_stream").await
+    }
+
+    async fn write_stream_atomic(&self, key: &str) -> Result<Box<dyn BlobSink>, BlobError> {
+        self.open_sink(key, "write_stream_atomic").await
+    }
+
     async fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
         match self.op.write_with(key, bytes).append(true).await {
             Ok(_) => Ok(()),
@@ -234,6 +280,62 @@ impl BlobBackend for OpendalBlob {
                 Err(BlobError::Unsupported(e.to_string()))
             }
             Err(e) => Err(backend(e)),
+        }
+    }
+}
+
+/// A streamed write through OpenDAL's writer. With `atomic_write_dir` (or on the memory service)
+/// the bytes are not at the key until `close`; `abort` discards them. Dropping an unfinished sink
+/// aborts it on the current runtime if there is one, so the scratch file does not outlive it.
+struct OpendalSink {
+    writer: Option<opendal::Writer>,
+    memory: bool,
+}
+
+impl BlobSink for OpendalSink {
+    fn write<'a>(&'a mut self, chunk: &'a [u8]) -> BoxFuture<'a, Result<(), BlobError>> {
+        Box::pin(async move {
+            let w = self
+                .writer
+                .as_mut()
+                .ok_or_else(|| BlobError::Backend("the sink is finished".to_string()))?;
+            w.write(chunk.to_vec()).await.map_err(backend)
+        })
+    }
+
+    fn finish(mut self: Box<Self>) -> BoxFuture<'static, Result<(), BlobError>> {
+        Box::pin(async move {
+            let mut w = self
+                .writer
+                .take()
+                .ok_or_else(|| BlobError::Backend("the sink is finished".to_string()))?;
+            w.close().await.map(|_| ()).map_err(backend)
+        })
+    }
+
+    fn abort(mut self: Box<Self>) -> BoxFuture<'static, Result<(), BlobError>> {
+        Box::pin(async move {
+            let Some(mut w) = self.writer.take() else {
+                return Ok(());
+            };
+            match w.abort().await {
+                Ok(()) => Ok(()),
+                // The memory service holds the bytes in the writer: dropping it discards them.
+                Err(e) if self.memory && e.kind() == ErrorKind::Unsupported => Ok(()),
+                Err(e) => Err(backend(e)),
+            }
+        })
+    }
+}
+
+impl Drop for OpendalSink {
+    fn drop(&mut self) {
+        if let Some(mut w) = self.writer.take()
+            && let Ok(rt) = tokio::runtime::Handle::try_current()
+        {
+            rt.spawn(async move {
+                let _ = w.abort().await;
+            });
         }
     }
 }
