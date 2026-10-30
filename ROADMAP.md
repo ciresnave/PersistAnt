@@ -107,6 +107,15 @@ CireSnave 2026-10-22: *"I like your option (3) that keeps the SQLx PostgreSQL ch
 
 Built and published as 0.9.24: `KvBackend::take` (`kv.take`, 0.9.20, over `compare_and_delete`), `KvBackend::count` (`kv.count`, 0.9.23, native on memory and the SQL engines) and `persistant_kv::index::Indexed` (`kv.index`, 0.9.24, secondary-key lookup over `batch` and `ordered_scan_values`). On memory, SQLite, PostgreSQL, MySQL and MariaDB; **not** on the OpenDAL blob stores, which have neither `compare_and_delete` nor `batch`. The auth-framework lane builds its `AuthStorage` on them (its work, not this repo's). Open: Redis is not a PersistAnt backend; throughput of the index layer against auth-framework's own SQL is unmeasured.
 
+## Dependencies behind latest
+
+CireSnave's rule is every dependency on its latest version. Two are not, and neither is held by our manifests (`cargo update --dry-run --verbose` at `743bda7`, 2026-10-30). Each row has a blocker and the release that ends it; re-run the dry run at every dependency PR and delete a row when its trigger fires.
+
+| Dependency | In the lock | Latest | Blocker | Revisit when |
+|---|---|---|---|---|
+| `crypto-common` | 0.1.6 | 0.1.7 | 0.1.7 would downgrade `generic-array` 0.14.9 to 0.14.7 (`cargo update -p crypto-common --precise 0.1.7`) | a `crypto-common` 0.1.x that no longer pins `generic-array` below 0.14.9, or `digest` 0.10.x leaving the tree |
+| `sha2` | 0.10.9 (a second copy; ours is 0.11.1) | 0.11.1 | `sqlx-core` 0.9.0 depends on `sha2` 0.10, and 0.9.0 is the latest `sqlx` | an `sqlx` release that depends on `sha2` 0.11 |
+
 ## Portfolio adoption (survey: `docs/CONSUMERS.md`, 2026-10-23)
 
 CireSnave's standing order (2026-10-21, `CIRESNAVE-EXPECTATIONS.md` 6.17): no project is limited to one backend where PersistAnt offers several. The survey read twelve projects; adoption order: auth-framework, commy, agentlife, lightbulb, synapse, Humboldt (five are not candidates; mlmf waits on streamed blob I/O). Those are the lanes' own work. What it asks of this repo, in order of how many projects each unblocks; none is scheduled until the PM assigns it:
