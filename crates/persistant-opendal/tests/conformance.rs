@@ -12,10 +12,16 @@ fn summary(rows: &[Certified]) -> String {
     rows.iter()
         .map(|c| {
             format!(
-                "{}={}{}",
+                "{}={}{}{}",
                 c.leaf.id(),
                 if c.row.enabled { "on" } else { "off" },
-                c.row.reason.map(|r| format!("({r})")).unwrap_or_default()
+                c.row.reason.map(|r| format!("({r})")).unwrap_or_default(),
+                // Why a leaf is off: a failure seen on one runner only has to be readable from its log.
+                if c.row.enabled || c.row.note.is_empty() {
+                    String::new()
+                } else {
+                    format!("[{}]", c.row.note)
+                }
             )
         })
         .collect::<Vec<_>>()

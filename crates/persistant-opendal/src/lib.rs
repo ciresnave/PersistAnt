@@ -450,7 +450,7 @@ impl BlobSink for HandSink {
                 return Err(io("sync the staging file", e));
             }
             // Renamed while the lock is still held, so a cleanup cannot take the file in between.
-            match tokio::fs::rename(&staged, &self.target).await {
+            match rename_retrying(staged, self.target.clone()).await {
                 Ok(()) => {
                     self.staged = None;
                     self.file = None;
@@ -477,6 +477,26 @@ impl Drop for HandSink {
     fn drop(&mut self) {
         self.discard();
     }
+}
+
+/// `rename`, retried for a short while on `PermissionDenied`. On Windows a rename onto a key a
+/// reader has open (or that an indexer or scanner touches at that instant) can fail with a sharing
+/// violation that clears within milliseconds; any other error, and the last one, is returned.
+async fn rename_retrying(from: PathBuf, to: PathBuf) -> std::io::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let mut attempt = 0;
+        loop {
+            match std::fs::rename(&from, &to) {
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < 50 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                other => return other,
+            }
+        }
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 /// Remove staging files in `scratch` whose writer is gone: a `.part` file is removed only if its
