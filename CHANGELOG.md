@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.3
+
+- Docs only: `docs/PATENT-SWEEP.md` gains the blob-streams re-sweep (WO5, ideas 23-25); ROADMAP row 4 marks work order 5 built. No code changes.
+
 ## 0.14.2
 
 - Docs only: ROADMAP row 4 records work order 4 (0.14.1), the `capant::resolve` lookup (0.13.8) and the 0.14.0 gate change. No code changes.
