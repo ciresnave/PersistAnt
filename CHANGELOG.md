@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.2
+
+- Docs only: ROADMAP row 4 records work order 4 (0.14.1), the `capant::resolve` lookup (0.13.8) and the 0.14.0 gate change. No code changes.
+
 ## 0.14.1
 
 - The registry blob handle serves the ranged and streamed operations on the blocking side too (WO4 of the blob-streams design). The async `AnyBlob` has forwarded `read_range`, `read_range_if`, `write_stream` and `write_stream_atomic` through the reserved-key check since 0.12.8; the blocking `BlobHandle` now has `read_range`, `read_range_if`, `write_stream` and `write_stream_atomic`, the last two returning a `BlobWriter` (`write`, `finish`, `abort`) whose calls run on the handle's own worker. A reserved key (`kv`, `kvx`, `kv/..`, `kvx/..`) is refused with the same message as on every other operation; lookalike names (`kvx2`) are ordinary keys. Additive; nothing existing changes.
