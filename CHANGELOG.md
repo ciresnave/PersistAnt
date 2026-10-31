@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.5
+
+- Blob streams, work order 3 follow-up 3d: bounded-memory test 6 (`crates/persistant-opendal/tests/bounded_memory.rs`). 256 MiB through `copy_in` with an 8 MiB chunk into an `fs` sink peaks under 24 MiB by the test's own counting allocator; the known-bad control that buffers the whole value must exceed the same limit. Test only.
+
 ## 0.13.4
 
 - Blob streams, work order 3 follow-up 3b: crash test 4b (`crates/persistant-opendal/tests/crash_finish.rs`). A writer killed during `finish` of `write_stream_atomic` leaves the whole old value and a usable key; a known-bad in-place writer killed the same way leaves a partial value. Adds the test-only `failpoint` feature to `persistant-opendal` (a pause inside `finish`; off by default, enabled only by the crate's own dev-dependency).
