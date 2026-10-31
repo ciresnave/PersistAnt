@@ -5,14 +5,20 @@
 #[cfg(feature = "core")]
 #[test]
 fn capability_reads_a_matrix_and_validates_ids() {
-    use persistant::capability::{CapabilityId, Config, Lookup, Matrix};
+    use persistant::capability::{CapabilityId, Lookup, Matrix};
     assert!(CapabilityId::new("Not An Id").is_err());
-    let text = "subject_kind\tsubject\tbackend\tversion\tconfig\tenabled\treason\tmetadata\tnote\n\
-                capability\tkv.get\tb\t1\t\tyes\t\t\t\n";
-    let m = Matrix::parse(text).unwrap();
-    let id = CapabilityId::new("kv.get").unwrap();
-    assert_eq!(m.lookup(&id, "b", "1", &Config::new()), Lookup::On);
-    assert_eq!(m.lookup(&id, "b", "2", &Config::new()), Lookup::NoRow);
+    // The checked-in matrix, as a consumer reads it: a row that says yes is on where it was
+    // probed, and off (no row) on a version nobody probed.
+    let m = Matrix::parse(include_str!("../matrix/opendal.tsv")).unwrap();
+    let row = m.rows().iter().find(|r| r.enabled).unwrap();
+    assert_eq!(
+        m.lookup(&row.subject, &row.backend, &row.version, &row.config),
+        Lookup::On
+    );
+    assert_eq!(
+        m.lookup(&row.subject, &row.backend, "0.0.0-unprobed", &row.config),
+        Lookup::NoRow
+    );
 }
 
 #[cfg(feature = "blob")]

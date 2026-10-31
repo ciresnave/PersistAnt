@@ -237,7 +237,7 @@ fn row_to(r: &Row) -> capant::Row {
 /// Every row is a `capability` row, whatever its `subject_kind`, because [`crate::Matrix::lookup`]
 /// does not look at the kind either. A `yes` carries its probe id as evidence (the `test` metadata
 /// key, as the file spells it `probe`); a `yes` row with no probe id is therefore `Unverified`
-/// to `capant` (no evidence) where this crate's gate says on: the checked-in matrices have none.
+/// to `capant` (no evidence), and so off for this crate's gate since 0.14.0: the checked-in matrices have none.
 pub(crate) fn view(rows: &[Row]) -> capant::Matrix {
     capant::Matrix::from_rows(
         rows.iter()

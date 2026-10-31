@@ -21,7 +21,7 @@ const FILES: [(&str, &str); 5] = [
     ("sqlx-sqlite", include_str!("../matrix/sqlx-sqlite.tsv")),
 ];
 
-/// The scan `Matrix::lookup` made before it was answered by `capant::resolve` (0.13.7 and earlier),
+/// The scan `Matrix::lookup` made before it was answered by `capant::resolve` (0.13.8 and earlier),
 /// kept here as the independent oracle: if `lookup` were `resolve`, comparing the two would prove
 /// nothing. Rows match on subject, backend and version exactly and on config when it holds in
 /// `actual`; a matching `no` beats a matching `yes`.
@@ -205,8 +205,8 @@ fn the_edges_of_the_mapping() {
     );
     let m = Matrix::parse(&text).unwrap();
     let (_, bad) = disagreements(&m, &m.to_capant());
-    // The one place they differ, on purpose: `w` is on in the gate with no probe id on the row, and
-    // `capant` will not call a `yes` without evidence `Yes`.
+    // The one place they differ, on purpose: `w` is on in the old scan with no probe id on the row, and
+    // `capant` will not call a `yes` without evidence `Yes` (the gate now says the same as `capant`).
     let once: BTreeSet<&String> = bad.iter().collect();
     assert_eq!(once.len(), 1, "{bad:?}");
     assert!(bad[0].starts_with("w on b 1"), "{bad:?}");
@@ -219,11 +219,16 @@ fn the_edges_of_the_mapping() {
         false,
     );
     assert_eq!(got.state, State::Unverified(Why::NoEvidence));
-    // `Matrix::lookup` is answered by `resolve` but keeps the gate's answer there: on.
+    // `Matrix::lookup` is answered by `resolve` and agrees with it: a yes with no evidence is not on.
     assert_eq!(
         m.lookup(&w.subject, "b", "1", &Config::new()),
+        Lookup::NoRow,
+        "a yes with no probe id is not on for the gate"
+    );
+    assert_eq!(
+        gate_scan(&m, &w.subject, "b", "1", &Config::new()),
         Lookup::On,
-        "a yes with no probe id stays on for the gate"
+        "control: the scan the gate used before 0.14.0 said on"
     );
 }
 
