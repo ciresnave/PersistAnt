@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.0
+
+- **Breaking (behaviour): `Matrix::lookup` and `Matrix::enabled` no longer call a `yes` row on unless it earns it.** PM ruling 2026-10-31: *a probe-less `yes` row must answer Unverified, not On; claims must be earned.* The gate now answers exactly as selection through `capant::evaluate` already did (since 0.12.0): a matching `yes` row is `Lookup::On` only when `capant::resolve` calls it `Yes`. A `yes` row with no probe id (`probe=` in the file, the `test` metadata key on a `Row`), or whose evidence is from another environment or past its age, is now `Lookup::NoRow` (so `enabled` is `false`); before, it was `On`. Nothing else changes: `no` rows still win, and every row of the five checked-in matrices answers as before (each carries a probe id).
+  - **Who sees it:** a caller that reads a hand-written or hand-edited matrix through `Matrix::parse`/`from_rows` and asks `lookup`/`enabled`, with `yes` rows lacking a probe id. The fix is to give each `yes` row the probe that earned it. Rows written by `conformance::certify` and the checked-in files already have one. Consumers checked at their `origin/main` (2026-10-31): configurant, synapse, agentlife, auth-framework, commy and lightbulb (the repos whose lock files name `persistant`) call neither `lookup` nor `enabled` nor `Matrix::parse`; selection is unchanged for everyone.
+  - `tests/reexports.rs` now reads the checked-in `matrix/opendal.tsv` in place of a hand-written probe-less matrix; `tests/capant_view.rs` keeps the old scan as an independent oracle and asserts the one intended difference.
+
 ## 0.13.8
 
 - `Matrix::lookup` is answered by `capant::resolve` over the matrix's capant view (built once per matrix), not by its own scan (capant ADOPTION R6, option B / step P-a). Types, `Lookup`, every public signature and every answer are unchanged: a `yes` row that `capant` distrusts (no probe id, other environment, past its age) is still `On` for the gate, as before, while selection through `capant::evaluate` stays stricter. `tests/capant_view.rs` now compares `lookup` and `resolve` against the old scan kept as an independent oracle, over every row of the five checked-in matrices.

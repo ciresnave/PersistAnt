@@ -100,10 +100,9 @@ impl Matrix {
     /// The gate's lookup, answered by `capant::resolve` over [`Matrix::to_capant`]. Rows match on
     /// `subject`, `backend` and `version` exactly, and on `config` when every fact the row names is
     /// also in `actual`. **Off wins**: one matching `no` makes the answer off even if another
-    /// matching row says yes. A matching `yes` is [`Lookup::On`] even where `capant` would not call
-    /// it `Yes` (no probe id on the row, evidence from another environment or past its age): the
-    /// gate has always read the row, not its evidence, and this keeps that. Selection through
-    /// `capant::evaluate` is stricter; whether the gate should be too is the owner's decision.
+    /// matching row says yes. A `yes` is [`Lookup::On`] only when `capant` calls it `Yes`: a `yes`
+    /// with no probe id, from another environment or past its age is [`Lookup::NoRow`] (claims must
+    /// be earned), the same answer selection through `capant::evaluate` gives.
     pub fn lookup(
         &self,
         subject: &CapabilityId,
@@ -122,11 +121,7 @@ impl Matrix {
             capant::State::No(capant::Reason::Wrong) => Lookup::Off(Reason::Wrong),
             // `untested`, and a `no` with no reason (which a reader refuses): off, for want of a test.
             capant::State::No(_) => Lookup::Off(Reason::Untested),
-            // A `yes` row `capant` distrusts: still on for the gate (see above).
-            capant::State::Unverified(
-                capant::Why::NoEvidence | capant::Why::OtherEnvironment | capant::Why::Stale,
-            ) => Lookup::On,
-            // No row, and any state `capant` adds later: not known to be on.
+            // `Unverified` for any cause, and any state `capant` adds later: not known to be on.
             _ => Lookup::NoRow,
         }
     }
@@ -204,10 +199,28 @@ construct\tcast.to_uuid\tmysql\t8.4.11\t\tno\tmissing\ttest=c::d\t\tpostgres
     }
 
     #[test]
-    fn off_wins_over_a_yes() {
+    fn a_yes_with_no_probe_id_is_not_on() {
         let text = "subject_kind\tsubject\tbackend\tversion\tconfig\tenabled\treason\tmetadata\tnote\n\
                     capability\tk\tb\t1\t\tyes\t\t\t\n\
-                    capability\tk\tb\t1\tx=1\tno\twrong\t\t\n";
+                    capability\tj\tb\t1\t\tyes\t\tprobe=a::j\t\n";
+        let m = Matrix::parse(text).unwrap();
+        assert_eq!(
+            m.lookup(&id("k"), "b", "1", &Config::new()),
+            Lookup::NoRow,
+            "a claim with no evidence is not earned"
+        );
+        assert_eq!(
+            m.lookup(&id("j"), "b", "1", &Config::new()),
+            Lookup::On,
+            "control: the same row with a probe id is on"
+        );
+    }
+
+    #[test]
+    fn off_wins_over_a_yes() {
+        let text = "subject_kind\tsubject\tbackend\tversion\tconfig\tenabled\treason\tmetadata\tnote\n\
+                    capability\tk\tb\t1\t\tyes\t\tprobe=a::k\t\n\
+                    capability\tk\tb\t1\tx=1\tno\twrong\tprobe=a::k\t\n";
         let m = Matrix::parse(text).unwrap();
         let k = id("k");
         assert!(m.enabled(&k, "b", "1", &Config::new()));
