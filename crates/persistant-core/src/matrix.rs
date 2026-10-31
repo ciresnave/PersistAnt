@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use crate::{CapabilityId, Config, ParseError, Reason, Row};
+use std::sync::OnceLock;
 
 /// What the matrix says about one capability on one `(backend, version, config)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,10 +31,21 @@ pub fn capant_provider(
 }
 
 /// The recorded facts of one or more matrix files, and the lookup the gate performs.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct Matrix {
     rows: Vec<Row>,
+    /// `rows` as `capant` reads them, built on the first [`Matrix::lookup`] and dropped whenever
+    /// `rows` changes. Not part of equality.
+    view: OnceLock<capant::Matrix>,
 }
+
+impl PartialEq for Matrix {
+    fn eq(&self, other: &Matrix) -> bool {
+        self.rows == other.rows
+    }
+}
+
+impl Eq for Matrix {}
 
 impl Matrix {
     /// An empty matrix: everything is off.
@@ -47,17 +59,21 @@ impl Matrix {
     /// The probe id is the `probe` metadata key of the file, and the `test` key of a [`Row`]
     /// (the older spelling of the file is read too).
     pub fn parse(text: &str) -> Result<Matrix, ParseError> {
-        crate::adapter::parse(text).map(|rows| Matrix { rows })
+        crate::adapter::parse(text).map(Matrix::from_rows)
     }
 
     /// A matrix of exactly these rows (what a conformance run produces).
     pub fn from_rows(rows: Vec<Row>) -> Matrix {
-        Matrix { rows }
+        Matrix {
+            rows,
+            view: OnceLock::new(),
+        }
     }
 
     /// Add the rows of another file. A reader merges files; nothing is deduplicated.
     pub fn merge(&mut self, other: Matrix) {
         self.rows.extend(other.rows);
+        self.view = OnceLock::new();
     }
 
     /// The rows, in file order.
@@ -81,9 +97,13 @@ impl Matrix {
         crate::adapter::view(&self.rows)
     }
 
-    /// The gate's lookup. Rows match on `subject`, `backend` and `version` exactly, and on `config`
-    /// when every fact the row names is also in `actual`. **Off wins**: one matching `no` makes the
-    /// answer off even if another matching row says yes.
+    /// The gate's lookup, answered by `capant::resolve` over [`Matrix::to_capant`]. Rows match on
+    /// `subject`, `backend` and `version` exactly, and on `config` when every fact the row names is
+    /// also in `actual`. **Off wins**: one matching `no` makes the answer off even if another
+    /// matching row says yes. A matching `yes` is [`Lookup::On`] even where `capant` would not call
+    /// it `Yes` (no probe id on the row, evidence from another environment or past its age): the
+    /// gate has always read the row, not its evidence, and this keeps that. Selection through
+    /// `capant::evaluate` is stricter; whether the gate should be too is the owner's decision.
     pub fn lookup(
         &self,
         subject: &CapabilityId,
@@ -91,25 +111,23 @@ impl Matrix {
         version: &str,
         actual: &Config,
     ) -> Lookup {
-        let mut on = false;
-        let mut off = None;
-        for r in &self.rows {
-            if &r.subject == subject
-                && r.backend == backend
-                && r.version == version
-                && r.config.holds_in(actual)
-            {
-                if r.enabled {
-                    on = true;
-                } else if off.is_none() {
-                    off = r.reason;
-                }
-            }
-        }
-        match (on, off) {
-            (_, Some(reason)) => Lookup::Off(reason),
-            (true, None) => Lookup::On,
-            (false, None) => Lookup::NoRow,
+        let view = self.view.get_or_init(|| self.to_capant());
+        let provider = capant_provider("lookup", backend, version, actual);
+        let id = capant::CapabilityId::new(subject.as_str())
+            .expect("this crate's id grammar is inside capant's");
+        let ctx = capant::Context::new(0, capant::Config::new());
+        match capant::resolve(view, &provider, &id, &ctx, false).state {
+            capant::State::Yes => Lookup::On,
+            capant::State::No(capant::Reason::Missing) => Lookup::Off(Reason::Missing),
+            capant::State::No(capant::Reason::Wrong) => Lookup::Off(Reason::Wrong),
+            // `untested`, and a `no` with no reason (which a reader refuses): off, for want of a test.
+            capant::State::No(_) => Lookup::Off(Reason::Untested),
+            // A `yes` row `capant` distrusts: still on for the gate (see above).
+            capant::State::Unverified(
+                capant::Why::NoEvidence | capant::Why::OtherEnvironment | capant::Why::Stale,
+            ) => Lookup::On,
+            // No row, and any state `capant` adds later: not known to be on.
+            _ => Lookup::NoRow,
         }
     }
 
