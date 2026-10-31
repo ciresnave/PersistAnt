@@ -137,7 +137,7 @@ fn owner_only_if_new(path: &Path, sidecars: bool) -> Result<(), RelError> {
                 .create_new(true)
                 .open(p)
                 .is_ok()
-                && let Err(e) = crate::owner_only::restrict_to_current_user(p)
+                && let Err(e) = persistant_core::owner_only::restrict_to_current_user(p)
             {
                 let _ = std::fs::remove_file(p);
                 return Err(RelError::Backend(format!(

@@ -222,7 +222,7 @@ request grows by accident, and every request is a design review. Instead:
 | `blob.create_exclusive` | write only if absent | agentlife/lane-restart locks, synapse keystore | fs `create_new`, s3 if-not-exists | **not together with `replace_atomic` on fs via OpenDAL** (README, 0.4.7) |
 | `blob.create_exclusive_atomic` | exclusive *and* content fully visible on creation | synapse `write_new` by `hard_link` (`keystore.rs:606-615`) | a native fs path (hard link) — **not OpenDAL**; *(0.9.41)* the `fs` driver does it by hard link | no OpenDAL service advertises it |
 | `blob.durable` | survives power loss (file and parent directory synced) | synapse and user-request sync the file; fuel, mlmf, lane-restart do not | none via OpenDAL (no parent-dir fsync, README *Limits*) | on only if the VM hard-reset test passed (below) |
-| `blob.file_mode` | owner-only permission on create | synapse (keystore, session cache, announce file, security log: 0600; keystore dir 0700) | native fs path | not in OpenDAL's capability struct (FIT §C row 10) |
+| `blob.file_mode` | owner-only permission on create | synapse (keystore, session cache, announce file, security log: 0600; keystore dir 0700) | native fs path; *(0.15.0)* `OpendalBlob::owner_only()` on `fs`, row under `file_mode=owner_only` | not in OpenDAL's capability struct (FIT §C row 10); Windows directories inherit their parent's ACL |
 | `blob.append` | append bytes, optionally with torn-line repair | agentlife journal; 9 plain-append sites | fs | repair is ours |
 | `blob.read_range` | the bytes `[offset, offset+len)` of a value without reading the rest | model files read at random offsets (mlmf) | fs, memory (OpenDAL) | none known; on in the checked-in `opendal` matrix |
 | `blob.read_range.consistent` | successive ranges of one value are known to come from one version (a version tag, `read_range_if`) | resuming or paging a large read while a writer may replace it | none yet | **off as missing on fs and memory**: OpenDAL gives no version token (`docs/DESIGN-BLOB-STREAMS.md` 3.9); callers hold their own lock |
@@ -767,7 +767,7 @@ behind features. Still not built, each a row in `ROADMAP.md` ("Spec-to-roadmap a
   `ops.pitr`, `storage.no_plaintext_at_rest`. They have no row, so they are off. (For kv, `Process`
   and `Machine` durability are verified; see the roadmap.)
 - **`kv.batch_atomic`**: not offered (auth-framework declined it; its design needs no multi-key atomicity).
-- **`blob.file_mode`, `blob.max_value_size`**: no test yet.
+- **`blob.max_value_size`**: no test yet. (`blob.file_mode` is built, 0.15.0.)
 - **Migrating consumers** (§7 steps 1 to 7) are each consumer lane's work. Moving `Store` itself onto
   `BlobBackend` needs a ruling, because it changes a published API.
 - **Verification by other lanes' suites.** Synapse's mailbox suite proves composite behaviour, not

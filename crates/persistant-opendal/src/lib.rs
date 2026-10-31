@@ -10,8 +10,10 @@
 //! is scanned and filtered, and the cost is a scan of that tree per page.
 
 pub mod crash;
+mod file_mode;
 mod process_lock;
 
+pub use file_mode::{certify_file_mode, owner_only_reading};
 pub use process_lock::{
     ProcessLock, certify as certify_process_lock, maybe_run_child as maybe_run_lock_child,
 };
@@ -46,6 +48,8 @@ pub struct OpendalBlob {
     fs: Option<FsDirs>,
     /// False for `fs` without `atomic_write_dir`: the target is written in place.
     atomic_replace: bool,
+    /// Every file this driver creates on `fs` is owner-only (see [`OpendalBlob::owner_only`]).
+    owner_only: bool,
 }
 
 impl OpendalBlob {
@@ -58,6 +62,7 @@ impl OpendalBlob {
             config: Config::new(),
             fs: None,
             atomic_replace: true,
+            owner_only: false,
         })
     }
 
@@ -90,7 +95,49 @@ impl OpendalBlob {
                 scratch: atomic_write_dir.map(Path::to_path_buf),
             }),
             atomic_replace: atomic_write_dir.is_some(),
+            owner_only: false,
         })
+    }
+
+    /// Make every file this driver creates under an `fs` root owner-only (`blob.file_mode`): mode
+    /// `0600` on Unix whatever the umask, and a directory it has to create `0700`; on Windows a
+    /// protected ACL with one entry, for the user the process runs as. A file that already exists
+    /// keeps the mode its owner gave it. The matrix row is recorded under the config fact
+    /// `file_mode=owner_only`, so a program that asks for owner-only files finds this driver's row
+    /// and one that does not is not told it has them.
+    ///
+    /// The file is created owner-only before any content is written, never restricted afterwards:
+    /// writes and replaces under a scratch directory are staged by hand (as `write_stream` is), and
+    /// an exclusive create links an owner-only scratch file. **Not covered:** directories on
+    /// Windows (they inherit their parent's ACL; the files in them do not), and the scratch
+    /// directory's own listing. On the memory service this is a no-op: there are no files.
+    #[must_use]
+    pub fn owner_only(mut self) -> Self {
+        if self.fs.is_some() {
+            self.owner_only = true;
+            self.config = self.config.with("file_mode", "owner_only");
+        }
+        self
+    }
+
+    /// For an owner-only `fs`: create the key's file empty and owner-only if it is not there, so a
+    /// following in-place write or append finds it and keeps its mode. Returns the path if it was
+    /// created here, so a failed write can take it away again.
+    fn precreate(&self, key: &str, op: &str) -> Result<Option<PathBuf>, BlobError> {
+        let Some(FsDirs { root, .. }) = self.fs.as_ref().filter(|_| self.owner_only) else {
+            return Ok(None);
+        };
+        let target = key_path(root, key, op)?;
+        let io = |what: &str, e: std::io::Error| BlobError::Backend(format!("{what}: {e}"));
+        if let Some(parent) = target.parent() {
+            persistant_core::owner_only::create_dir_all(parent)
+                .map_err(|e| io("create the key's directory", e))?;
+        }
+        match persistant_core::owner_only::create_new(&target) {
+            Ok(_) => Ok(Some(target)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+            Err(e) => Err(io("create the owner-only file", e)),
+        }
     }
 
     /// The facts a matrix row for this backend is recorded under.
@@ -113,7 +160,7 @@ impl OpendalBlob {
         }) = &self.fs
         {
             clean_staging(scratch);
-            return HandSink::open(root, scratch, key).await;
+            return HandSink::open(root, scratch, key, self.owner_only).await;
         }
         let writer = self.op.writer(key).await.map_err(backend)?;
         Ok(Box::new(OpendalSink {
@@ -121,6 +168,57 @@ impl OpendalBlob {
             memory: self.fs.is_none(),
         }))
     }
+}
+
+impl OpendalBlob {
+    /// A whole value written through the hand-staged sink (an owner-only scratch file renamed onto
+    /// the key): the replace is atomic, as a scratch directory promises.
+    async fn write_staged(&self, key: &str, bytes: &[u8]) -> Result<(), BlobError> {
+        let mut sink = self.open_sink(key, "write").await?;
+        if let Err(e) = sink.write(bytes).await {
+            let _ = sink.abort().await;
+            return Err(e);
+        }
+        sink.finish().await
+    }
+
+    /// `create_exclusive` for an owner-only `fs` with no scratch directory: the file is created
+    /// owner-only with `create_new` (exclusive), then filled. A reader may see it empty before the
+    /// fill; that is what this configuration promises (no `blob.create_exclusive_atomic`).
+    fn create_in_place(&self, key: &str, bytes: &[u8]) -> Result<bool, BlobError> {
+        use std::io::Write;
+        let Some(FsDirs { root, .. }) = &self.fs else {
+            return Ok(false);
+        };
+        let target = key_path(root, key, "create_exclusive")?;
+        let io = |what: &str, e: std::io::Error| BlobError::Backend(format!("{what}: {e}"));
+        if let Some(parent) = target.parent() {
+            persistant_core::owner_only::create_dir_all(parent)
+                .map_err(|e| io("create the key's directory", e))?;
+        }
+        let mut f = match persistant_core::owner_only::create_new(&target) {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+            Err(e) => return Err(io("create the owner-only file", e)),
+        };
+        if let Err(e) = f.write_all(bytes) {
+            drop(f);
+            let _ = std::fs::remove_file(&target);
+            return Err(io("write the file", e));
+        }
+        Ok(true)
+    }
+}
+
+/// The path of `key` under `root`, or an error if it is not a plain relative path.
+fn key_path(root: &Path, key: &str, op: &str) -> Result<PathBuf, BlobError> {
+    let rel = Path::new(key.trim_start_matches('/'));
+    if rel.as_os_str().is_empty() || rel.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return Err(BlobError::Backend(format!(
+            "{op}: {key:?} is not a path under the root"
+        )));
+    }
+    Ok(root.join(rel))
 }
 
 impl BlobBackend for OpendalBlob {
@@ -151,7 +249,18 @@ impl BlobBackend for OpendalBlob {
     }
 
     async fn write(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
-        self.op.write(key, bytes).await.map(|_| ()).map_err(backend)
+        if self.owner_only && self.atomic_replace && self.fs.is_some() {
+            // OpenDAL would rename a default-mode scratch file onto the key: stage it by hand.
+            return self.write_staged(key, &bytes).await;
+        }
+        let created = self.precreate(key, "write")?;
+        let r = self.op.write(key, bytes).await.map(|_| ()).map_err(backend);
+        if r.is_err()
+            && let Some(p) = created
+        {
+            let _ = std::fs::remove_file(p);
+        }
+        r
     }
 
     async fn delete(&self, key: &str) -> Result<(), BlobError> {
@@ -233,7 +342,10 @@ impl BlobBackend for OpendalBlob {
             scratch: Some(scratch),
         }) = &self.fs
         {
-            return create_by_hard_link(root, scratch, key, &bytes).await;
+            return create_by_hard_link(root, scratch, key, &bytes, self.owner_only).await;
+        }
+        if self.owner_only && self.fs.is_some() {
+            return self.create_in_place(key, &bytes);
         }
         match self.op.write_with(key, bytes).if_not_exists(true).await {
             Ok(_) => Ok(true),
@@ -250,6 +362,9 @@ impl BlobBackend for OpendalBlob {
             return Err(BlobError::Unsupported(
                 "replace_atomic without atomic_write_dir writes in place".to_string(),
             ));
+        }
+        if self.owner_only && self.fs.is_some() {
+            return self.write_staged(key, &bytes).await;
         }
         self.op.write(key, bytes).await.map(|_| ()).map_err(backend)
     }
@@ -285,13 +400,20 @@ impl BlobBackend for OpendalBlob {
     }
 
     async fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
-        match self.op.write_with(key, bytes).append(true).await {
+        let created = self.precreate(key, "append")?;
+        let r = match self.op.write_with(key, bytes).append(true).await {
             Ok(_) => Ok(()),
             Err(e) if e.kind() == ErrorKind::Unsupported => {
                 Err(BlobError::Unsupported(e.to_string()))
             }
             Err(e) => Err(backend(e)),
+        };
+        if r.is_err()
+            && let Some(p) = created
+        {
+            let _ = std::fs::remove_file(p);
         }
+        r
     }
 }
 
@@ -369,25 +491,25 @@ struct HandSink {
 }
 
 impl HandSink {
-    async fn open(root: &Path, scratch: &Path, key: &str) -> Result<Box<dyn BlobSink>, BlobError> {
+    async fn open(
+        root: &Path,
+        scratch: &Path,
+        key: &str,
+        owner_only: bool,
+    ) -> Result<Box<dyn BlobSink>, BlobError> {
         let io = |what: &str, e: std::io::Error| BlobError::Backend(format!("{what}: {e}"));
-        let rel = Path::new(key.trim_start_matches('/'));
-        if rel.as_os_str().is_empty()
-            || rel.components().any(|c| !matches!(c, Component::Normal(_)))
-        {
-            return Err(BlobError::Backend(format!(
-                "write_stream: {key:?} is not a path under the root"
-            )));
-        }
-        let target = root.join(rel);
+        let target = key_path(root, key, "write_stream")?;
+        let make_dir = |dir: &Path| {
+            if owner_only {
+                persistant_core::owner_only::create_dir_all(dir)
+            } else {
+                std::fs::create_dir_all(dir)
+            }
+        };
         if let Some(parent) = target.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| io("create the key's directory", e))?;
+            make_dir(parent).map_err(|e| io("create the key's directory", e))?;
         }
-        tokio::fs::create_dir_all(scratch)
-            .await
-            .map_err(|e| io("create the scratch directory", e))?;
+        make_dir(scratch).map_err(|e| io("create the scratch directory", e))?;
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -397,12 +519,16 @@ impl HandSink {
             std::process::id(),
             SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
         ));
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&staged)
-            .map_err(|e| io("create the staging file", e))?;
+        let file = if owner_only {
+            persistant_core::owner_only::create_new(&staged)
+        } else {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&staged)
+        }
+        .map_err(|e| io("create the staging file", e))?;
         // Our own new name: the lock cannot be held by anyone else.
         if let Err(e) = file.try_lock() {
             drop(file);
@@ -562,35 +688,37 @@ async fn create_by_hard_link(
     scratch: &Path,
     key: &str,
     bytes: &[u8],
+    owner_only: bool,
 ) -> Result<bool, BlobError> {
     use tokio::io::AsyncWriteExt;
-    let rel = Path::new(key.trim_start_matches('/'));
-    if rel.as_os_str().is_empty() || rel.components().any(|c| !matches!(c, Component::Normal(_))) {
-        return Err(BlobError::Backend(format!(
-            "create_exclusive: {key:?} is not a path under the root"
-        )));
-    }
     let io = |what: &str, e: std::io::Error| BlobError::Backend(format!("{what}: {e}"));
-    let target = root.join(rel);
+    let target = key_path(root, key, "create_exclusive")?;
+    let make_dir = |dir: &Path| {
+        if owner_only {
+            persistant_core::owner_only::create_dir_all(dir)
+        } else {
+            std::fs::create_dir_all(dir)
+        }
+    };
     if let Some(parent) = target.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| io("create the key's directory", e))?;
+        make_dir(parent).map_err(|e| io("create the key's directory", e))?;
     }
-    tokio::fs::create_dir_all(scratch)
-        .await
-        .map_err(|e| io("create the scratch directory", e))?;
+    make_dir(scratch).map_err(|e| io("create the scratch directory", e))?;
     let temp = scratch.join(format!(
         ".persistant-create-{}-{}",
         std::process::id(),
         SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
     ));
     let written = async {
-        let mut f = tokio::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .await?;
+        let mut f = if owner_only {
+            tokio::fs::File::from_std(persistant_core::owner_only::create_new(&temp)?)
+        } else {
+            tokio::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)
+                .await?
+        };
         f.write_all(bytes).await?;
         f.sync_all().await
     }

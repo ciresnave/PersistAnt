@@ -15,8 +15,6 @@ mod migrate;
 #[cfg(feature = "mysql")]
 mod mysql;
 mod options;
-#[cfg(all(feature = "sqlite", windows))]
-mod owner_only;
 #[cfg(feature = "sqlite")]
 mod sqlite;
 

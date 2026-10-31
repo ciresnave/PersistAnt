@@ -88,6 +88,14 @@ async fn run(env: Config, crash_rows: Vec<Row>, lock_row: Row) {
     rows.extend(crash_rows);
     rows.push(lock_row.clone());
 
+    // `blob.file_mode`: every file an owner-only `fs` driver creates, read back.
+    let mode_work = tempfile::tempdir().unwrap();
+    let mode_rows = persistant_opendal::certify_file_mode(mode_work.path(), &env)
+        .await
+        .expect("file mode test ran");
+    let mode_tmp = mode_work.path().to_string_lossy().into_owned();
+    rows.extend(clean(mode_rows, &[mode_tmp.as_str()]));
+
     // KvOnBlob over each, strict; plus the explicit in-place mode on fs without a scratch dir.
     let kvs = [
         KvOnBlob::new(OpendalBlob::memory().unwrap()),
