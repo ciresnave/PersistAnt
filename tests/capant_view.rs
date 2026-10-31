@@ -21,6 +21,39 @@ const FILES: [(&str, &str); 5] = [
     ("sqlx-sqlite", include_str!("../matrix/sqlx-sqlite.tsv")),
 ];
 
+/// The scan `Matrix::lookup` made before it was answered by `capant::resolve` (0.13.7 and earlier),
+/// kept here as the independent oracle: if `lookup` were `resolve`, comparing the two would prove
+/// nothing. Rows match on subject, backend and version exactly and on config when it holds in
+/// `actual`; a matching `no` beats a matching `yes`.
+fn gate_scan(
+    m: &Matrix,
+    subject: &CapabilityId,
+    backend: &str,
+    version: &str,
+    actual: &Config,
+) -> Lookup {
+    let mut on = false;
+    let mut off = None;
+    for r in m.rows() {
+        if &r.subject == subject
+            && r.backend == backend
+            && r.version == version
+            && r.config.holds_in(actual)
+        {
+            if r.enabled {
+                on = true;
+            } else if off.is_none() {
+                off = r.reason;
+            }
+        }
+    }
+    match (on, off) {
+        (_, Some(reason)) => Lookup::Off(reason),
+        (true, None) => Lookup::On,
+        (false, None) => Lookup::NoRow,
+    }
+}
+
 fn ctx() -> Context {
     Context::new(0, capant::Config::new())
 }
@@ -52,7 +85,7 @@ fn disagreements(m: &Matrix, view: &capant::Matrix) -> (usize, Vec<String>) {
         for actual in &configs {
             let provider = capant_provider("p", &r.backend, &r.version, actual);
             let got = capant::resolve(view, &provider, &cid(&r.subject), &ctx(), false).state;
-            let want = expected(m.lookup(&r.subject, &r.backend, &r.version, actual));
+            let want = expected(gate_scan(m, &r.subject, &r.backend, &r.version, actual));
             asked += 1;
             if got != want {
                 bad.push(format!(
@@ -141,7 +174,7 @@ fn evaluate_satisfies_exactly_when_the_gate_turns_every_capability_on() {
             for need in needs {
                 let gate_on = need
                     .iter()
-                    .all(|s| m.lookup(s, backend, version, &actual) == Lookup::On);
+                    .all(|s| gate_scan(&m, s, backend, version, &actual) == Lookup::On);
                 let n = Need::new(need.iter().map(cid).collect());
                 let eval = capant::evaluate(&table, &n, &view, &ctx()).unwrap();
                 assert_eq!(
@@ -186,4 +219,34 @@ fn the_edges_of_the_mapping() {
         false,
     );
     assert_eq!(got.state, State::Unverified(Why::NoEvidence));
+    // `Matrix::lookup` is answered by `resolve` but keeps the gate's answer there: on.
+    assert_eq!(
+        m.lookup(&w.subject, "b", "1", &Config::new()),
+        Lookup::On,
+        "a yes with no probe id stays on for the gate"
+    );
+}
+
+#[test]
+fn lookup_is_the_old_scan_on_every_checked_in_row() {
+    let mut asked = 0;
+    for (name, text) in FILES {
+        let m = Matrix::parse(text).unwrap();
+        let mut configs: Vec<Config> = vec![Config::new()];
+        configs.extend(m.rows().iter().map(|r| r.config.clone()));
+        for r in m.rows() {
+            for actual in &configs {
+                asked += 1;
+                assert_eq!(
+                    m.lookup(&r.subject, &r.backend, &r.version, actual),
+                    gate_scan(&m, &r.subject, &r.backend, &r.version, actual),
+                    "{name}: {} on {} {} [{actual}]",
+                    r.subject,
+                    r.backend,
+                    r.version
+                );
+            }
+        }
+    }
+    assert!(asked > 1000, "control: {asked} questions");
 }

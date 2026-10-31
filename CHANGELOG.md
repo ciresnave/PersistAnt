@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.8
+
+- `Matrix::lookup` is answered by `capant::resolve` over the matrix's capant view (built once per matrix), not by its own scan (capant ADOPTION R6, option B / step P-a). Types, `Lookup`, every public signature and every answer are unchanged: a `yes` row that `capant` distrusts (no probe id, other environment, past its age) is still `On` for the gate, as before, while selection through `capant::evaluate` stays stricter. `tests/capant_view.rs` now compares `lookup` and `resolve` against the old scan kept as an independent oracle, over every row of the five checked-in matrices.
+
 ## 0.13.7
 
 - Blob streams, work order 3 follow-up 3e: `docs/DESIGN-KINDS.md` gains the ids `blob.read_range`, `blob.read_range.consistent`, `blob.write_stream` and `blob.write_stream.atomic` in its capability table, with what each is, who needs it, who gives it and what is refused. Docs only.
