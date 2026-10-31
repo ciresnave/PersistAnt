@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.7
+
+- Blob streams, work order 3 follow-up 3e: `docs/DESIGN-KINDS.md` gains the ids `blob.read_range`, `blob.read_range.consistent`, `blob.write_stream` and `blob.write_stream.atomic` in its capability table, with what each is, who needs it, who gives it and what is refused. Docs only.
+
 ## 0.13.6
 
 - Blob streams, work order 3 follow-up 3c: the old-value variant of crash test 4a (`crates/persistant-opendal/tests/stream_staging.rs`). A writer killed mid-stream into an existing key leaves its whole old value, and opening the store removes the staging. Test only.
