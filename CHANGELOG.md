@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.6
+
+- Blob streams, work order 3 follow-up 3c: the old-value variant of crash test 4a (`crates/persistant-opendal/tests/stream_staging.rs`). A writer killed mid-stream into an existing key leaves its whole old value, and opening the store removes the staging. Test only.
+
 ## 0.13.5
 
 - Blob streams, work order 3 follow-up 3d: bounded-memory test 6 (`crates/persistant-opendal/tests/bounded_memory.rs`). 256 MiB through `copy_in` with an 8 MiB chunk into an `fs` sink peaks under 24 MiB by the test's own counting allocator; the known-bad control that buffers the whole value must exceed the same limit. Test only.

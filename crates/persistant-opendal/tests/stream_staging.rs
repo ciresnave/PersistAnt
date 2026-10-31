@@ -124,6 +124,44 @@ async fn staging_left_by_a_killed_writer_is_removed_when_a_store_is_opened() {
     );
 }
 
+/// Crash test 4a with an existing key: the killed writer's stream never shows at `k`, the whole old
+/// value stays, and opening the store removes the staging.
+#[tokio::test]
+async fn a_killed_writer_leaves_the_whole_old_value_of_an_existing_key() {
+    let root = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let old = vec![9u8; 3 << 20];
+    OpendalBlob::fs(root.path(), Some(scratch.path()))
+        .unwrap()
+        .write("k", old.clone())
+        .await
+        .unwrap();
+    let mut child = spawn_child(
+        "child_stream_and_hold",
+        &[(CHILD_STREAM, root.path()), (SCRATCH_VAR, scratch.path())],
+        None,
+    );
+    wait_for(&mut child, "held");
+    child.kill().unwrap();
+    child.wait().unwrap();
+    // Control: the kill left staging behind, so the reads below ask the question.
+    assert!(
+        !scratch_entries(scratch.path()).is_empty(),
+        "control broken: a killed writer left nothing in the scratch directory"
+    );
+    let b = OpendalBlob::fs(root.path(), Some(scratch.path())).unwrap();
+    assert_eq!(
+        b.read("k").await.unwrap().as_deref(),
+        Some(&old[..]),
+        "the old value is not whole after the writer was killed"
+    );
+    assert!(
+        scratch_entries(scratch.path()).is_empty(),
+        "opening the store left the dead writer's staging: {:?}",
+        scratch_entries(scratch.path())
+    );
+}
+
 /// Parent holds a live sink mid-stream; a second process opens the same directories; the sink must
 /// still finish with the whole value. Returns the value read back after `finish`.
 async fn live_sink_while_another_process_opens(naive: bool) -> (Option<Vec<u8>>, bool) {
