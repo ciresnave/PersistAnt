@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.0
+
+- **`blob.file_mode` (ROADMAP "Open items" row 3):** `OpendalBlob::owner_only()` makes every file the `fs` driver creates owner-only: `0600` on Unix whatever the umask (a directory it creates is `0700`), a protected one-entry ACL for the current user on Windows. The file is created owner-only before any content is written. Writes and replaces under `atomic_write_dir` are staged by hand, an exclusive create links an owner-only scratch file, and an in-place write or append finds a file created owner-only first. A file that already exists keeps its mode. The matrix row is recorded under the config fact `file_mode=owner_only`, so a program that does not ask for it is not told it has it.
+- **`persistant_core::owner_only`** (new): `create_new`, `create_dir_all`, and on Windows `restrict_to_current_user`, moved from `persistant-sqlx` (one copy, no new crate); `persistant-core` gains `windows-sys` on Windows only.
+- New: `persistant_opendal::certify_file_mode` and the `blob.file_mode` rows in `matrix/opendal.tsv`.
+
 ## 0.14.3
 
 - Docs only: `docs/PATENT-SWEEP.md` gains the blob-streams re-sweep (WO5, ideas 23-25); ROADMAP row 4 marks work order 5 built. No code changes.

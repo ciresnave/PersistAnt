@@ -57,7 +57,7 @@ fn win32(code: u32) -> io::Error {
 }
 
 /// Make `path` readable and writable by the current user only, and by nobody through inheritance.
-pub(crate) fn restrict_to_current_user(path: &Path) -> io::Result<()> {
+pub fn restrict_to_current_user(path: &Path) -> io::Result<()> {
     // The process token, then the user SID in it.
     let mut token: HANDLE = std::ptr::null_mut();
     // SAFETY: GetCurrentProcess is a pseudo-handle; `token` receives a real handle on success.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! PersistAnt's vocabulary and verification model. No I/O; the one dependency is `capant`, which reads and writes the matrix file.
+//! PersistAnt's vocabulary and verification model. No I/O except [`owner_only`] (owner-only files); the one dependency is `capant`, which reads and writes the matrix file (and `windows-sys` on Windows).
 //!
 //! A **capability** is a boolean for one `(backend, version, config)`; it is off until an automated
 //! test passed (`docs/DESIGN-KINDS.md` §2.1). This crate holds the pieces every kind shares:
@@ -16,6 +16,7 @@ pub mod choose;
 mod config;
 mod id;
 mod matrix;
+pub mod owner_only;
 pub mod provider;
 mod row;
 pub mod telemetry;

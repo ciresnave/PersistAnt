@@ -3,7 +3,7 @@ name = "persistant-core"
 version.workspace = true
 edition = "2024"
 rust-version = "1.94"
-description = "PersistAnt's capability vocabulary, boolean capability sets, matrix row schema and conformance verdicts. No I/O."
+description = "PersistAnt's capability vocabulary, boolean capability sets, matrix row schema and conformance verdicts, and owner-only file creation. No other I/O."
 license = "MIT OR Apache-2.0"
 exclude = [".coderipper.toml"]
 repository = "https://github.com/ciresnave/PersistAnt"
@@ -12,3 +12,7 @@ categories = ["development-tools::testing", "database-implementations"]
 
 [dependencies]
 capant = "0.1.0"
+
+# Owner-only files on Windows (src/owner_only_win.rs): the Win32 security API.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }

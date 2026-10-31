@@ -26,10 +26,6 @@ persistant-relational = { workspace = true, features = ["catalog"] }
 tokio = { version = "1.53.2", default-features = false, features = ["sync", "time"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "time"] }
 
-# Owner-only files on Windows (src/owner_only.rs): the Win32 security API.
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
-
 [dev-dependencies]
 sha2 = "0.11"
 persistant-kv = { workspace = true }
