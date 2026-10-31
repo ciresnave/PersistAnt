@@ -45,6 +45,13 @@ And three things a program may use *beside* the `Store` API (the old `Store` has
   `examples/registry_blob.rs` runs all of it on `fs`. **Two limits:** the keys `kv`, `kvx` and anything under `kv/` or `kvx/`
   are reserved on every provider (the key-value store keeps its files there on `fs`), so a key such as `kv/journal` is refused;
   and `blob()` is `Some` only when the needs name a `blob.*` id.
+* **Large values** (`blob.read_range`, `blob.write_stream`, `blob.write_stream.atomic`): `Handle::blob()` and the blocking
+  `KvHandle::blob()` give `read_range(key, offset, len)` (part of a value, `None` if absent), `read_range_if` (the same, only
+  while the value still has the tag you saw) and `write_stream` / `write_stream_atomic`, which return a sink: `write` chunks,
+  then `finish` to publish or `abort` to leave the key as it was. The atomic form shows a reader the whole old value or the
+  whole new one (certified on `memory`, and on `fs` with `atomic_write_dir=set`, which the registry's `fs` is). Memory stays
+  bounded by the chunk you pass. The same reserved-key rule applies to every one of these. The blocking writer is `BlobWriter`
+  (`write`, `finish`, `abort`). `examples/registry_blob_stream.rs` runs the async form on `fs`.
 * **Relational** (`rel.*`): `Handle::rel()` (0.11.15) gives statements and transactions on `sqlite`, `postgres`, `mysql` and
   `mariadb`, in the dialect it reports. The blocking `KvHandle::rel()` has `execute`, `query` and `transaction(isolation,
   statements)`, which runs a list of statements in one transaction and rolls all back if one fails.

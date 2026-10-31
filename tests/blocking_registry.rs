@@ -209,6 +209,65 @@ fn the_blocking_blob_handle_exists_only_when_asked_for_and_refuses_the_reserved_
     }
 }
 
+#[test]
+fn the_blocking_blob_handle_reads_ranges_and_streams_writes_through_the_same_key_check() {
+    let dir = tempfile::tempdir().unwrap();
+    for (id, endpoint) in [
+        ("memory", Endpoint::None),
+        ("fs", Endpoint::path(dir.path().join("b"))),
+    ] {
+        let wants = needs(
+            &[
+                "kv.get",
+                "kv.put",
+                "blob.read",
+                "blob.read_range",
+                "blob.write_stream",
+                "blob.write_stream.atomic",
+            ],
+            Durability::Volatile,
+        );
+        let kv = registry::open_named(id, &endpoint, &wants).unwrap();
+        let blob = kv.blob().unwrap();
+        // A streamed write is invisible until `finish`, whole after it; a range reads part of it.
+        let mut w = blob.write_stream_atomic("big").unwrap();
+        w.write(b"hello ").unwrap();
+        w.write(b"world").unwrap();
+        assert_eq!(blob.read("big").unwrap(), None, "{id}: not before finish");
+        w.finish().unwrap();
+        assert_eq!(blob.read("big").unwrap(), Some(b"hello world".to_vec()));
+        assert_eq!(
+            blob.read_range("big", 6, 5).unwrap(),
+            Some(b"world".to_vec())
+        );
+        assert_eq!(blob.read_range("absent", 0, 1).unwrap(), None);
+        // `abort` leaves the old value whole.
+        let mut w = blob.write_stream("big").unwrap();
+        w.write(b"junk").unwrap();
+        w.abort().unwrap();
+        assert_eq!(blob.read("big").unwrap(), Some(b"hello world".to_vec()));
+        // Reserved keys are refused on every new operation, naming the key-value store; a lookalike
+        // name is an ordinary key.
+        for key in ["kv", "kvx", "kv/a", "kvx/6b/x"] {
+            let e = blob.read_range(key, 0, 1).unwrap_err();
+            assert!(e.to_string().contains("key-value store"), "{id} {key}: {e}");
+            for atomic in [false, true] {
+                let r = if atomic {
+                    blob.write_stream_atomic(key)
+                } else {
+                    blob.write_stream(key)
+                };
+                let e = r.err().expect("a reserved key opens no stream");
+                assert!(e.to_string().contains("key-value store"), "{id} {key}: {e}");
+            }
+        }
+        let mut w = blob.write_stream("kvx2").unwrap();
+        w.write(b"ok").unwrap();
+        w.finish().unwrap();
+        assert_eq!(blob.read_range("kvx2", 0, 2).unwrap(), Some(b"ok".to_vec()));
+    }
+}
+
 #[cfg(feature = "registry-sqlite")]
 #[test]
 fn the_blocking_rel_handle_runs_statements_and_a_failed_transaction_keeps_nothing() {

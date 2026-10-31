@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.1
+
+- The registry blob handle serves the ranged and streamed operations on the blocking side too (WO4 of the blob-streams design). The async `AnyBlob` has forwarded `read_range`, `read_range_if`, `write_stream` and `write_stream_atomic` through the reserved-key check since 0.12.8; the blocking `BlobHandle` now has `read_range`, `read_range_if`, `write_stream` and `write_stream_atomic`, the last two returning a `BlobWriter` (`write`, `finish`, `abort`) whose calls run on the handle's own worker. A reserved key (`kv`, `kvx`, `kv/..`, `kvx/..`) is refused with the same message as on every other operation; lookalike names (`kvx2`) are ordinary keys. Additive; nothing existing changes.
+- `examples/registry_blob_stream.rs` and a paragraph in `docs/REGISTRY-FOR-STORE-USERS.md`.
+
 ## 0.14.0
 
 - **Breaking (behaviour): `Matrix::lookup` and `Matrix::enabled` no longer call a `yes` row on unless it earns it.** PM ruling 2026-10-31: *a probe-less `yes` row must answer Unverified, not On; claims must be earned.* The gate now answers exactly as selection through `capant::evaluate` already did (since 0.12.0): a matching `yes` row is `Lookup::On` only when `capant::resolve` calls it `Yes`. A `yes` row with no probe id (`probe=` in the file, the `test` metadata key on a `Row`), or whose evidence is from another environment or past its age, is now `Lookup::NoRow` (so `enabled` is `false`); before, it was `On`. Nothing else changes: `no` rows still win, and every row of the five checked-in matrices answers as before (each carries a probe id).

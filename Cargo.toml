@@ -2,17 +2,17 @@
 members = [".", "crates/persistant-core", "crates/persistant-blob", "crates/persistant-opendal", "crates/persistant-kv", "crates/persistant-relational", "crates/persistant-sqlx", "crates/persistant-migrate", "crates/persistant-macros"]
 
 [workspace.package]
-version = "0.14.0"
+version = "0.14.1"
 
 [workspace.dependencies]
-persistant-core = { version = "0.14.0", path = "crates/persistant-core" }
-persistant-blob = { version = "0.14.0", path = "crates/persistant-blob" }
-persistant-kv = { version = "0.14.0", path = "crates/persistant-kv" }
-persistant-opendal = { version = "0.14.0", path = "crates/persistant-opendal" }
-persistant-relational = { version = "0.14.0", path = "crates/persistant-relational" }
-persistant-sqlx = { version = "0.14.0", path = "crates/persistant-sqlx" }
-persistant-migrate = { version = "0.14.0", path = "crates/persistant-migrate" }
-persistant-macros = { version = "0.14.0", path = "crates/persistant-macros" }
+persistant-core = { version = "0.14.1", path = "crates/persistant-core" }
+persistant-blob = { version = "0.14.1", path = "crates/persistant-blob" }
+persistant-kv = { version = "0.14.1", path = "crates/persistant-kv" }
+persistant-opendal = { version = "0.14.1", path = "crates/persistant-opendal" }
+persistant-relational = { version = "0.14.1", path = "crates/persistant-relational" }
+persistant-sqlx = { version = "0.14.1", path = "crates/persistant-sqlx" }
+persistant-migrate = { version = "0.14.1", path = "crates/persistant-migrate" }
+persistant-macros = { version = "0.14.1", path = "crates/persistant-macros" }
 
 [package]
 name = "persistant"
@@ -94,6 +94,10 @@ required-features = ["registry"]
 
 [[example]]
 name = "registry_blob"
+required-features = ["registry"]
+
+[[example]]
+name = "registry_blob_stream"
 required-features = ["registry"]
 
 [[example]]
