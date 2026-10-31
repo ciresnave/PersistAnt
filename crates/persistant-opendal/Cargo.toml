@@ -9,6 +9,10 @@ repository = "https://github.com/ciresnave/PersistAnt"
 keywords = ["storage", "persistence", "opendal", "blob"]
 categories = ["filesystem"]
 
+[features]
+# Test-only: a pause inside `finish`, for the kill-during-finish crash test. Never enable in a product.
+failpoint = []
+
 [dependencies]
 persistant-core = { workspace = true }
 persistant-blob = { workspace = true }
@@ -17,6 +21,7 @@ futures-util = { version = "0.3.34", default-features = false }
 tokio = { version = "1.53.2", features = ["rt", "fs"] }
 
 [dev-dependencies]
+persistant-opendal = { path = ".", features = ["failpoint"] }
 persistant-kv = { workspace = true }
 tempfile = "3.27.0"
 tokio = { version = "1.53.2", features = ["rt", "rt-multi-thread", "macros", "sync"] }

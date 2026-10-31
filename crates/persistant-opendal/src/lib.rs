@@ -462,6 +462,8 @@ impl BlobSink for HandSink {
                     return Err(io("release the staging lock", e));
                 }
             }
+            #[cfg(feature = "failpoint")]
+            failpoint_pause_before_publish();
             match rename_retrying(staged, self.target.clone()).await {
                 Ok(()) => {
                     self.staged = None;
@@ -488,6 +490,18 @@ impl Drop for HandSink {
     /// A dropped, unfinished sink removes its own staging; no runtime is needed.
     fn drop(&mut self) {
         self.discard();
+    }
+}
+
+/// Test-only failpoint (feature `failpoint`, off by default): when `PERSISTANT_FAILPOINT_FINISH` is
+/// set, `finish` prints `paused` and blocks here, staging complete and unpublished, so a test can kill
+/// the process at exactly this point (docs/DESIGN-BLOB-STREAMS.md section 4, crash test 4b).
+#[cfg(feature = "failpoint")]
+fn failpoint_pause_before_publish() {
+    if std::env::var_os("PERSISTANT_FAILPOINT_FINISH").is_some() {
+        println!("paused");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        std::thread::sleep(std::time::Duration::from_secs(120));
     }
 }
 
