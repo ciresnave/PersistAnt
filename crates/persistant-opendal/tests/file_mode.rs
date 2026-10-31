@@ -53,6 +53,7 @@ async fn the_plain_driver_does_not_record_the_fact() {
 #[cfg(unix)]
 mod unix {
     use super::*;
+    use persistant_blob::BlobBackend;
     use std::os::unix::fs::PermissionsExt;
 
     fn mode(p: &std::path::Path) -> u32 {
