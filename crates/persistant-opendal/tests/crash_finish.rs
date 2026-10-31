@@ -134,7 +134,11 @@ async fn known_bad_an_in_place_writer_killed_midway_leaves_a_partial_value() {
     let scratch = tempfile::tempdir().unwrap();
     let b = OpendalBlob::fs(root.path(), Some(scratch.path())).unwrap();
     b.write("k", old_value()).await.unwrap();
-    let mut child = spawn_child("child_in_place_and_hold", &[(CHILD_IN_PLACE, root.path())], false);
+    let mut child = spawn_child(
+        "child_in_place_and_hold",
+        &[(CHILD_IN_PLACE, root.path())],
+        false,
+    );
     wait_for(&mut child, "half");
     kill(child);
     let got = b.read("k").await.unwrap().expect("the key vanished");
