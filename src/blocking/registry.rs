@@ -369,6 +369,113 @@ impl BlobHandle<'_> {
         let key = key.to_string();
         self.run(|h| async move { h.blob().expect("present").append(&key, bytes).await })
     }
+
+    /// See [`BlobBackend::read_range`].
+    pub fn read_range(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+    ) -> Result<Option<Vec<u8>>, BlobError> {
+        let key = key.to_string();
+        self.run(|h| async move {
+            h.blob()
+                .expect("present")
+                .read_range(&key, offset, len)
+                .await
+        })
+    }
+
+    /// See [`BlobBackend::read_range_if`].
+    pub fn read_range_if(
+        &self,
+        key: &str,
+        offset: u64,
+        len: u64,
+        tag: &str,
+    ) -> Result<Option<Vec<u8>>, BlobError> {
+        let (key, tag) = (key.to_string(), tag.to_string());
+        self.run(|h| async move {
+            h.blob()
+                .expect("present")
+                .read_range_if(&key, offset, len, &tag)
+                .await
+        })
+    }
+
+    /// See [`BlobBackend::write_stream`]. The returned writer runs each call on this handle's
+    /// worker, so a long write never holds the calling thread's runtime.
+    pub fn write_stream(&self, key: &str) -> Result<BlobWriter<'_>, BlobError> {
+        let key = key.to_string();
+        let sink =
+            self.run(|h| async move { h.blob().expect("present").write_stream(&key).await })?;
+        Ok(BlobWriter::new(self.owner, sink))
+    }
+
+    /// See [`BlobBackend::write_stream_atomic`].
+    pub fn write_stream_atomic(&self, key: &str) -> Result<BlobWriter<'_>, BlobError> {
+        let key = key.to_string();
+        let sink = self
+            .run(|h| async move { h.blob().expect("present").write_stream_atomic(&key).await })?;
+        Ok(BlobWriter::new(self.owner, sink))
+    }
+}
+
+/// A streamed write in progress, blocking: the counterpart of [`crate::blob::BlobSink`]. Add
+/// chunks with [`write`](Self::write), then [`finish`](Self::finish) to publish or
+/// [`abort`](Self::abort) to leave the key as it was. Dropping it without either abandons the
+/// write (the backend's own cleanup applies, as for the async sink).
+pub struct BlobWriter<'a> {
+    owner: &'a KvHandle,
+    sink: Option<Box<dyn crate::blob::BlobSink>>,
+}
+
+impl std::fmt::Debug for BlobWriter<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("blocking::registry::BlobWriter")
+            .field("open", &self.sink.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> BlobWriter<'a> {
+    fn new(owner: &'a KvHandle, sink: Box<dyn crate::blob::BlobSink>) -> Self {
+        Self {
+            owner,
+            sink: Some(sink),
+        }
+    }
+
+    fn lost() -> BlobError {
+        BlobError::Backend("the stream was lost after an earlier failure of the worker".to_string())
+    }
+
+    /// Add `chunk` to the end of the value being written.
+    pub fn write(&mut self, chunk: &[u8]) -> Result<(), BlobError> {
+        let mut sink = self.sink.take().ok_or_else(Self::lost)?;
+        let chunk = chunk.to_vec();
+        let (sink, result) = self.owner.call_as(
+            async move {
+                let r = sink.write(&chunk).await;
+                Ok((sink, r))
+            },
+            BlobError::Backend,
+        )?;
+        self.sink = Some(sink);
+        result
+    }
+
+    /// Publish the value at the key.
+    pub fn finish(mut self) -> Result<(), BlobError> {
+        let sink = self.sink.take().ok_or_else(Self::lost)?;
+        self.owner.call_as(sink.finish(), BlobError::Backend)
+    }
+
+    /// Discard what was written; the key is as it was before the stream began.
+    pub fn abort(mut self) -> Result<(), BlobError> {
+        let sink = self.sink.take().ok_or_else(Self::lost)?;
+        self.owner.call_as(sink.abort(), BlobError::Backend)
+    }
 }
 
 /// The relational database of an opened [`KvHandle`], blocking. Statements are written in the
