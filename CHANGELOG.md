@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.0
+
+- **`blob.max_value_size` (ROADMAP "Open items" row 2):** `BlobBackend::max_value_size() -> Option<u64>` (default `None`: no ceiling advertised) and `conformance::Leaf::MaxValueSize` (**breaking** for code that matches `Leaf` exhaustively; `Leaf::ALL` is 14). A backend that advertises `n` must take a value of exactly `n` bytes whole and refuse `n + 1` by write, append, create and replace, leaving the earlier value (or no value) as it was. `MemoryBlob::with_ceiling(n)` is the capped store that tests it, with two known-bad defects (`CeilingIgnored`, `RefusalKeepsPrefix`); `Instrumented`, `Traced` and the registry's `AnyBlob` forward the ceiling. `memory` and `fs` advertise none, so their `blob.max_value_size` rows are off as `missing` ("no value ceiling is advertised").
+
 ## 0.15.0
 
 - **`blob.file_mode` (ROADMAP "Open items" row 3):** `OpendalBlob::owner_only()` makes every file the `fs` driver creates owner-only: `0600` on Unix whatever the umask (a directory it creates is `0700`), a protected one-entry ACL for the current user on Windows. The file is created owner-only before any content is written. Writes and replaces under `atomic_write_dir` are staged by hand, an exclusive create links an owner-only scratch file, and an in-place write or append finds a file created owner-only first. A file that already exists keeps its mode. The matrix row is recorded under the config fact `file_mode=owner_only`, so a program that does not ask for it is not told it has it.

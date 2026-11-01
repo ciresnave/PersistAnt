@@ -41,11 +41,13 @@ pub enum Leaf {
     WriteStream,
     /// `blob.write_stream.atomic`, by sampled concurrency
     WriteStreamAtomic,
+    /// `blob.max_value_size`: on only where the backend advertises a ceiling and holds to it
+    MaxValueSize,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 13] = [
+    pub const ALL: [Leaf; 14] = [
         Leaf::Read,
         Leaf::Write,
         Leaf::Delete,
@@ -59,6 +61,7 @@ impl Leaf {
         Leaf::ReadRangeConsistent,
         Leaf::WriteStream,
         Leaf::WriteStreamAtomic,
+        Leaf::MaxValueSize,
     ];
 
     /// The capability id.
@@ -77,6 +80,7 @@ impl Leaf {
             Leaf::ReadRangeConsistent => "blob.read_range.consistent",
             Leaf::WriteStream => "blob.write_stream",
             Leaf::WriteStreamAtomic => "blob.write_stream.atomic",
+            Leaf::MaxValueSize => "blob.max_value_size",
         }
     }
 
@@ -109,6 +113,7 @@ impl Leaf {
             Leaf::AppendConcurrentWhole => &[Defect::AppendTearsRecords, Defect::AppendOverwrites],
             Leaf::ReadRange => &[Defect::RangeIgnoresOffset, Defect::RangeShort],
             Leaf::ReadRangeConsistent => &[Defect::RangeIfIgnoresTag, Defect::TagIgnoresContent],
+            Leaf::MaxValueSize => &[Defect::CeilingIgnored, Defect::RefusalKeepsPrefix],
             Leaf::WriteStream => &[
                 Defect::StreamWritesThrough,
                 Defect::StreamDropsTail,
@@ -159,6 +164,7 @@ pub async fn run_leaf<B: BlobBackend>(leaf: Leaf, b: &B) -> Result<(), Failure> 
         Leaf::ReadRangeConsistent => read_range_consistent(b, &base).await,
         Leaf::WriteStream => write_stream(b, &base, false).await,
         Leaf::WriteStreamAtomic => write_stream_atomic(b, &base).await,
+        Leaf::MaxValueSize => max_value_size(b, &base).await,
     };
     // Best-effort cleanup so a shared target is left as found.
     if let Ok(page) = b.list(&base, None, usize::MAX).await {
@@ -167,6 +173,78 @@ pub async fn run_leaf<B: BlobBackend>(leaf: Leaf, b: &B) -> Result<(), Failure> 
         }
     }
     result
+}
+
+/// The ceiling of the capped stores that control `blob.max_value_size`.
+const CONTROL_CEILING: u64 = 1024 * 1024;
+
+/// Ceilings larger than this are not tested (the test writes a value of the ceiling's size).
+const MAX_TESTED_CEILING: u64 = 8 * 1024 * 1024;
+
+/// `blob.max_value_size`: a backend that advertises a ceiling `n` takes a value of exactly `n`
+/// bytes whole, and refuses `n + 1` by every route that writes (write, and create, replace and
+/// append where the backend has them) leaving the earlier value untouched, or no value where there
+/// was none. A backend that advertises no ceiling has nothing to test: the leaf is off as missing.
+async fn max_value_size<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
+    let Some(n) = b.max_value_size() else {
+        return Err(BlobError::Unsupported("no value ceiling is advertised".to_string()).into());
+    };
+    if n > MAX_TESTED_CEILING {
+        return Err(BlobError::Unsupported(format!(
+            "the {n}-byte ceiling is too large to test here"
+        ))
+        .into());
+    }
+    let len = n as usize;
+    let at = pattern(len, 3);
+    let over = pattern(len + 1, 5);
+    let key = format!("{base}at");
+    b.write(&key, at.clone()).await?;
+    if b.read(&key).await?.as_deref() != Some(at.as_slice()) {
+        return wrong(format!("a value of exactly {n} bytes was not stored whole"));
+    }
+    // Over the ceiling, on a key that holds a value: refused, and the value is as it was.
+    let routes: [(&str, Result<(), BlobError>); 2] = [
+        ("write", b.write(&key, over.clone()).await),
+        ("append", b.append(&key, vec![7]).await),
+    ];
+    for (name, r) in routes {
+        // An error is the refusal; a route the backend does not have is not a failure of the ceiling.
+        if r.is_ok() {
+            return wrong(format!("{name} over the {n}-byte ceiling was accepted"));
+        }
+        if b.read(&key).await?.as_deref() != Some(at.as_slice()) {
+            return wrong(format!("a refused {name} changed the stored value"));
+        }
+    }
+    // Over the ceiling, on a fresh key: refused, and no key appears.
+    let fresh = format!("{base}fresh");
+    if b.write(&fresh, over.clone()).await.is_ok() {
+        return wrong(format!(
+            "a fresh write over the {n}-byte ceiling was accepted"
+        ));
+    }
+    if b.stat(&fresh).await?.is_some() {
+        return wrong("a refused fresh write left a value behind");
+    }
+    let made = format!("{base}made");
+    match b.create_exclusive(&made, over.clone()).await {
+        Ok(_) => return wrong("create_exclusive over the ceiling was accepted"),
+        Err(_) => {
+            if b.stat(&made).await?.is_some() {
+                return wrong("a refused create_exclusive left a value behind");
+            }
+        }
+    }
+    if let Err(e) = b.replace_atomic(&key, over).await {
+        let _ = e;
+        if b.read(&key).await?.as_deref() != Some(at.as_slice()) {
+            return wrong("a refused replace_atomic changed the stored value");
+        }
+    } else {
+        return wrong("replace_atomic over the ceiling was accepted");
+    }
+    Ok(())
 }
 
 async fn read<B: BlobBackend>(b: &B, base: &str) -> Result<(), Failure> {
@@ -754,10 +832,21 @@ pub async fn certify_leaves<B: BlobBackend>(
 ) -> Vec<Certified> {
     let mut out = Vec::new();
     for leaf in leaves.iter().copied() {
-        let positive_passed = run_leaf(leaf, &MemoryBlob::new()).await.is_ok();
+        // The ceiling leaf's controls are capped stores: an uncapped one has nothing to test.
+        let capped = |m: MemoryBlob| {
+            if leaf == Leaf::MaxValueSize {
+                m.with_ceiling(CONTROL_CEILING)
+            } else {
+                m
+            }
+        };
+        let positive_passed = run_leaf(leaf, &capped(MemoryBlob::new())).await.is_ok();
         let mut known_bad_failed = true;
         for d in leaf.defects() {
-            if run_leaf(leaf, &MemoryBlob::with_defect(*d)).await.is_ok() {
+            if run_leaf(leaf, &capped(MemoryBlob::with_defect(*d)))
+                .await
+                .is_ok()
+            {
                 known_bad_failed = false;
             }
         }
@@ -844,7 +933,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_correct_backend_is_on_for_every_leaf() {
-        let rows = certify(&MemoryBlob::new(), &Config::new(), &Config::new()).await;
+        let rows = certify(
+            &MemoryBlob::new().with_ceiling(CONTROL_CEILING),
+            &Config::new(),
+            &Config::new(),
+        )
+        .await;
         assert_eq!(rows.len(), Leaf::ALL.len());
         for c in &rows {
             assert!(c.row.enabled, "{}: {}", c.leaf.id(), c.row.note);
@@ -856,13 +950,28 @@ mod tests {
     async fn every_defect_turns_its_own_leaf_off_as_wrong() {
         for leaf in Leaf::ALL {
             for d in leaf.defects() {
-                let rows =
-                    certify(&MemoryBlob::with_defect(*d), &Config::new(), &Config::new()).await;
+                let target = MemoryBlob::with_defect(*d).with_ceiling(CONTROL_CEILING);
+                let rows = certify(&target, &Config::new(), &Config::new()).await;
                 let mine = rows.iter().find(|c| c.leaf == leaf).unwrap();
                 assert!(!mine.row.enabled, "{d:?} must turn {} off", leaf.id());
                 assert_eq!(mine.row.reason, Some(Reason::Wrong), "{d:?}");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn a_backend_with_no_ceiling_is_off_as_missing_for_max_value_size() {
+        let rows = certify(&MemoryBlob::new(), &Config::new(), &Config::new()).await;
+        let mine = rows.iter().find(|c| c.leaf == Leaf::MaxValueSize).unwrap();
+        assert!(!mine.row.enabled);
+        assert_eq!(mine.row.reason, Some(Reason::Missing));
+        assert!(
+            mine.row.note.contains("no value ceiling"),
+            "{}",
+            mine.row.note
+        );
+        // The control: every other leaf is still on for the same store.
+        assert!(rows.iter().filter(|c| c.row.enabled).count() >= Leaf::ALL.len() - 1);
     }
 
     #[tokio::test]

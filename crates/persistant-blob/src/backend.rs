@@ -129,6 +129,15 @@ pub trait BlobBackend: Send + Sync {
     /// The backend's version string as it appears in matrix rows.
     fn version(&self) -> &str;
 
+    /// The largest value, in bytes, this store accepts at one key, or `None` if it advertises no
+    /// ceiling (`blob.max_value_size`). A backend that returns `Some(n)` must refuse (with an error,
+    /// leaving any earlier value as it was) every write, create, replace or append that would leave a
+    /// value longer than `n`, and accept one of exactly `n`. The default is `None`: no ceiling is
+    /// claimed, and the capability is off for want of one.
+    fn max_value_size(&self) -> Option<u64> {
+        None
+    }
+
     /// How keys built on this store should be laid out (default [`KeyLayout::Raw`]).
     fn key_layout(&self) -> KeyLayout {
         KeyLayout::Raw

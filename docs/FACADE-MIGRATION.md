@@ -25,7 +25,7 @@ use sites, and whether either uses `Record`, are **UNVERIFIED**.
 | `begin_replace` / `Replace` (piecewise write) | none | `BlobBackend` has whole-value `write` only |
 | `Faults`, `Masked` test fakes | `MemoryBlob` defects | different mechanism (fault at the Nth write vs a named defect); not equivalent |
 | `blocking::Store` | none | no blocking facade over the new traits |
-| `Need::MaxValueSize` | `blob.max_value_size` leaf, no test | untested, so off |
+| `Need::MaxValueSize` | `blob.max_value_size` leaf | tested since 0.16.0 on a capped store; off as missing for `memory` and `fs` (no ceiling) |
 
 ## 3. The one finding that decides the order: AtomicReplace needs a crash test
 

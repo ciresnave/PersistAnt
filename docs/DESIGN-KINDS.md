@@ -767,7 +767,7 @@ behind features. Still not built, each a row in `ROADMAP.md` ("Spec-to-roadmap a
   `ops.pitr`, `storage.no_plaintext_at_rest`. They have no row, so they are off. (For kv, `Process`
   and `Machine` durability are verified; see the roadmap.)
 - **`kv.batch_atomic`**: not offered (auth-framework declined it; its design needs no multi-key atomicity).
-- **`blob.max_value_size`**: no test yet. (`blob.file_mode` is built, 0.15.0.)
+- (`blob.file_mode` is built, 0.15.0; `blob.max_value_size` has its test since 0.16.0 and is off as missing wherever no ceiling is advertised.)
 - **Migrating consumers** (§7 steps 1 to 7) are each consumer lane's work. Moving `Store` itself onto
   `BlobBackend` needs a ruling, because it changes a published API.
 - **Verification by other lanes' suites.** Synapse's mailbox suite proves composite behaviour, not
