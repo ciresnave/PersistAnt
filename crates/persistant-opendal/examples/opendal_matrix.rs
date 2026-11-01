@@ -96,6 +96,14 @@ async fn run(env: Config, crash_rows: Vec<Row>, lock_row: Row) {
     let mode_tmp = mode_work.path().to_string_lossy().into_owned();
     rows.extend(clean(mode_rows, &[mode_tmp.as_str()]));
 
+    // `storage.no_plaintext_at_rest`: a canary written through every operation, searched raw.
+    let plain_work = tempfile::tempdir().unwrap();
+    let plain_rows = persistant_opendal::certify_no_plaintext_at_rest(plain_work.path(), &env)
+        .await
+        .expect("plaintext test ran");
+    let plain_tmp = plain_work.path().to_string_lossy().into_owned();
+    rows.extend(clean(plain_rows, &[plain_tmp.as_str()]));
+
     // KvOnBlob over each, strict; plus the explicit in-place mode on fs without a scratch dir.
     let kvs = [
         KvOnBlob::new(OpendalBlob::memory().unwrap()),
