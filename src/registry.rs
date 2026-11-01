@@ -87,7 +87,10 @@ use persistant_sqlx::{PgBackend, PgTx};
 use persistant_sqlx::{SqliteBackend, SqliteTx};
 
 /// Where a provider is opened: what [`EndpointSpec`] asks for.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` never shows a credential: [`Endpoint::Url`] prints with its userinfo, its query values
+/// and its fragment replaced by `<redacted>`.
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Endpoint {
     /// Nothing (`memory`).
@@ -95,11 +98,65 @@ pub enum Endpoint {
     /// A directory or file on the local filesystem.
     Path(PathBuf),
     /// A connection URL held as plain text. Prefer [`Endpoint::Secret`]: a URL usually carries a
-    /// password and this one is a `Debug` print away from a log file.
+    /// password. `Debug` redacts the userinfo, the query values and the fragment, but the text is
+    /// still in memory, in `Clone`s and in anything that reads the field.
     Url(String),
     /// A connection URL held as a secret: read from the environment, a file or a literal only when
     /// the backend is opened, and never printed.
     Secret(ConnectionSecret),
+}
+
+/// A connection URL with everything that can be a credential replaced by `<redacted>`: the
+/// userinfo (everything before the last `@` ahead of the query, so a password holding `@` or `/`
+/// is covered), the value of every query parameter (the name stays) and the fragment. The scheme,
+/// host, port and path stay: they say where, not who. Text that is not `scheme://...` is
+/// hidden whole, because it may be a keyword/value connection string with the password in it.
+fn redact_url(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return "<redacted>".to_string();
+    };
+    let (rest, fragment) = match rest.split_once('#') {
+        Some((r, _)) => (r, true),
+        None => (rest, false),
+    };
+    let (location, query) = match rest.split_once('?') {
+        Some((l, q)) => (l, Some(q)),
+        None => (rest, None),
+    };
+    let location = match location.rsplit_once('@') {
+        Some((_, after)) => format!("<redacted>@{after}"),
+        None => location.to_string(),
+    };
+    let mut out = format!("{scheme}://{location}");
+    if let Some(q) = query {
+        let pairs: Vec<String> = q
+            .split('&')
+            .map(|pair| match pair.split_once('=') {
+                Some((name, _)) => format!("{name}=<redacted>"),
+                None => "<redacted>".to_string(),
+            })
+            .collect();
+        out.push('?');
+        out.push_str(&pairs.join("&"));
+    }
+    if fragment {
+        out.push_str("#<redacted>");
+    }
+    out
+}
+
+impl fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Endpoint::None => f.write_str("None"),
+            Endpoint::Path(p) => f.debug_tuple("Path").field(p).finish(),
+            Endpoint::Url(u) => f
+                .debug_tuple("Url")
+                .field(&format_args!("{}", redact_url(u)))
+                .finish(),
+            Endpoint::Secret(sec) => f.debug_tuple("Secret").field(sec).finish(),
+        }
+    }
 }
 
 impl Endpoint {

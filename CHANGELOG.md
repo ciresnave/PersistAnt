@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.4
+
+- **Fix: `Endpoint::Url` no longer prints its credentials in `Debug`** (PM ruling 2026-11-01: a bug). The derived `Debug` showed the whole URL, and a URL can carry `user:password@host` or a token in its query. `Debug` now replaces the userinfo (everything before the last `@`), every query value and the fragment with `<redacted>`, keeps scheme, host, port, path and query names, and hides text that is not `scheme://...` whole. `tests/endpoint_redaction.rs` fails on the derived `Debug` and was mutation-checked (query values kept, userinfo kept: both fail). **Not covered:** the URL is still plain text in memory and `Clone`s; error text from a failed connect was not checked for the password; `Endpoint` has no `Display`. Prefer `Endpoint::Secret` / `Endpoint::url_env`.
+
 ## 0.16.2
 
 - **`persistant_blob::stream::copy_in_with_progress`** (PM [TASK] 2026-10-31, the bytes half of the transfer progress callback; the pairs half is `persistant_kv::copy`, 0.16.1): as `copy_in`, calling a `FnMut(u64)` with the bytes written so far, once with 0 and then after every piece the sink took. Synchronous, cannot cancel, no total (the caller knows its source's length). `copy_in` is now this with a no-op callback; its behaviour is unchanged.
