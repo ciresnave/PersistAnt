@@ -33,7 +33,10 @@ fn the_scanner_does_not_find_what_is_not_there() {
     // A prefix of the canary is not the canary.
     std::fs::write(dir.path().join("prefix"), &CANARY[..CANARY.len() - 1]).unwrap();
     assert!(find_canary(dir.path(), CANARY).unwrap().is_empty());
-    assert!(find_canary(dir.path(), b"").is_err(), "an empty canary matches everything");
+    assert!(
+        find_canary(dir.path(), b"").is_err(),
+        "an empty canary matches everything"
+    );
 }
 
 #[tokio::test]

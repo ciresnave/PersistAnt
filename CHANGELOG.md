@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.6
+
+- **`storage.no_plaintext_at_rest` has a test for the `fs` driver** (PM [TASK] 2026-11-01, ROADMAP "Portfolio adoption" row 5): `persistant_opendal::certify_no_plaintext_at_rest` writes a canary through `write`, `create_exclusive`, `append` and, with a scratch directory, `replace_atomic` and `write_stream`, then searches the data and scratch directories for the raw bytes (`find_canary`). The driver stores what it is given, so the canary is found and the row is **off, `missing`**, with the files that hold it in the note; the leaf can turn on only for a layer that really encrypts. The scanner is checked on a plaintext file (found) and a masked one (not found); `tests/plaintext_at_rest.rs` was mutation-checked (never matches, always matches: 2 tests fail each). **Not covered:** SQLite journal and WAL files, a canary the layer splits or encodes, page files and swap. New rows in `matrix/opendal.tsv`.
+
 ## 0.16.5
 
 - Docs only: `docs/DESIGN-KV-IN-RELATIONAL-TX.md`, the design note for ROADMAP "Open items" row 6 (`kv.in_relational_transaction`): what exists, three API options (recommend B, starting from A), the semantics to decide (same instance, batch lock, retry, isolation, TTL clock), the leaf and its known-bad defects, what was not verified. No code; nothing built or run.
