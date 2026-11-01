@@ -3,6 +3,7 @@
 ## 0.16.4
 
 - **Fix: `Endpoint::Url` no longer prints its credentials in `Debug`** (PM ruling 2026-11-01: a bug). The derived `Debug` showed the whole URL, and a URL can carry `user:password@host` or a token in its query. `Debug` now replaces the userinfo (everything before the last `@`), every query value and the fragment with `<redacted>`, keeps scheme, host, port, path and query names, and hides text that is not `scheme://...` whole. `tests/endpoint_redaction.rs` fails on the derived `Debug` and was mutation-checked (query values kept, userinfo kept: both fail). **Not covered:** the URL is still plain text in memory and `Clone`s; error text from a failed connect was not checked for the password; `Endpoint` has no `Display`. Prefer `Endpoint::Secret` / `Endpoint::url_env`.
+
 ## 0.16.3
 
 - Docs only: `docs/DESIGN-SECRET-HANDLE.md`, the design note for ROADMAP "Open items" row 9 (secret handle): `ConnectionSecret::Env` is already the `with-secret` path for a launched program; options A-D for a library-level reference; `Endpoint::Url` prints its URL. No code; nothing built or run.
