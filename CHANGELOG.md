@@ -4,6 +4,10 @@
 
 - **`persistant_blob::stream::copy_in_with_progress`** (PM [TASK] 2026-10-31, the bytes half of the transfer progress callback; the pairs half is `persistant_kv::copy`, 0.16.1): as `copy_in`, calling a `FnMut(u64)` with the bytes written so far, once with 0 and then after every piece the sink took. Synchronous, cannot cancel, no total (the caller knows its source's length). `copy_in` is now this with a no-op callback; its behaviour is unchanged.
 
+## 0.16.1
+
+- **`persistant_kv::copy`** (PM [TASK] 2026-10-31, for configurant ROADMAP row 7): `copy_all` copies every pair of one `KvBackend` into another and reads the target back; `copy_all_with_progress` also calls a callback with a `Progress { phase, done, total }` at the start of each phase and after every source pair, in pairs. `total` is known with `CopyOptions::count_first`. The source is only read; a non-empty target is refused unless `allow_existing` (then no key of the target is overwritten); a ttl travels with its pair; a target that loses writes is `CopyError::Mismatch`. Errors carry the backend's `KvError` untouched (the caller scrubs secrets). The callback is synchronous and cannot cancel. A bytes callback on `blob::stream::copy_in` follows.
+
 ## 0.16.0
 
 - **`blob.max_value_size` (ROADMAP "Open items" row 2):** `BlobBackend::max_value_size() -> Option<u64>` (default `None`: no ceiling advertised) and `conformance::Leaf::MaxValueSize` (**breaking** for code that matches `Leaf` exhaustively; `Leaf::ALL` is 14). A backend that advertises `n` must take a value of exactly `n` bytes whole and refuse `n + 1` by write, append, create and replace, leaving the earlier value (or no value) as it was. `MemoryBlob::with_ceiling(n)` is the capped store that tests it, with two known-bad defects (`CeilingIgnored`, `RefusalKeepsPrefix`); `Instrumented`, `Traced` and the registry's `AnyBlob` forward the ceiling. `memory` and `fs` advertise none, so their `blob.max_value_size` rows are off as `missing` ("no value ceiling is advertised").
