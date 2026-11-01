@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.7
+
+- **A failed connect does not show the password** (PM [TASK] 2026-11-01; `docs/DESIGN-SECRET-HANDLE.md` 5.3). `crates/persistant-sqlx/tests/connect_error_leak.rs` gives `PgBackend` and `MysqlBackend` (`connect`, `connect_secret`, `connect_with`) a connection string with a canary password and a port nothing listens on, text that is not a connection string, and, where the CI servers exist, a real server with the wrong password; it asserts the canary is in no `Display`, `Debug`, `{:#?}` or `source()` of the error. **Result: no leak found, so no fix.** Mutation-checked: an error that includes the connect options, and one that includes the invalid string, each fail the test. Not covered: SQLite (no credential), the registry's own open errors, and what a server's own error text says.
+- Docs: `docs/REGISTRY-FOR-STORE-USERS.md` says how to keep a server URL out of config and logs (`Endpoint::url_env`, and `with-secret` as the way to launch the program); ROADMAP row 9 records the PM's rulings (A confirmed; C and D scheduled for a consumer's request; B rejected; zeroize not now) and row 23 records deprecating `Endpoint::Url` with the next Breaking release.
+
 ## 0.16.6
 
 - **`storage.no_plaintext_at_rest` has a test for the `fs` driver** (PM [TASK] 2026-11-01, ROADMAP "Portfolio adoption" row 5): `persistant_opendal::certify_no_plaintext_at_rest` writes a canary through `write`, `create_exclusive`, `append` and, with a scratch directory, `replace_atomic` and `write_stream`, then searches the data and scratch directories for the raw bytes (`find_canary`). The driver stores what it is given, so the canary is found and the row is **off, `missing`**, with the files that hold it in the note; the leaf can turn on only for a layer that really encrypts. The scanner is checked on a plaintext file (found) and a masked one (not found); `tests/plaintext_at_rest.rs` was mutation-checked (never matches, always matches: 2 tests fail each). **Not covered:** SQLite journal and WAL files, a canary the layer splits or encodes, page files and swap. New rows in `matrix/opendal.tsv`.

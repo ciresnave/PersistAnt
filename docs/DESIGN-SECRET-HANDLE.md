@@ -74,3 +74,11 @@ asking, so building it now would be a guess.
 - PM: confirm A (guide paragraph plus this note) as the row-9 outcome, or rule C/D now.
 - PM: rule on deprecating `Endpoint::Url` (section 5.2).
 - PM: point me at the document for the vault move, if one exists.
+
+## 9. Rulings (PM, 2026-11-01)
+
+1. **Outcome A confirmed** (guide paragraph plus this note). C (`SecretSource` resolver) and D (kind-neutral `Secret` in `persistant-core`) are *scheduled: when a consumer asks*, not declined. B stays rejected.
+2. **Deprecating `Endpoint::Url`: not now.** 0.16.4 redacted its `Debug`; `#[deprecated]` fails `-D warnings` consumers. It goes with the next Breaking release, with a migration line (ROADMAP row 23).
+3. **`zeroize`:** when taken, a normal current third-party dependency; not now.
+4. The vault move is OverMind ROADMAP row 6b (found by the PM).
+5. **5.3 was tested (0.16.7):** a failed connect to PostgreSQL or MySQL, with a canary password, shows it in no `Display`, `Debug` or `source()`; mutation-checked. Still not tested: a server's own error text for a wrong password (checked only where the CI servers exist) and the registry's open errors.

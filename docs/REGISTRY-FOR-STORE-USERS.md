@@ -20,6 +20,8 @@ A runnable version of the steps is `examples/registry_instead_of_config.rs`
 4. **Open it at start-up**: `registry::open_named(id, &endpoint, &needs).await`. The gate is checked again there; a backend that no
    longer meets the needs is `OpenError::Unmet`, naming the ids. Then use `handle.kv()` and nothing backend-specific.
 
+**Keep the server URL out of your config and your logs.** A URL carries the password. Store the *name* of an environment variable and use `Endpoint::url_env("VAR")` (or `Endpoint::Secret(ConnectionSecret::File(path))` for a mounted secret): the URL is read when the backend opens and is never printed. If the portfolio's `with-secret` holds the URL, launch the program through it (`with-secret NAME --reason "..." -- your-program`): it puts the vault entry in that one process's environment under the variable name the entry was stored with, after a person approved, and `url_env` with that name reads it. No PersistAnt code is involved, and that is the point. Avoid `Endpoint::Url(String)`: its `Debug` hides the password, the query values and the fragment, but the text is still plain in memory and in clones. A failed connect to PostgreSQL or MySQL does not put the password in its error (`crates/persistant-sqlx/tests/connect_error_leak.rs`, a canary password); a server's own message and the registry's open errors were not tested for it.
+
 A backend PersistAnt gains later reaches the program when it upgrades `persistant` and rebuilds; there are no plug-ins. A provider
 is in `providers()` only if **its Cargo feature is compiled in**: `registry` gives `memory` and `fs`, `registry-sqlite` adds `sqlite`
 and `sqlite-full`, `registry-postgres` adds `postgres`, `registry-mysql` adds `mysql` and `mariadb`, `all-backends` is every one. Enable
