@@ -232,6 +232,18 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn the_instrumented_wrapper_forwards_the_ceiling() {
+        // A wrapper that hid the ceiling would turn blob.max_value_size off for the backend under it.
+        let inner = MemoryBlob::new().with_ceiling(1024 * 1024);
+        let w = crate::stats::Instrumented::new(&inner);
+        assert_eq!(w.max_value_size(), Some(1024 * 1024));
+        crate::conformance::run_leaf(crate::conformance::Leaf::MaxValueSize, &w)
+            .await
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(MemoryBlob::new().max_value_size(), None, "the control");
+    }
+
     #[cfg(feature = "tracing")]
     #[tokio::test]
     async fn the_traced_wrapper_forwards_the_new_operations() {
