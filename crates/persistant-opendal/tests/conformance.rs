@@ -72,8 +72,10 @@ async fn memory_service_gives_everything_but_append() {
         // Finding: OpenDAL's memory service does not support append.
         // The memory service has no version token (`stat` gives no tag), so the conditional
         // range read is off as missing; the plain range and both streamed writes are on.
-        let append =
-            c.leaf.id().starts_with("blob.append") || c.leaf.id() == "blob.read_range.consistent";
+        // It advertises no value ceiling either, so `blob.max_value_size` has nothing to test.
+        let append = c.leaf.id().starts_with("blob.append")
+            || c.leaf.id() == "blob.read_range.consistent"
+            || c.leaf.id() == "blob.max_value_size";
         assert_eq!(c.row.enabled, !append, "{}", summary(&rows));
         if append {
             assert_eq!(c.row.reason, Some(Reason::Missing), "{}", summary(&rows));
