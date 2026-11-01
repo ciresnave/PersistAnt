@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.3
+
+- Docs only: `docs/DESIGN-SECRET-HANDLE.md`, the design note for ROADMAP "Open items" row 9 (secret handle): `ConnectionSecret::Env` is already the `with-secret` path for a launched program; options A-D for a library-level reference; `Endpoint::Url` prints its URL. No code; nothing built or run.
+
 ## 0.16.2
 
 - **`persistant_blob::stream::copy_in_with_progress`** (PM [TASK] 2026-10-31, the bytes half of the transfer progress callback; the pairs half is `persistant_kv::copy`, 0.16.1): as `copy_in`, calling a `FnMut(u64)` with the bytes written so far, once with 0 and then after every piece the sink took. Synchronous, cannot cancel, no total (the caller knows its source's length). `copy_in` is now this with a no-op callback; its behaviour is unchanged.
