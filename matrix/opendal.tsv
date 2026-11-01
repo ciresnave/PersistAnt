@@ -46,6 +46,8 @@ capability	blob.replace_atomic	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=
 capability	lock.process	std-file-lock	File::try_lock		yes		arch=x86_64;kill=hard;os=linux;probe=process_lock::lock.process	
 capability	blob.file_mode	opendal-fs	0.59.5	atomic_write_dir=unset;file_mode=owner_only	yes		arch=x86_64;os=linux;paths_read=7;probe=file_mode::blob.file_mode	
 capability	blob.file_mode	opendal-fs	0.59.5	atomic_write_dir=set;file_mode=owner_only	yes		arch=x86_64;os=linux;paths_read=13;probe=file_mode::blob.file_mode	
+capability	storage.no_plaintext_at_rest	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;controls=held;os=linux;paths_read=3;probe=plaintext::storage.no_plaintext_at_rest	canary found raw in 3 of 3 files: unset-root/a/appended, unset-root/c/created, unset-root/w/written
+capability	storage.no_plaintext_at_rest	opendal-fs	0.59.5	atomic_write_dir=set	no	missing	arch=x86_64;controls=held;os=linux;paths_read=5;probe=plaintext::storage.no_plaintext_at_rest	canary found raw in 5 of 5 files: set-root/a/appended, set-root/c/created, set-root/r/replaced, set-root/s/streamed, set-root/w/written
 capability	kv.get	kv-on-blob:opendal-memory	0.16+0.59.5	put_mode=atomic	yes		arch=x86_64;os=linux;probe=kv::kv.get	
 capability	kv.put	kv-on-blob:opendal-memory	0.16+0.59.5	put_mode=atomic	yes		arch=x86_64;os=linux;probe=kv::kv.put	
 capability	kv.delete	kv-on-blob:opendal-memory	0.16+0.59.5	put_mode=atomic	yes		arch=x86_64;os=linux;probe=kv::kv.delete	
