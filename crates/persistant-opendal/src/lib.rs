@@ -11,9 +11,11 @@
 
 pub mod crash;
 mod file_mode;
+mod plaintext;
 mod process_lock;
 
 pub use file_mode::{certify_file_mode, owner_only_reading};
+pub use plaintext::{certify_no_plaintext_at_rest, find_canary};
 pub use process_lock::{
     ProcessLock, certify as certify_process_lock, maybe_run_child as maybe_run_lock_child,
 };
