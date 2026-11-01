@@ -90,9 +90,23 @@ impl<'a, B: BlobBackend> ChunkReader<'a, B> {
 /// Memory is one piece. The sink is left open: the caller calls `finish` or `abort`.
 pub async fn copy_in<R: Read>(
     sink: &mut dyn BlobSink,
-    mut reader: R,
+    reader: R,
     chunk: usize,
 ) -> Result<u64, BlobError> {
+    copy_in_with_progress(sink, reader, chunk, &mut |_| {}).await
+}
+
+/// As [`copy_in`], calling `progress` with the bytes written so far: once with 0 before the first
+/// read, then after every piece the sink took (so never ahead of what the sink has). The callback is
+/// synchronous and cannot cancel. A caller that knows the source's length (a file's size, a
+/// [`ChunkReader::len`]) divides by it; this function does not guess a total.
+pub async fn copy_in_with_progress<R: Read>(
+    sink: &mut dyn BlobSink,
+    mut reader: R,
+    chunk: usize,
+    progress: &mut dyn FnMut(u64),
+) -> Result<u64, BlobError> {
+    progress(0);
     let mut buf = vec![0u8; chunk.max(1)];
     let mut total = 0u64;
     loop {
@@ -104,6 +118,7 @@ pub async fn copy_in<R: Read>(
         };
         sink.write(&buf[..n]).await?;
         total += n as u64;
+        progress(total);
     }
 }
 
@@ -189,6 +204,44 @@ mod tests {
         );
         sink.finish().await.unwrap();
         assert_eq!(b.read("k").await.unwrap(), Some(v));
+    }
+
+    #[tokio::test]
+    async fn copy_in_with_progress_reports_bytes_written_after_each_piece() {
+        let b = MemoryBlob::new();
+        let v = pattern(2_500, 1);
+        let mut sink = b.write_stream("k").await.unwrap();
+        let mut seen = Vec::new();
+        let n = copy_in_with_progress(&mut *sink, &v[..], 1000, &mut |d| seen.push(d))
+            .await
+            .unwrap();
+        assert_eq!(n, 2_500);
+        assert_eq!(seen, vec![0, 1000, 2000, 2500]);
+        // Nothing is published until finish, and the progress did not publish it.
+        assert!(b.read("k").await.unwrap().is_none());
+        sink.finish().await.unwrap();
+        assert_eq!(b.read("k").await.unwrap().unwrap(), v);
+        // The control: an empty source reports only the start.
+        let mut sink = b.write_stream("e").await.unwrap();
+        let mut seen = Vec::new();
+        copy_in_with_progress(&mut *sink, &b""[..], 10, &mut |d| seen.push(d))
+            .await
+            .unwrap();
+        assert_eq!(seen, vec![0]);
+    }
+
+    #[tokio::test]
+    async fn a_failing_sink_stops_the_progress_where_it_stopped() {
+        // Known-bad control: a sink over the ceiling refuses the second piece; progress never claims it.
+        let b = MemoryBlob::new().with_ceiling(1500);
+        let mut sink = b.write_stream("k").await.unwrap();
+        let mut seen = Vec::new();
+        let r = copy_in_with_progress(&mut *sink, &pattern(3_000, 2)[..], 1000, &mut |d| {
+            seen.push(d)
+        })
+        .await;
+        assert!(r.is_err());
+        assert_eq!(seen, vec![0, 1000]);
     }
 
     #[tokio::test]
