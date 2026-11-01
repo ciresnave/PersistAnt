@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.5
+
+- Docs only: `docs/DESIGN-KV-IN-RELATIONAL-TX.md`, the design note for ROADMAP "Open items" row 6 (`kv.in_relational_transaction`): what exists, three API options (recommend B, starting from A), the semantics to decide (same instance, batch lock, retry, isolation, TTL clock), the leaf and its known-bad defects, what was not verified. No code; nothing built or run.
+
 ## 0.16.4
 
 - **Fix: `Endpoint::Url` no longer prints its credentials in `Debug`** (PM ruling 2026-11-01: a bug). The derived `Debug` showed the whole URL, and a URL can carry `user:password@host` or a token in its query. `Debug` now replaces the userinfo (everything before the last `@`), every query value and the fragment with `<redacted>`, keeps scheme, host, port, path and query names, and hides text that is not `scheme://...` whole. `tests/endpoint_redaction.rs` fails on the derived `Debug` and was mutation-checked (query values kept, userinfo kept: both fail). **Not covered:** the URL is still plain text in memory and `Clone`s; error text from a failed connect was not checked for the password; `Endpoint` has no `Display`. Prefer `Endpoint::Secret` / `Endpoint::url_env`.
