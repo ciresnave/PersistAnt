@@ -78,6 +78,10 @@ impl<B: BlobBackend> BlobBackend for Instrumented<'_, B> {
         self.inner.version()
     }
 
+    fn max_value_size(&self) -> Option<u64> {
+        self.inner.max_value_size()
+    }
+
     fn key_layout(&self) -> crate::KeyLayout {
         self.inner.key_layout()
     }

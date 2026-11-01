@@ -184,7 +184,7 @@ Read: `README.md`, `ROADMAP.md`, `SECURITY.md`, `bench/README.md`, `matrix/READM
 | # | Work | Source | State |
 |---|---|---|---|
 | 1 | Typed-error vocabulary beyond SQLSTATE classes (only `rel.error.unique` exists) | `DESIGN-KINDS` 11.3 | open |
-| 2 | A test for `blob.max_value_size` (`Need::MaxValueSize` is refused only where a backend reports a limit; the leaf is untested, so off) | `DESIGN-KINDS` 2.2, 11.3 | open |
+| 2 | A test for `blob.max_value_size` (`Need::MaxValueSize` is refused only where a backend reports a limit; the leaf is untested, so off) | `DESIGN-KINDS` 2.2, 11.3 | built (0.16.0): `BlobBackend::max_value_size`, `Leaf::MaxValueSize`, tested on a capped `MemoryBlob` with two known-bad defects; `memory` and `fs` are off as missing (no ceiling advertised) |
 | 3 | `blob.file_mode` (file permissions of the `fs` blob driver; SQLite is done, see File permissions) | `DESIGN-KINDS` 2.2 | built (0.15.0): `OpendalBlob::owner_only()`, `tests/file_mode.rs`, matrix rows under `file_mode=owner_only` |
 | 4 | `blob.replace_atomic` crash test (**done**, `crates/persistant-opendal/src/crash.rs`, matrix row `blob.replace_atomic` on for `opendal-fs` with `atomic_write_dir=set`; read at `0d91fda`) and `blob.durable` (open) | `FACADE-MIGRATION` 3, `DESIGN-KINDS` 11.3 | open |
 | 5 | `ops.pitr` test (restore to instant *t*, compare with a snapshot taken at *t*) | `DESIGN-KINDS` 2.2 | open, needs infrastructure the PM provides |

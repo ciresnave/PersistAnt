@@ -162,7 +162,7 @@ Much of it is built since (key-value and relational kinds, SQLite, PostgreSQL, M
 
 - **Maximum value size cannot be refused on `memory` or `fs`.** OpenDAL reports `write_total_max_size: None`
   for them, meaning unlimited, not unknown. `Need::MaxValueSize(n)` is refused only by a backend that
-  advertises a smaller ceiling (for example Cloudflare D1, 1 MB).
+  advertises a smaller ceiling (for example Cloudflare D1, 1 MB). The `blob.max_value_size` leaf (0.16.0) is tested on a capped in-memory store; `memory` and `fs` record it off as missing.
 - **`atomic_write_dir` must be on the same filesystem as the root and outside it.** PersistAnt checks that it
   is set, not where it is.
 - **An abandoned replace leaves its temporary file** in `atomic_write_dir` on `fs`; the old value is intact

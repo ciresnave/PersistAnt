@@ -54,6 +54,11 @@ pub enum Defect {
     /// `write_stream_atomic`'s `finish` publishes half the value, lets readers run, then the rest:
     /// a reader can see a mix of old and new.
     StreamAtomicTears,
+    /// The store advertises a ceiling (`MemoryBlob::with_ceiling`) and does not enforce it.
+    CeilingIgnored,
+    /// A write over the ceiling is refused, but its first `ceiling` bytes are stored first: the
+    /// refusal changes the value.
+    RefusalKeepsPrefix,
 }
 
 /// An in-memory reference backend. Correct unless built with [`MemoryBlob::with_defect`].
@@ -62,6 +67,7 @@ pub struct MemoryBlob {
     map: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     defect: Option<Defect>,
     hex_layout: bool,
+    ceiling: Option<u64>,
 }
 
 impl MemoryBlob {
@@ -76,7 +82,36 @@ impl MemoryBlob {
             map: Arc::default(),
             defect: Some(defect),
             hex_layout: false,
+            ceiling: None,
         }
+    }
+
+    /// This store advertising, and enforcing, a ceiling of `n` bytes on one value
+    /// ([`BlobBackend::max_value_size`]): the capped backend that tests the capability, since no
+    /// real backend here has a ceiling. Combine with [`MemoryBlob::with_defect`] for the known-bad.
+    #[must_use]
+    pub fn with_ceiling(mut self, n: u64) -> Self {
+        self.ceiling = Some(n);
+        self
+    }
+
+    /// Refuse `len` bytes at one key if they are over the ceiling. With
+    /// [`Defect::RefusalKeepsPrefix`] the refusal first stores the allowed prefix.
+    fn check(&self, key: &str, bytes: &[u8]) -> Result<(), BlobError> {
+        let Some(n) = self.ceiling else {
+            return Ok(());
+        };
+        if self.defect == Some(Defect::CeilingIgnored) || bytes.len() as u64 <= n {
+            return Ok(());
+        }
+        if self.defect == Some(Defect::RefusalKeepsPrefix) {
+            let keep = usize::try_from(n).unwrap_or(usize::MAX).min(bytes.len());
+            self.map().insert(self.k(key), bytes[..keep].to_vec());
+        }
+        Err(BlobError::Unsupported(format!(
+            "a value of {} bytes is over the {n}-byte ceiling",
+            bytes.len()
+        )))
     }
 
     /// As [`MemoryBlob::new`] but asking the layer above for [`KeyLayout::HexPath`] keys, as a
@@ -103,6 +138,7 @@ impl MemoryBlob {
             defect: self.defect,
             chunks: 0,
             done: false,
+            ceiling: self.ceiling,
         })
     }
 
@@ -143,6 +179,7 @@ struct MemorySink {
     defect: Option<Defect>,
     chunks: usize,
     done: bool,
+    ceiling: Option<u64>,
 }
 
 impl MemorySink {
@@ -172,6 +209,14 @@ impl BlobSink for MemorySink {
         Box::pin(async move {
             let first = self.chunks == 0;
             self.chunks += 1;
+            if let Some(n) = self.ceiling
+                && self.defect != Some(Defect::CeilingIgnored)
+                && (self.buf.len() + chunk.len()) as u64 > n
+            {
+                return Err(BlobError::Unsupported(format!(
+                    "a streamed value is over the {n}-byte ceiling"
+                )));
+            }
             match self.defect {
                 Some(Defect::StreamWritesThrough) => {
                     let key = self.key.clone();
@@ -245,6 +290,10 @@ impl BlobBackend for MemoryBlob {
         env!("CARGO_PKG_VERSION")
     }
 
+    fn max_value_size(&self) -> Option<u64> {
+        self.ceiling
+    }
+
     async fn read(&self, key: &str) -> Result<Option<Vec<u8>>, BlobError> {
         let mut v = self.map().get(&self.k(key)).cloned();
         if self.defect == Some(Defect::ReadTruncates)
@@ -256,6 +305,7 @@ impl BlobBackend for MemoryBlob {
     }
 
     async fn write(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        self.check(key, &bytes)?;
         if self.defect != Some(Defect::WriteIsLost) {
             self.map().insert(self.k(key), bytes);
         }
@@ -316,6 +366,7 @@ impl BlobBackend for MemoryBlob {
     }
 
     async fn create_exclusive(&self, key: &str, bytes: Vec<u8>) -> Result<bool, BlobError> {
+        self.check(key, &bytes)?;
         if self.defect == Some(Defect::CreateNotExclusive) {
             let absent = !self.map().contains_key(key);
             yield_now().await;
@@ -333,6 +384,7 @@ impl BlobBackend for MemoryBlob {
     }
 
     async fn replace_atomic(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        self.check(key, &bytes)?;
         if self.defect == Some(Defect::ReplaceTearsReads) {
             let half = bytes.len() / 2;
             let mut torn = bytes[..half].to_vec();
@@ -349,6 +401,11 @@ impl BlobBackend for MemoryBlob {
     }
 
     async fn append(&self, key: &str, bytes: Vec<u8>) -> Result<(), BlobError> {
+        if self.ceiling.is_some() {
+            let mut whole = self.map().get(key).cloned().unwrap_or_default();
+            whole.extend_from_slice(&bytes);
+            self.check(key, &whole)?;
+        }
         match self.defect {
             Some(Defect::AppendOverwrites) => {
                 self.map().insert(key.to_string(), bytes);
