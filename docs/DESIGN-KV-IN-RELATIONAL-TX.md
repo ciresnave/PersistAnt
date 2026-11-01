@@ -95,7 +95,11 @@ Each is one PR and a minor bump. The capability and leaf are additive; nothing i
   they share a pool.
 - Nothing here was built or run.
 
-## 8. Asks
+## 8. Rulings (PM, 2026-11-01, reversible)
 
-- PM: confirm B (A first), and whether to wait for a consumer's request before work order 1.
-- PM: confirm the in-tx `batch` should skip the batch lock (4.2).
+1. **B starting from A: confirmed.** A is B without the trait, so promoting it costs nothing.
+2. **Work order 1 is not built until a consumer asks.** ROADMAP row 6 reads "scheduled: when a consumer
+   requests kv-in-tx", with this note as its design. Not declined.
+3. **The in-tx `batch` skips the batch lock: confirmed.** It can therefore be a deadlock victim and returns
+   the error unchanged (no retry); that is documented on the method and asserted in the capability leaf.
+4. Items in section 7 stay listed as unverified.
