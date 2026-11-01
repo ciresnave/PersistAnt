@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.8
+
+- Docs only: ROADMAP rows 24 and 25 record what 0.16.6 and 0.16.7 left untested, as scheduled work (PM 2026-11-01): whether the registry's open errors show a connection password, and `storage.no_plaintext_at_rest` for SQLite files (database, journal, WAL). Nothing built or run.
+
 ## 0.16.7
 
 - **A failed connect does not show the password** (PM [TASK] 2026-11-01; `docs/DESIGN-SECRET-HANDLE.md` 5.3). `crates/persistant-sqlx/tests/connect_error_leak.rs` gives `PgBackend` and `MysqlBackend` (`connect`, `connect_secret`, `connect_with`) a connection string with a canary password and a port nothing listens on, text that is not a connection string, and, where the CI servers exist, a real server with the wrong password; it asserts the canary is in no `Display`, `Debug`, `{:#?}` or `source()` of the error. **Result: no leak found, so no fix.** Mutation-checked: an error that includes the connect options, and one that includes the invalid string, each fail the test. Not covered: SQLite (no credential), the registry's own open errors, and what a server's own error text says.
