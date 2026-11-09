@@ -109,12 +109,13 @@ impl TestDb {
         self.backend().migrate(migrations).await
     }
 
-    /// Close the pool and drop the database now, and report whether that worked.
+    /// Drop the database now, and report whether that worked. The server ends every connection to it
+    /// (`WITH (FORCE)`), including one the test still holds: the pool is not asked to close first,
+    /// because closing waits for every checked-out connection to come back.
     pub async fn drop_database(mut self) -> Result<(), RelError> {
-        if let Some(backend) = self.backend.take() {
-            backend.pool().close().await;
-        }
-        drop_named(&self.admin, &self.name).await
+        let dropped = drop_named(&self.admin, &self.name).await;
+        self.backend.take();
+        dropped
     }
 }
 
