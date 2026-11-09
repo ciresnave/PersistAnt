@@ -246,11 +246,16 @@ async fn the_relational_leaves_certify_on() {
         .filter(|c| !c.row.enabled)
         .map(|c| format!("{}: {:?} {}", c.leaf.id(), c.row.reason, c.row.note))
         .collect();
-    // MySQL spells the guarded upsert `ON DUPLICATE KEY UPDATE n = IF(..)`: every leaf is on.
-    assert!(
-        off.is_empty(),
-        "no relational leaf is off on mysql: {off:#?}"
+    // MySQL spells the guarded upsert `ON DUPLICATE KEY UPDATE n = IF(..)`: every leaf is on but one.
+    // Its `GET_LOCK` belongs to the connection, not the transaction, so `rel.advisory_lock` (a lock a
+    // transaction holds until it ends) is honestly missing.
+    let ids: Vec<&str> = off.iter().map(|o| o.split(':').next().unwrap()).collect();
+    assert_eq!(
+        ids,
+        ["rel.advisory_lock"],
+        "only the advisory lock is off on mysql: {off:#?}"
     );
+    assert!(off[0].contains("Some(Missing)"), "{off:#?}");
 }
 
 /// The migration ledger (`persistant_relational::migrate_conformance`) on mysql, in a scratch database

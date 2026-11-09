@@ -32,6 +32,7 @@ capability	rel.isolation.repeatable_read	postgres	16.15	dialect=postgres	yes		ar
 capability	rel.isolation.serializable	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.isolation.serializable	
 capability	rel.savepoint	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.savepoint	
 capability	rel.row_lock	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.row_lock	
+capability	rel.advisory_lock	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.advisory_lock	
 capability	rel.upsert_where	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.upsert_where	
 capability	rel.migrate.apply	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.apply	
 capability	rel.migrate.checksum	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.checksum	

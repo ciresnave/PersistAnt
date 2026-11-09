@@ -10,8 +10,8 @@ fn the_recorded_mariadb_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        40,
-        "twenty-two kv/lock leaves (kv.bounded_call twice: unset and set) and seventeen relational leaves (eleven contract, six migration) are certified"
+        41,
+        "twenty-two kv/lock leaves (kv.bounded_call twice: unset and set) and eighteen relational leaves (twelve contract, six migration) are certified"
     );
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),
@@ -29,7 +29,10 @@ fn the_recorded_mariadb_rows_are_all_on_and_read_by_the_gate() {
         // MariaDB commits DDL implicitly: that leaf is off.
         assert_eq!(
             r.enabled,
-            r.subject.as_str() != "rel.migrate.ddl_atomic",
+            !matches!(
+                r.subject.as_str(),
+                "rel.migrate.ddl_atomic" | "rel.advisory_lock"
+            ),
             "{}: {}",
             r.subject,
             r.note
