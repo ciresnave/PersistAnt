@@ -17,6 +17,7 @@ mod mysql;
 mod options;
 #[cfg(feature = "sqlite")]
 mod sqlite;
+mod testdb;
 
 pub use bounded::{Bounded, BoundedTx, call_bound_from_env, parse_bound};
 #[cfg(feature = "bridge")]
@@ -28,6 +29,7 @@ pub use options::{ConnectOptions, TlsPolicy};
 pub use persistant_relational::{MigrateError, MigrateReport, Migrates, Migration};
 #[cfg(feature = "sqlite")]
 pub use sqlite::{SqliteBackend, SqliteTx};
+pub use testdb::TestDb;
 
 use persistant_relational::{
     Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
