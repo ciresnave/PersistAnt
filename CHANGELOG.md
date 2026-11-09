@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.9
+
+- Docs only: ROADMAP rows 26 to 32 schedule the gaps auth-framework, Humboldt and Synapse raised after CireSnave's 2026-11-09 ruling (RBAC example, `kv.rate_window`, `rel.advisory_lock`, fresh-DB harness, Postgres throughput, `Vec<String>`, Redis backend). Order set by the PM.
+
 ## 0.16.8
 
 - Docs only: ROADMAP rows 24 and 25 record what 0.16.6 and 0.16.7 left untested, as scheduled work (PM 2026-11-01): whether the registry's open errors show a connection password, and `storage.no_plaintext_at_rest` for SQLite files (database, journal, WAL). Nothing built or run.
