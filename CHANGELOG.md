@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.11
+
+- **`kv.rate_window`** (ROADMAP row 27): `persistant_kv::rate::RateWindow` keeps a sliding-window limit (`sliding_window`) and a token bucket (`token_bucket`) in one key each, updated with `compare_and_swap` (`put_if_absent` for the first write), so of any number of concurrent callers racing for the last slots exactly the limit are allowed; a refused request records nothing; the key's time to live is the window. `Decision::{Allowed{remaining}, Denied{retry_after}}`; `_at` variants take the clock. New conformance leaf `kv.rate_window` (22 leaves), on wherever `compare_and_swap` is on, missing on blob stores; known-bad controls: a CAS that ignores the expected value, a non-atomic CAS, a non-exclusive `put_if_absent`. Additive, no breaking change. The checked-in matrices gain the row.
+
 ## 0.16.10
 
 - Test and example: `crates/persistant-sqlx/tests/rbac.rs` writes role-based access control (store a role, assign it to a user once, list a role's users and a user's roles, delete a role with its assignments in a transaction) on `RelationalBackend` and runs it on SQLite, PostgreSQL and MySQL/MariaDB. PersistAnt has no role API; this is the worked example (ROADMAP row 26). No library change.
