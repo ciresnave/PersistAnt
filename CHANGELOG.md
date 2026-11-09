@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.13
+
+- **`persistant_sqlx::TestDb`** (ROADMAP row 29, Humboldt): a fresh PostgreSQL database for one test, in place of `#[sqlx::test]`. `TestDb::create(&admin)` makes `persistant_test_<unique>` and connects to it; `.backend()` is the `PgBackend` (its `.pool()` is the sqlx pool for `sqlx::query!`), `.migrate(&migrations)` applies the schema, `.drop_database()` drops it (`WITH (FORCE)`, so a leaked connection does not block it). A `TestDb` that goes out of scope, a panicking test included, is dropped from a helper thread with its own runtime and a connection of its own, so it works on a current-thread runtime too. Tests that run at once no longer share rows. `tokio` gains the `rt` feature. PostgreSQL only. Additive.
+
 ## 0.16.12
 
 - **`rel.advisory_lock`** (ROADMAP row 28, Humboldt): `persistant_relational::advisory::{lock, try_lock}` take a named lock for the rest of a transaction (`pg_advisory_xact_lock(hashtext(name))`, so a trigger using `hashtext` of the same name contends with it); released at commit or rollback. PostgreSQL only: every other dialect returns `RelError::Unsupported` (SQLite has no named locks; MySQL's `GET_LOCK` is per connection and would outlive the work). New relational conformance leaf `rel.advisory_lock` (12 leaves): on for PostgreSQL, missing for SQLite, MySQL and MariaDB; known-bad control `NoTransactions`. Additive. The checked-in matrices gain the row.
