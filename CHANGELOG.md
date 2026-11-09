@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.14
+
+- **PostgreSQL layer cost against direct sqlx measured** (ROADMAP row 30, auth-framework's throughput question): new example `persistant-sqlx/examples/pg_vs_sqlx.rs` times the same statements on the same pool through `PgBackend` and through `sqlx::query`; `bench/pg-vs-sqlx.txt` records three runs on a developer machine against PostgreSQL 16.15 in a container. p50 ratio persistant/direct lay between 0.969 and 1.053 with no workload consistently on one side of 1.0: at a 1.7 to 5.8 ms round trip the layer's cost cannot be told from zero. One connection, one operation at a time; concurrency, a same-host server and the key-value index layer's extra keys are not measured. No library change.
+
 ## 0.16.13
 
 - **`persistant_sqlx::TestDb`** (ROADMAP row 29, Humboldt): a fresh PostgreSQL database for one test, in place of `#[sqlx::test]`. `TestDb::create(&admin)` makes `persistant_test_<unique>` and connects to it; `.backend()` is the `PgBackend` (its `.pool()` is the sqlx pool for `sqlx::query!`), `.migrate(&migrations)` applies the schema, `.drop_database()` drops it (`WITH (FORCE)`, so a leaked connection does not block it). A `TestDb` that goes out of scope, a panicking test included, is dropped from a helper thread with its own runtime and a connection of its own, so it works on a current-thread runtime too. Tests that run at once no longer share rows. `tokio` gains the `rt` feature. PostgreSQL only. Additive.

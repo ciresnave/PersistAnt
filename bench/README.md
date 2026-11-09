@@ -18,3 +18,6 @@ Read them with:
 The checked-in files are one dated run from a developer machine (Windows; PostgreSQL 16 and MySQL 8.4
 in Docker Desktop containers, so their figures include the VM's network). CI produces its own on
 its runner and uploads them as artifacts. Nothing compares a figure to a constant.
+
+`pg-vs-sqlx.txt` is not a `SpeedTable`: it is one dated comparison of PersistAnt's PostgreSQL layer with direct
+sqlx on the same pool (`persistant-sqlx/examples/pg_vs_sqlx.rs`), with its environment and its three runs.

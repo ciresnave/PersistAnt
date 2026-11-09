@@ -90,3 +90,6 @@ required-features = ["bridge"]
 [[test]]
 name = "tls_mysql"
 required-features = ["mysql"]
+
+[[example]]
+name = "pg_vs_sqlx"

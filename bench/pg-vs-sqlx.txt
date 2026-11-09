@@ -1,0 +1,41 @@
+PersistAnt's PostgreSQL layer against direct sqlx (ROADMAP row 30)
+
+Measured: 2026-11-09, main cddaabc (0.16.13) plus the example in this change.
+Rerun:    PERSISTANT_TEST_DATABASE_URL=postgres://... cargo run -q --release -p persistant-sqlx --example pg_vs_sqlx
+Where:    Windows 11 developer machine; PostgreSQL 16.15 in a Docker Desktop container
+          (postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d),
+          reached over localhost, so every call includes the VM's network hop.
+What:     the same statements on the same sqlx pool, once through PgBackend (execute/query/begin) and once
+          through sqlx::query on PgBackend::pool(). 400 operations per run per path, 50 warm-up, ABBA order,
+          the two runs of a path pooled (800 samples). Three separate invocations.
+
+Run 1, full table (ns; ops_per_sec is operations per second of that path, one connection, one at a time)
+
+workload        path         n    p50_ns   p95_ns   ops_per_sec
+insert          direct_sqlx  800  4457500  5652400  216
+insert          persistant   800  4436800  6235200  212
+select_by_key   direct_sqlx  800  1678400  1948500  569
+select_by_key   persistant   800  1667500  1971500  580
+update          direct_sqlx  800  4327400  5538400  222
+update          persistant   800  4208600  5646800  224
+transaction     direct_sqlx  800  5832700  7571800  163
+transaction     persistant   800  5801100  7615200  164
+
+Ratios persistant / direct_sqlx (p50, p95: above 1 is slower; ops: below 1 is slower)
+
+                 run 1                  run 2                  run 3
+insert           p50 0.995 p95 1.103    p50 0.991 p95 0.971    p50 1.032 p95 1.080
+select_by_key    p50 0.994 p95 1.012    p50 0.999 p95 0.992    p50 0.969 p95 0.978
+update           p50 0.973 p95 1.020    p50 1.001 p95 1.004    p50 0.979 p95 0.885
+transaction      p50 0.995 p95 1.006    p50 1.053 p95 1.015    p50 1.017 p95 1.016
+
+Reading it: across the three runs the p50 ratio lies between 0.969 and 1.053 with no workload
+consistently on one side of 1.0, and the p95 ratio between 0.885 and 1.103. That spread is the
+machine's run-to-run noise. **At this scale, where every call crosses a 1.7 to 5.8 ms round trip to a
+container, the layer's own cost cannot be told from zero.** That is a bound on what was measured, not a
+claim that the layer is free: a database on the same host over a socket, or a pool of many connections
+under load, would make the layer's share larger and was not measured. One connection, one operation at
+a time: concurrency was not measured.
+
+Not measured here: the key-value adapter's extra keys per record (the index layer) against the SQL
+auth-framework runs today. That still needs `kv.speed`-style numbers against its real statements.
