@@ -4,6 +4,11 @@ all-features = true
 
 [advisories]
 version = 2
+ignore = [
+    # libsqlite3-sys 0.37 via sqlx-sqlite 0.9. Dated ignore, expires 2026-12-09 (PM 2026-11-09): remove when
+    # sqlx releases the fix (transact-rs/sqlx#4502, merged, unreleased) and persistant-sqlx is bumped.
+    { id = "RUSTSEC-2026-0459", reason = "awaiting sqlx#4502 release; expires 2026-12-09" },
+]
 
 [licenses]
 version = 2
