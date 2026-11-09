@@ -32,6 +32,7 @@ capability	rel.isolation.repeatable_read	mariadb	11.4.13	dialect=mariadb	yes		ar
 capability	rel.isolation.serializable	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.isolation.serializable	
 capability	rel.savepoint	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.savepoint	
 capability	rel.row_lock	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.row_lock	
+capability	rel.advisory_lock	mariadb	11.4.13	dialect=mariadb	no	missing	arch=x86_64;os=linux;probe=rel::rel.advisory_lock	database does not support: mariadb has no transaction-scoped named lock
 capability	rel.upsert_where	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.upsert_where	
 capability	rel.migrate.apply	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.apply	
 capability	rel.migrate.checksum	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.checksum	
