@@ -2,7 +2,8 @@
 
 ## 0.16.9
 
-- Docs only: ROADMAP rows 26 to 32 schedule the gaps auth-framework, Humboldt and Synapse raised after CireSnave's 2026-11-09 ruling (RBAC example, `kv.rate_window`, `rel.advisory_lock`, fresh-DB harness, Postgres throughput, `Vec<String>`, Redis backend). Order set by the PM.
+- `deny.toml` ignores RUSTSEC-2026-0459 (libsqlite3-sys via sqlx-sqlite) until 2026-12-09 or the sqlx release that fixes it (PM 2026-11-09).
+- Docs: ROADMAP rows 26 to 32 schedule the gaps auth-framework, Humboldt and Synapse raised after CireSnave's 2026-11-09 ruling (RBAC example, `kv.rate_window`, `rel.advisory_lock`, fresh-DB harness, Postgres throughput, `Vec<String>`, Redis backend). Order set by the PM.
 
 ## 0.16.8
 
