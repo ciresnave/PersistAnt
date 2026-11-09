@@ -57,6 +57,9 @@ pub enum Leaf {
     Count,
     /// `kv.index`: records with secondary index entries, by sampled concurrency
     Index,
+    /// `kv.rate_window`: a sliding-window limit and a token bucket over `compare_and_swap`
+    /// (`kv::rate::RateWindow`), by sampled concurrency
+    RateWindow,
     /// `lock.lease`, by real time and sampled concurrency
     Lease,
     /// `kv.ttl_remaining`, in real time
@@ -84,7 +87,7 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 21] = [
+    pub const ALL: [Leaf; 22] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -97,6 +100,7 @@ impl Leaf {
         Leaf::Take,
         Leaf::Count,
         Leaf::Index,
+        Leaf::RateWindow,
         Leaf::Lease,
         Leaf::TtlRemaining,
         Leaf::PurgeExpired,
@@ -123,6 +127,7 @@ impl Leaf {
             Leaf::Take => "kv.take",
             Leaf::Count => "kv.count",
             Leaf::Index => "kv.index",
+            Leaf::RateWindow => "kv.rate_window",
             Leaf::Lease => "lock.lease",
             Leaf::TtlRemaining => "kv.ttl_remaining",
             Leaf::PurgeExpired => "kv.purge_expired",
@@ -144,6 +149,7 @@ impl Leaf {
             Leaf::TtlRemaining => "ttl_ms=10000;sleep_ms=150",
             Leaf::Count => "ttl_ms=100;sleep_ms=250",
             Leaf::Index => "contenders=8;rounds=10",
+            Leaf::RateWindow => "contenders=16;rounds=10",
             Leaf::PurgeExpired => "ttl_ms=100;sleep_ms=250",
             Leaf::BatchRollback => "contenders=16;rounds=20",
             Leaf::BatchConcurrentRead => "readers=4;batches=60",
@@ -175,6 +181,7 @@ impl Leaf {
             | Leaf::CompareAndDelete
             | Leaf::Take
             | Leaf::Index
+            | Leaf::RateWindow
             | Leaf::BatchRollback
             | Leaf::BatchConcurrentRead
             | Leaf::OptimisticSequence
@@ -205,6 +212,11 @@ impl Leaf {
             Leaf::Take => &[Defect::TakeNotExclusive, Defect::TakeLeavesValue],
             Leaf::Count => &[Defect::CountIncludesExpired, Defect::CountIgnoresPrefix],
             Leaf::Index => &[Defect::BatchIgnoresRequire, Defect::BatchNotAtomic],
+            Leaf::RateWindow => &[
+                Defect::CasIgnoresExpected,
+                Defect::CasNotAtomic,
+                Defect::PutIfAbsentNotExclusive,
+            ],
             Leaf::TtlRemaining => &[Defect::TtlRemainingIsConstant, Defect::TtlIgnored],
             Leaf::PurgeExpired => &[Defect::PurgeRemovesLive],
             Leaf::BatchRollback => &[Defect::BatchNotAtomic, Defect::BatchIgnoresRequire],
@@ -278,6 +290,7 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::Take => take(b, &base).await,
         Leaf::Count => count(b, &base).await,
         Leaf::Index => index(b, &base).await,
+        Leaf::RateWindow => rate_window(b, &base).await,
         Leaf::Lease => lease(b, &base).await,
         Leaf::TtlRemaining => ttl_remaining(b, &base).await,
         Leaf::PurgeExpired => purge_expired(b, &base).await,
@@ -727,6 +740,108 @@ async fn count<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     std::thread::sleep(Duration::from_millis(250));
     if b.count(&pre).await? != 4 {
         return wrong("an expired key was counted");
+    }
+    Ok(())
+}
+
+async fn rate_window<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    use crate::rate::{Decision, RateWindow};
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 10;
+    const LIMIT: u32 = 5;
+    // The real time to live is the window, so use one long enough that nothing expires mid-test, and
+    // a fixed clock so the arithmetic is exact.
+    let window = Duration::from_secs(60);
+    let rw = RateWindow::new(b);
+
+    // Sliding window: exact slots, a refusal that records nothing, and a slot that frees on schedule.
+    let k = format!("{base}sliding");
+    for (i, left) in [2_u32, 1, 0].into_iter().enumerate() {
+        match rw
+            .sliding_window_at(&k, 3, window, 1_000 + i as u64)
+            .await?
+        {
+            Decision::Allowed { remaining } if remaining == left => {}
+            other => {
+                return wrong(format!(
+                    "window request {i} was {other:?}, want {left} left"
+                ));
+            }
+        }
+    }
+    let denied = Decision::Denied {
+        retry_after: Duration::from_millis(59_000),
+    };
+    if rw.sliding_window_at(&k, 3, window, 2_000).await? != denied {
+        return wrong(
+            "a full window did not refuse with the time until its oldest request ages out",
+        );
+    }
+    if rw.sliding_window_at(&k, 3, window, 2_000).await? != denied {
+        return wrong("a refused request changed the window");
+    }
+    if !rw
+        .sliding_window_at(&k, 3, window, 61_000)
+        .await?
+        .is_allowed()
+    {
+        return wrong("a request was refused after the oldest one aged out");
+    }
+
+    // Token bucket: starts full, empties, refills one token per interval, never above capacity.
+    let k = format!("{base}bucket");
+    let step = Duration::from_millis(1_000);
+    for left in [1_u32, 0] {
+        if rw.token_bucket_at(&k, 2, step, 0).await? != (Decision::Allowed { remaining: left }) {
+            return wrong("a new bucket did not start full");
+        }
+    }
+    if rw.token_bucket_at(&k, 2, step, 0).await?
+        != (Decision::Denied {
+            retry_after: Duration::from_millis(1_000),
+        })
+    {
+        return wrong("an empty bucket did not refuse with the time to the next token");
+    }
+    if rw.token_bucket_at(&k, 2, step, 1_000).await? != (Decision::Allowed { remaining: 0 }) {
+        return wrong("a bucket did not refill one token after one interval");
+    }
+    if rw.token_bucket_at(&k, 2, step, 100_000).await? != (Decision::Allowed { remaining: 1 }) {
+        return wrong("a bucket refilled beyond its capacity");
+    }
+
+    // Concurrency: many callers racing for LIMIT slots at one instant; exactly LIMIT are allowed.
+    for round in 0..ROUNDS {
+        for bucket in [false, true] {
+            let key = format!("{base}race{round}{}", if bucket { "b" } else { "w" });
+            let key = key.as_str();
+            let rw = &rw;
+            let tasks: Vec<Task<'_, Result<bool, KvError>>> = (0..CONTENDERS)
+                .map(|_| -> Task<'_, _> {
+                    Box::pin(async move {
+                        let d = if bucket {
+                            rw.token_bucket_at(key, LIMIT, Duration::from_secs(3_600), 0)
+                                .await?
+                        } else {
+                            rw.sliding_window_at(key, LIMIT, window, 5_000).await?
+                        };
+                        Ok(d.is_allowed())
+                    })
+                })
+                .collect();
+            let mut allowed = 0;
+            for r in join_all(tasks).await {
+                if r? {
+                    allowed += 1;
+                }
+            }
+            if allowed != LIMIT as usize {
+                return wrong(format!(
+                    "round {round} ({}): {allowed} of {CONTENDERS} concurrent requests were allowed, want exactly {LIMIT}",
+                    if bucket { "bucket" } else { "window" }
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -1804,6 +1919,7 @@ mod tests {
                     | Leaf::Take
                     | Leaf::Count
                     | Leaf::Index
+                    | Leaf::RateWindow
                     | Leaf::Lease
                     | Leaf::PurgeExpired
                     | Leaf::BatchRollback

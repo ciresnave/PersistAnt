@@ -12,6 +12,7 @@
 //!   PostgreSQL SQL translated by UniSQL (PostgreSQL, SQLite), keys as bytes, tested per server and version.
 //! - [`copy`]: copy every pair of one store into another, read it back, and report progress in pairs.
 //! - [`index::Indexed`]: secondary-key lookup as a layer over `batch` and `ordered_scan_values` (leaf `kv.index`).
+//! - [`rate::RateWindow`]: a sliding-window limit and a token bucket over `compare_and_swap` (leaf `kv.rate_window`).
 //! - [`MemoryKv`]: a reference backend with injectable [`Defect`]s for known-bad controls.
 //! - [`choose`]: stage 4, "best backend for X": a ranked list with its evidence, from the contract,
 //!   a stated durability minimum and measurements in one environment; never a silent choice.
@@ -41,6 +42,7 @@ mod lease;
 mod memory;
 mod on_blob;
 mod on_relational;
+pub mod rate;
 pub mod speed;
 pub mod stats;
 #[cfg(feature = "tracing")]

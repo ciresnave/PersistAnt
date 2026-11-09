@@ -11,6 +11,7 @@ capability	kv.compare_and_delete	kv-on-relational:mariadb	0.16+11.4.13	dialect=m
 capability	kv.take	kv-on-relational:mariadb	0.16+11.4.13	dialect=mariadb	yes		arch=x86_64;contenders=16;os=linux;probe=kv::kv.take;rounds=20	
 capability	kv.count	kv-on-relational:mariadb	0.16+11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=kv::kv.count;sleep_ms=250;ttl_ms=100	
 capability	kv.index	kv-on-relational:mariadb	0.16+11.4.13	dialect=mariadb	yes		arch=x86_64;contenders=8;os=linux;probe=kv::kv.index;rounds=10	
+capability	kv.rate_window	kv-on-relational:mariadb	0.16+11.4.13	dialect=mariadb	yes		arch=x86_64;contenders=16;os=linux;probe=kv::kv.rate_window;rounds=10	
 capability	lock.lease	kv-on-relational:mariadb	0.16+11.4.13	dialect=mariadb	yes		arch=x86_64;contenders=16;os=linux;probe=kv::lock.lease;rounds=5;sleep_ms=300;ttl_ms=200	
 capability	kv.ttl_remaining	kv-on-relational:mariadb	0.16+11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=kv::kv.ttl_remaining;sleep_ms=150;ttl_ms=10000	
 capability	kv.purge_expired	kv-on-relational:mariadb	0.16+11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=kv::kv.purge_expired;sleep_ms=250;ttl_ms=100	

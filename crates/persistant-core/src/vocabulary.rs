@@ -123,6 +123,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a record and its secondary index entries are written, replaced and removed in one batch, so a lookup by index entry finds exactly the records that exist, a replace expecting a stale value changes nothing, and of concurrent replaces of one value exactly one wins and leaves its own entries",
     ),
     (
+        "kv.rate_window",
+        "a sliding-window limit and a token bucket, kept in one key and updated by compare-and-swap, allow exactly their limit of requests when any number race for the last slots, a refused request records nothing, and a slot frees on schedule",
+    ),
+    (
         "kv.take",
         "get-and-delete returns the value to exactly one of any number of concurrent callers",
     ),
