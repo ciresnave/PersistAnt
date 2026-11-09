@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.10
+
+- Test and example: `crates/persistant-sqlx/tests/rbac.rs` writes role-based access control (store a role, assign it to a user once, list a role's users and a user's roles, delete a role with its assignments in a transaction) on `RelationalBackend` and runs it on SQLite, PostgreSQL and MySQL/MariaDB. PersistAnt has no role API; this is the worked example (ROADMAP row 26). No library change.
+
 ## 0.16.9
 
 - `deny.toml` ignores RUSTSEC-2026-0459 (libsqlite3-sys via sqlx-sqlite) until 2026-12-09 or the sqlx release that fixes it (PM 2026-11-09).
