@@ -211,7 +211,8 @@ async fn the_relational_leaves_certify_on() {
         [
             "rel.isolation.repeatable_read",
             "rel.isolation.serializable",
-            "rel.row_lock"
+            "rel.row_lock",
+            "rel.advisory_lock"
         ],
         "{off:#?}"
     );

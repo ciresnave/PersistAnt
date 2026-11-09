@@ -66,13 +66,15 @@ pub enum Leaf {
     Savepoint,
     /// `rel.row_lock`
     RowLock,
+    /// `rel.advisory_lock`
+    AdvisoryLock,
     /// `rel.upsert_where`
     UpsertWhere,
 }
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 11] = [
+    pub const ALL: [Leaf; 12] = [
         Leaf::Values,
         Leaf::Transaction,
         Leaf::UniqueClassified,
@@ -83,6 +85,7 @@ impl Leaf {
         Leaf::IsolationSerializable,
         Leaf::Savepoint,
         Leaf::RowLock,
+        Leaf::AdvisoryLock,
         Leaf::UpsertWhere,
     ];
 
@@ -99,6 +102,7 @@ impl Leaf {
             Leaf::IsolationSerializable => "rel.isolation.serializable",
             Leaf::Savepoint => "rel.savepoint",
             Leaf::RowLock => "rel.row_lock",
+            Leaf::AdvisoryLock => "rel.advisory_lock",
             Leaf::UpsertWhere => "rel.upsert_where",
         }
     }
@@ -111,7 +115,8 @@ impl Leaf {
             | Leaf::IsolationRepeatableRead
             | Leaf::IsolationSerializable
             | Leaf::Savepoint
-            | Leaf::RowLock => &[Defect::NoTransactions],
+            | Leaf::RowLock
+            | Leaf::AdvisoryLock => &[Defect::NoTransactions],
             Leaf::UniqueClassified => &[Defect::UnclassifiedErrors],
             Leaf::ForeignKey | Leaf::CheckConstraint | Leaf::UpsertWhere => &[],
         }
@@ -393,6 +398,7 @@ pub async fn run_leaf<R: RelationalBackend>(
         Leaf::IsolationSerializable => serializable(b, &s).await,
         Leaf::Savepoint => savepoint(b, &s).await,
         Leaf::RowLock => row_lock(b, &s).await,
+        Leaf::AdvisoryLock => advisory_lock(b, &s).await,
         Leaf::UpsertWhere => upsert_where(b, &s, constrained).await,
     }
 }
@@ -850,6 +856,58 @@ async fn row_lock<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
     .await;
     drop_tables(b, &[T]).await?;
     result
+}
+
+/// `rel.advisory_lock`: a named lock held by an open transaction refuses another connection until that
+/// transaction ends, and a different name is not held.
+async fn advisory_lock<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
+    use crate::advisory;
+    if !matches!(s.0, Dialect::Postgres) {
+        return Err(Failure::Backend(RelError::Unsupported(format!(
+            "{} has no transaction-scoped named lock",
+            s.0
+        ))));
+    }
+    const NAME: &str = "persistant-conformance/advisory/held";
+    const OTHER: &str = "persistant-conformance/advisory/other";
+    // A second connection tries the lock inside its own transaction, which it then ends: a lock it
+    // took must not outlive the probe.
+    async fn probe<R: RelationalBackend>(b: &R, name: &str) -> Result<bool, Failure> {
+        let mut tx = b.begin(Isolation::ReadCommitted).await?;
+        let got = advisory::try_lock(&mut tx, &Dialect::Postgres, name).await;
+        let _ = tx.rollback().await;
+        Ok(got?)
+    }
+    let mut holder = b.begin(Isolation::ReadCommitted).await?;
+    advisory::lock(&mut holder, &Dialect::Postgres, NAME).await?;
+    let held = async {
+        if probe(b, NAME).await? {
+            return wrong("another connection took a named lock an open transaction holds");
+        }
+        if !probe(b, OTHER).await? {
+            return wrong("a lock on a different name was refused");
+        }
+        Ok(())
+    }
+    .await;
+    if held.is_err() {
+        let _ = holder.rollback().await;
+        return held;
+    }
+    // The holder takes it again: no deadlock with itself.
+    advisory::lock(&mut holder, &Dialect::Postgres, NAME).await?;
+    holder.commit().await?;
+    if !probe(b, NAME).await? {
+        return wrong("the lock is still held after its transaction committed");
+    }
+    // A rolled-back holder releases it too.
+    let mut holder = b.begin(Isolation::ReadCommitted).await?;
+    advisory::lock(&mut holder, &Dialect::Postgres, NAME).await?;
+    holder.rollback().await?;
+    if !probe(b, NAME).await? {
+        return wrong("the lock is still held after its transaction rolled back");
+    }
+    Ok(())
 }
 
 /// `constrained = false` drops the `WHERE`: the known-bad control, a backend that ignores the condition.

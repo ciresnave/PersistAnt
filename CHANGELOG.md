@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.12
+
+- **`rel.advisory_lock`** (ROADMAP row 28, Humboldt): `persistant_relational::advisory::{lock, try_lock}` take a named lock for the rest of a transaction (`pg_advisory_xact_lock(hashtext(name))`, so a trigger using `hashtext` of the same name contends with it); released at commit or rollback. PostgreSQL only: every other dialect returns `RelError::Unsupported` (SQLite has no named locks; MySQL's `GET_LOCK` is per connection and would outlive the work). New relational conformance leaf `rel.advisory_lock` (12 leaves): on for PostgreSQL, missing for SQLite, MySQL and MariaDB; known-bad control `NoTransactions`. Additive. The checked-in matrices gain the row.
+
 ## 0.16.11
 
 - **`kv.rate_window`** (ROADMAP row 27): `persistant_kv::rate::RateWindow` keeps a sliding-window limit (`sliding_window`) and a token bucket (`token_bucket`) in one key each, updated with `compare_and_swap` (`put_if_absent` for the first write), so of any number of concurrent callers racing for the last slots exactly the limit are allowed; a refused request records nothing; the key's time to live is the window. `Decision::{Allowed{remaining}, Denied{retry_after}}`; `_at` variants take the clock. New conformance leaf `kv.rate_window` (22 leaves), on wherever `compare_and_swap` is on, missing on blob stores; known-bad controls: a CAS that ignores the expected value, a non-atomic CAS, a non-exclusive `put_if_absent`. Additive, no breaking change. The checked-in matrices gain the row.

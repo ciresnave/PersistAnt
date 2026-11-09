@@ -211,6 +211,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a row locked FOR UPDATE by an open transaction cannot be locked by another connection until that transaction ends; absent where the engine has no row locks (SQLite)",
     ),
     (
+        "rel.advisory_lock",
+        "a named lock taken by an open transaction (pg_advisory_xact_lock(hashtext(name))) cannot be taken by another connection until that transaction commits or rolls back, a different name is not held, and the holder can take its own lock again; absent where the engine has no transaction-scoped named lock (SQLite, MySQL, MariaDB)",
+    ),
+    (
         "rel.upsert_where",
         "INSERT .. ON CONFLICT (key) DO UPDATE .. WHERE updates the existing row only when the condition holds, and inserts when the row is absent; absent where the dialect has no such clause (MySQL, MariaDB)",
     ),

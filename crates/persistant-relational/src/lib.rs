@@ -11,6 +11,7 @@
 //! Growth toward statement construction would turn this into Option B (§4.2) and carry its leaks;
 //! resist it.
 
+pub mod advisory;
 mod backend;
 #[cfg(feature = "sql")]
 mod bound;
