@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.18
+
+- **`rel.error.deadlock`** (ROADMAP row 1, typed errors): a lock cycle between two transactions must end with exactly one `RelError::Deadlock` and one transaction that completes and commits, not an opaque backend error. On for PostgreSQL, MySQL and MariaDB; off on SQLite (one write lock, so no cycle). Known-bad controls: a backend without transactions (no cycle forms) and one that returns every error unclassified. Additive: a new `conformance::Leaf::DeadlockClassified` (the enum is `#[non_exhaustive]`; `Leaf::ALL` grows from 12 to 13) and one vocabulary id.
+
 ## 0.16.17
 
 - **Patent re-sweep of the blob code added since 0.14.2** (`docs/PATENT-SWEEP.md`, ideas 26 to 29: copy progress callback, `blob.max_value_size` test, `owner_only()`, plaintext-at-rest scan): nine patents' claims read, all outside as read; no hit above low. One new standing condition: decide "encrypted" by a canary scan, never by comparing two read paths. Documentation only, no code change.
