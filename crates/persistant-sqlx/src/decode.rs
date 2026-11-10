@@ -11,6 +11,40 @@
 use sqlx::types::time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
 use std::fmt::Write;
 
+/// A text array as JSON array text: `["a","b"]`, a `NULL` element as `null`. The canonical text of a
+/// `text[]` column (`docs/DECODER-AUDIT.md`): JSON is unambiguous where PostgreSQL's own `{a,"b c"}` needs
+/// its quoting rules reimplemented, and it is the text form `json` columns already use.
+pub(crate) fn json_string_array(items: &[Option<String>]) -> String {
+    let mut s = String::from("[");
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        match item {
+            None => s.push_str("null"),
+            Some(text) => {
+                s.push('"');
+                for c in text.chars() {
+                    match c {
+                        '"' => s.push_str("\\\""),
+                        '\\' => s.push_str("\\\\"),
+                        '\n' => s.push_str("\\n"),
+                        '\r' => s.push_str("\\r"),
+                        '\t' => s.push_str("\\t"),
+                        c if (c as u32) < 0x20 => {
+                            let _ = write!(s, "\\u{:04x}", c as u32);
+                        }
+                        c => s.push(c),
+                    }
+                }
+                s.push('"');
+            }
+        }
+    }
+    s.push(']');
+    s
+}
+
 /// A 4-byte float as the shortest decimal that reads back as it: `0.1f32` is `0.1`, not the
 /// `0.10000000149011612` that widening to `f64` gives. This is what the server itself prints.
 pub(crate) fn f32_shortest(f: f32) -> f64 {
@@ -209,6 +243,19 @@ mod tests {
         assert_eq!(numeric_text(&numeric(0, 0, 0xC000, 0, &[])).unwrap(), "NaN");
         assert!(numeric_text(&[0; 4]).is_err());
         assert!(numeric_text(&numeric(2, 0, 0, 0, &[1])).is_err());
+    }
+
+    #[test]
+    fn string_arrays_are_json() {
+        let a = |v: &[Option<&str>]| {
+            json_string_array(&v.iter().map(|o| o.map(str::to_string)).collect::<Vec<_>>())
+        };
+        assert_eq!(a(&[]), "[]");
+        assert_eq!(a(&[Some("a"), Some("b c")]), r#"["a","b c"]"#);
+        assert_eq!(a(&[Some("x"), None]), r#"["x",null]"#);
+        assert_eq!(a(&[Some("q\"b\\")]), r#"["q\"b\\"]"#);
+        assert_eq!(a(&[Some("l1\nl2\t\u{1}")]), r#"["l1\nl2\t\u0001"]"#);
+        assert_eq!(a(&[Some("h\u{e9}llo")]), "[\"h\u{e9}llo\"]");
     }
 
     #[test]

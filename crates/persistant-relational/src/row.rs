@@ -337,6 +337,18 @@ impl FromValue for serde_json::Value {
     }
 }
 
+/// A `text[]` (or `varchar[]`, `name[]`, `char(n)[]`) column, read from the JSON array text the
+/// PostgreSQL driver carries it as (`["a","b"]`). A `NULL` element is an error here: `COALESCE` it away
+/// in the statement, or read the text through `serde_json` as `Vec<Option<String>>`. Feature `json`.
+#[cfg(feature = "json")]
+impl FromValue for Vec<String> {
+    const KIND: FieldKind = FieldKind::Text;
+    fn from_value(v: &Value) -> Result<Self, String> {
+        let s = text_of(v, "a text array as JSON text")?;
+        serde_json::from_str(s).map_err(|e| format!("not an array of strings: {e}"))
+    }
+}
+
 #[cfg(feature = "json")]
 impl ToValue for serde_json::Value {
     fn to_value(&self) -> Value {

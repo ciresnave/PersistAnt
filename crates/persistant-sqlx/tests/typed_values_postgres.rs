@@ -55,6 +55,51 @@ async fn a_struct_with_uuid_timestamp_date_and_json_fields_reads_a_row() {
     assert_eq!(e.doc["a"][1], 2);
 }
 
+/// Humboldt's two `Vec<String>` fields: a `text[]` column read into a struct.
+#[derive(Debug, PartialEq, persistant_macros::FromRow)]
+#[persistant(crate = ::persistant_relational)]
+struct Tagged {
+    name: String,
+    tags: Vec<String>,
+    aliases: Option<Vec<String>>,
+}
+
+#[tokio::test]
+async fn a_text_array_column_reads_into_a_vec_of_strings() {
+    let Some(db) = backend().await else { return };
+    let rows = db
+        .query(
+            "SELECT 'n' AS name, ARRAY['a', 'b c', 'q\"d']::text[] AS tags, NULL::text[] AS aliases \
+             UNION ALL SELECT 'e', '{}'::varchar[], ARRAY['x']::varchar[]",
+            &[],
+        )
+        .await
+        .unwrap();
+    let got: Vec<Tagged> = rows.iter().map(|r| Tagged::from_row(r).unwrap()).collect();
+    assert_eq!(
+        got,
+        vec![
+            Tagged {
+                name: "n".into(),
+                tags: vec!["a".into(), "b c".into(), "q\"d".into()],
+                aliases: None,
+            },
+            Tagged {
+                name: "e".into(),
+                tags: vec![],
+                aliases: Some(vec!["x".into()]),
+            },
+        ]
+    );
+    // A NULL element is refused with a message, not read as an empty string.
+    let rows = db
+        .query("SELECT ARRAY['a', NULL]::text[] AS t", &[])
+        .await
+        .unwrap();
+    let err = <Vec<String> as FromValue>::from_value(&rows[0].values[0]).unwrap_err();
+    assert!(err.contains("not an array of strings"), "{err}");
+}
+
 #[tokio::test]
 async fn parameters_sent_as_text_with_a_cast_come_back_equal() {
     let Some(db) = backend().await else { return };
