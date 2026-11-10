@@ -151,8 +151,11 @@ numbers, not now.)
   `SqliteBackend::open(path)` takes a path, but whether it creates the file, with which mode, and whether a
   per-tenant open cost is acceptable has not been measured. A small test (open a path that does not exist as
   a non-owner; stat the mode) settles it and should come before the first PR.
-* **Throughput against the SQL the framework runs today.** Not measured. The index layer adds keys per
-  record; the existing `speed` harness (`kv.speed`) is the place to measure it.
+* **Throughput against the SQL the framework runs today.** Half measured. The relational layer against
+  direct sqlx on the same pool is in `bench/pg-vs-sqlx.txt` (0.16.14: p50 ratio 0.97 to 1.05 over three
+  runs, no layer cost distinguishable from noise behind a container round trip; one connection, no
+  concurrency). **Still not measured:** the index layer adds keys per record, and that against the SQL
+  the framework runs today; the existing `speed` harness (`kv.speed`) is the place to measure it.
 * **Redis semantics.** Everything in the Redis column is from Redis's documented behaviour, not from a
   PersistAnt backend; none of it is tested here.
 * Whether `AuthStorage`'s `supports_atomic_swap` exists somewhere this tree does not show (a sibling crate or
