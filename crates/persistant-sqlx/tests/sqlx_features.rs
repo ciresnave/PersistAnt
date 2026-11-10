@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //! A consumer that uses `chrono` must keep `sqlx::query!` returning chrono types.
 //!
 //! sqlx's macros return `time` types as soon as sqlx's `time` feature is on anywhere in the

@@ -8,8 +8,8 @@
 //!
 //! These are the pure formatters; each driver decides which column types reach them.
 
-use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use chrono::{Datelike, Timelike};
+use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use std::fmt::Write;
 
 /// A text array as JSON array text: `["a","b"]`, a `NULL` element as `null`. The canonical text of a
@@ -296,7 +296,10 @@ mod tests {
         assert_eq!(date_text(d), "2026-10-17");
         let t = NaiveTime::from_hms_micro_opt(12, 34, 56, 789_000).unwrap();
         assert_eq!(time_text(t), "12:34:56.789");
-        assert_eq!(time_text(NaiveTime::from_hms_opt(12, 34, 56).unwrap()), "12:34:56");
+        assert_eq!(
+            time_text(NaiveTime::from_hms_opt(12, 34, 56).unwrap()),
+            "12:34:56"
+        );
         assert_eq!(
             naive_text(NaiveDateTime::new(d, t)),
             "2026-10-17T12:34:56.789"
