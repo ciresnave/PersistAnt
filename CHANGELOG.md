@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.19
+
+- **Live check at open, opt-in** (ROADMAP row 10, `DESIGN-KINDS` D3): `OpenOptions::with_live_check()` runs one transaction on the server before the handle is returned: create a temporary table, write a row, read it back, drop the table, roll back. It proves what the recorded matrix cannot know about a deployment: that **this role** holds the `TEMP` privilege and that transactions roll back. Off by default (the matrix lookup stays the gate). A failure is `OpenError::LiveCheck { id, reason }`; `memory` and `fs` have no relational layer and are refused before any I/O with `OpenError::LiveCheckUnsupported { id }`. The opt-in sits on `OpenOptions`, the program's own open call, because `Needs` carries capabilities only. Additive (`OpenError` and `OpenOptions` are `#[non_exhaustive]`).
+
 ## 0.16.18
 
 - **`rel.error.deadlock`** (ROADMAP row 1, typed errors): a lock cycle between two transactions must end with exactly one `RelError::Deadlock` and one transaction that completes and commits, not an opaque backend error. On for PostgreSQL, MySQL and MariaDB; off on SQLite (one write lock, so no cycle). Known-bad controls: a backend without transactions (no cycle forms) and one that returns every error unclassified. Additive: a new `conformance::Leaf::DeadlockClassified` (the enum is `#[non_exhaustive]`; `Leaf::ALL` grows from 12 to 13) and one vocabulary id.

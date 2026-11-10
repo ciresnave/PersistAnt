@@ -232,3 +232,102 @@ async fn the_rel_handle_works_on_each_server_in_reach() {
         assert_eq!(b.rel().unwrap().call_bound(), Some(Duration::from_secs(10)));
     }
 }
+
+/// The live check at open (ROADMAP row 10) passes on each server in reach, and leaves no table behind.
+#[tokio::test]
+async fn a_live_check_passes_on_each_server_in_reach() {
+    let mut cases: Vec<(&str, String)> = Vec::new();
+    #[cfg(feature = "registry-postgres")]
+    if let Some(v) = url_var(
+        "PERSISTANT_TEST_DATABASE_URL",
+        "PERSISTANT_REQUIRE_DATABASE",
+    ) {
+        cases.push(("postgres", v));
+    }
+    #[cfg(feature = "registry-mysql")]
+    if let Some(v) = url_var("PERSISTANT_TEST_MYSQL_URL", "PERSISTANT_REQUIRE_MYSQL") {
+        let maria = std::env::var("PERSISTANT_TEST_MYSQL_FLAVOR").as_deref() == Ok("mariadb");
+        cases.push((if maria { "mariadb" } else { "mysql" }, v));
+    }
+    let opts = OpenOptions::new().with_live_check();
+    for (name, var) in cases {
+        let ep = Endpoint::url_env(&var);
+        let h = registry::open_named_with(name, &ep, &needs(Durability::Volatile), &opts)
+            .await
+            .unwrap();
+        roundtrip(&h).await;
+    }
+}
+
+/// Control for the live check: a role without the `TEMP` privilege opens fine without the option and
+/// is refused with it, naming the step. Needs a role that may create roles and databases (the CI
+/// service container's superuser is one). A scratch database of its own, so no other test loses
+/// `TEMP`.
+#[cfg(feature = "registry-postgres")]
+#[tokio::test]
+async fn a_role_without_temp_is_refused_by_the_live_check_and_only_by_it() {
+    use persistant::relational::RelationalBackend;
+    use persistant::sqlx_driver::PgBackend;
+    let Some(var) = url_var(
+        "PERSISTANT_TEST_DATABASE_URL",
+        "PERSISTANT_REQUIRE_DATABASE",
+    ) else {
+        return;
+    };
+    let admin_url = std::env::var(&var).unwrap();
+    let (scheme, rest) = admin_url.split_once("://").unwrap();
+    let (credentials, host_and_db) = rest.rsplit_once('@').unwrap();
+    let (host, _db) = host_and_db.split_once('/').unwrap();
+    let admin = PgBackend::connect(&admin_url).await.unwrap();
+    let suffix = std::process::id();
+    let db = format!("persistant_live_check_{suffix}");
+    let role = format!("persistant_live_role_{suffix}");
+    for sql in [
+        format!("DROP DATABASE IF EXISTS {db}"),
+        format!("DROP ROLE IF EXISTS {role}"),
+        format!("CREATE ROLE {role} LOGIN PASSWORD 'lc-test' NOSUPERUSER"),
+        format!("CREATE DATABASE {db}"),
+        format!("REVOKE TEMP ON DATABASE {db} FROM PUBLIC"),
+        format!("GRANT CONNECT ON DATABASE {db} TO {role}"),
+    ] {
+        admin.execute(&sql, &[]).await.unwrap();
+    }
+    // The role must be able to make the key-value tables, or the open fails for another reason.
+    let inside = PgBackend::connect(&format!("{scheme}://{credentials}@{host}/{db}"))
+        .await
+        .unwrap();
+    inside
+        .execute(&format!("ALTER SCHEMA public OWNER TO {role}"), &[])
+        .await
+        .unwrap();
+    drop(inside);
+    let role_url = format!("{scheme}://{role}:lc-test@{host}/{db}");
+    let ep = Endpoint::Url(role_url);
+    let outcome = async {
+        // Without the option: opens (the matrix is the gate), so the refusal below is the check's.
+        let h = registry::open_named("postgres", &ep, &needs(Durability::Volatile))
+            .await
+            .unwrap();
+        drop(h);
+        let opts = OpenOptions::new().with_live_check();
+        registry::open_named_with("postgres", &ep, &needs(Durability::Volatile), &opts)
+            .await
+            .err()
+    }
+    .await;
+    for sql in [
+        format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+        format!("DROP ROLE IF EXISTS {role}"),
+    ] {
+        admin.execute(&sql, &[]).await.unwrap();
+    }
+    match outcome {
+        Some(OpenError::LiveCheck {
+            id: "postgres",
+            reason,
+        }) => {
+            assert!(reason.contains("TEMP"), "{reason}");
+        }
+        other => panic!("expected the live check to refuse a role without TEMP, got {other:?}"),
+    }
+}
