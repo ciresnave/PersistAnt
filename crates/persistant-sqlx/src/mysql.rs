@@ -118,15 +118,15 @@ fn decode(row: &MySqlRow) -> Result<Row, RelError> {
                 Value::Text(row.try_get_unchecked::<String, _>(i).map_err(classify)?)
             }
             "DATE" => Value::Text(crate::decode::date_text(
-                row.try_get::<sqlx::types::time::Date, _>(i)
+                row.try_get::<sqlx::types::chrono::NaiveDate, _>(i)
                     .map_err(classify)?,
             )),
             "DATETIME" => Value::Text(crate::decode::naive_text(
-                row.try_get::<sqlx::types::time::PrimitiveDateTime, _>(i)
+                row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(i)
                     .map_err(classify)?,
             )),
             "TIMESTAMP" => Value::Text(crate::decode::utc_text(
-                row.try_get::<sqlx::types::time::OffsetDateTime, _>(i)
+                row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>, _>(i)
                     .map_err(classify)?,
             )),
             "TIME" => Value::Text(crate::decode::mysql_time_text(

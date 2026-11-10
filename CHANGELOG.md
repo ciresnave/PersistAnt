@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.16
+
+- **Fix: `persistant-sqlx` no longer turns on sqlx's `time` feature** (Humboldt: 39 `sqlx::query!` sites failed to compile in a chrono project). sqlx's macros return `time` types as soon as that feature is on anywhere in the build, and cargo unifies features, so enabling it here overrode a consumer's `chrono`. The driver now decodes `DATE`, `TIME`, `TIMESTAMP` and `TIMESTAMPTZ` through `chrono` (same text output, covered by the existing decode tests on PostgreSQL and SQLite); a consumer that wants `time` types turns on sqlx's `time` itself and the macros follow it. New `tests/sqlx_features.rs` reads sqlx's resolved features from `cargo tree` and fails if `time` is among them (re-enabling it fails both tests). `Cargo.lock` loses `time` and gains chrono's platform crates. Present since 0.16.8 at least; no API change.
+
 ## 0.16.15
 
 - **`FromValue for Vec<String>`** (ROADMAP row 31, Humboldt's two `text[]` fields): the PostgreSQL driver now carries `text[]`, `varchar[]`, `name[]` and `char(n)[]` columns as **JSON array text** (`["a","b c"]`, a `NULL` element as `null`) instead of failing loud, and `Vec<String>` reads it (feature `json`; a `NULL` element is an error naming the type, `COALESCE` it away or read the text with `serde_json`). `uuid[]` and the other array types still fail loud, naming the type. The one behaviour change: a query that returned `Unsupported` for a text-array column now returns a value. Reading only; writing an array back is `ARRAY(SELECT jsonb_array_elements_text($1::jsonb))` in the statement. Additive otherwise.

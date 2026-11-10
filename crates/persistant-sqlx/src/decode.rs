@@ -8,7 +8,8 @@
 //!
 //! These are the pure formatters; each driver decides which column types reach them.
 
-use sqlx::types::time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
+use sqlx::types::chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{Datelike, Timelike};
 use std::fmt::Write;
 
 /// A text array as JSON array text: `["a","b"]`, a `NULL` element as `null`. The canonical text of a
@@ -163,29 +164,26 @@ fn fraction(s: &mut String, micros: u32) {
 }
 
 /// `2026-10-17`
-pub(crate) fn date_text(d: Date) -> String {
-    format!("{:04}-{:02}-{:02}", d.year(), u8::from(d.month()), d.day())
+pub(crate) fn date_text(d: NaiveDate) -> String {
+    format!("{:04}-{:02}-{:02}", d.year(), d.month(), d.day())
 }
 
 /// `12:34:56` or `12:34:56.789` (the fraction only when there is one, trailing zeros trimmed).
-pub(crate) fn time_text(t: Time) -> String {
+pub(crate) fn time_text(t: NaiveTime) -> String {
     let mut s = format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second());
-    fraction(&mut s, t.microsecond());
+    // a leap second carries nanoseconds above one billion: keep the sub-second part only
+    fraction(&mut s, (t.nanosecond() % 1_000_000_000) / 1_000);
     s
 }
 
 /// `2026-10-17T12:34:56.789`, no zone.
-pub(crate) fn naive_text(t: PrimitiveDateTime) -> String {
+pub(crate) fn naive_text(t: NaiveDateTime) -> String {
     format!("{}T{}", date_text(t.date()), time_text(t.time()))
 }
 
 /// `2026-10-17T10:34:56.789Z`, always UTC.
-pub(crate) fn utc_text(t: OffsetDateTime) -> String {
-    let u = t.to_offset(sqlx::types::time::UtcOffset::UTC);
-    format!(
-        "{}Z",
-        naive_text(PrimitiveDateTime::new(u.date(), u.time()))
-    )
+pub(crate) fn utc_text(t: DateTime<Utc>) -> String {
+    format!("{}Z", naive_text(t.naive_utc()))
 }
 
 #[cfg(feature = "mysql")]
@@ -294,17 +292,19 @@ mod tests {
 
     #[test]
     fn dates_and_times() {
-        let d = Date::from_ordinal_date(2026, 290).unwrap();
+        let d = NaiveDate::from_yo_opt(2026, 290).unwrap();
         assert_eq!(date_text(d), "2026-10-17");
-        let t = Time::from_hms_micro(12, 34, 56, 789_000).unwrap();
+        let t = NaiveTime::from_hms_micro_opt(12, 34, 56, 789_000).unwrap();
         assert_eq!(time_text(t), "12:34:56.789");
-        assert_eq!(time_text(Time::from_hms(12, 34, 56).unwrap()), "12:34:56");
+        assert_eq!(time_text(NaiveTime::from_hms_opt(12, 34, 56).unwrap()), "12:34:56");
         assert_eq!(
-            naive_text(PrimitiveDateTime::new(d, t)),
+            naive_text(NaiveDateTime::new(d, t)),
             "2026-10-17T12:34:56.789"
         );
-        let at = PrimitiveDateTime::new(d, t)
-            .assume_offset(sqlx::types::time::UtcOffset::from_hms(2, 0, 0).unwrap());
+        let at = NaiveDateTime::new(d, t)
+            .and_local_timezone(sqlx::types::chrono::FixedOffset::east_opt(2 * 3600).unwrap())
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(utc_text(at), "2026-10-17T10:34:56.789Z");
     }
 }
