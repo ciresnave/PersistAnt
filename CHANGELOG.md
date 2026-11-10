@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.17
+
+- **Patent re-sweep of the blob code added since 0.14.2** (`docs/PATENT-SWEEP.md`, ideas 26 to 29: copy progress callback, `blob.max_value_size` test, `owner_only()`, plaintext-at-rest scan): nine patents' claims read, all outside as read; no hit above low. One new standing condition: decide "encrypted" by a canary scan, never by comparing two read paths. Documentation only, no code change.
+
 ## 0.16.16
 
 - **Fix: `persistant-sqlx` no longer turns on sqlx's `time` feature** (Humboldt: 39 `sqlx::query!` sites failed to compile in a chrono project). sqlx's macros return `time` types as soon as that feature is on anywhere in the build, and cargo unifies features, so enabling it here overrode a consumer's `chrono`. The driver now decodes `DATE`, `TIME`, `TIMESTAMP` and `TIMESTAMPTZ` through `chrono` (same text output, covered by the existing decode tests on PostgreSQL and SQLite); a consumer that wants `time` types turns on sqlx's `time` itself and the macros follow it. New `tests/sqlx_features.rs` reads sqlx's resolved features from `cargo tree` and fails if `time` is among them (re-enabling it fails both tests). `Cargo.lock` loses `time` and gains chrono's platform crates. Present since 0.16.8 at least; no API change.

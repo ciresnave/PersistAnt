@@ -191,6 +191,36 @@ Run by the PersistAnt lane on the PM's [TASK] (2026-10-31); two Sonnet subagents
 
 **Conditions (new, standing):** (a) keep stale-staging detection a liveness probe on a lock, never an age limit on a lock or a time to live (US10459909B2, US8380676B1); (b) never auto-finalize an abandoned stream (US12711007B2); (c) do not add a manifest of segments to carry a value (US8990257B2); (d) if a capability is ever advertised on the strength of a remote HTTP test against CDMI objects, reread US9117027B2. A person should still read the five arguable-low items from the earlier addenda and US9117027B2 on Google Patents.
 
+## Blob re-sweep 2 (2026-11-10, main 0732fe3, 0.16.16): ideas 26-29
+
+Run by the PersistAnt lane on the PM's [TASK] (2026-11-10, "patent re-sweep of blob-stream code ... after"). One Sonnet subagent ran the web searches and read claims with a copy of `tools/patent-claims.py` whose User-Agent carries no contact address. Search coverage was thin (few patents returned per query), especially for ideas 27 and 28. The tool cut each patent's output to about 1500 characters: claim 1 and the first claim of each other independent-claim block were read, dependent claims only in part. Not legal advice; status is Google Patents' own field.
+
+**Ideas added since the 0.14.2 sweep (0.15.0 to 0.16.6):**
+26. `copy_in_with_progress` (0.16.2): a streamed copy loop calling a caller-supplied callback with the cumulative bytes written, once with 0 before the first write and after each chunk.
+27. `blob.max_value_size` conformance test (0.16.0): the backend advertises a ceiling; a value at the ceiling must be stored, one byte over refused with a typed error and nothing stored; no advertised ceiling means the row is off as missing; a known-bad capped backend must fail.
+28. `OpendalBlob::owner_only()` (0.15.0): every stored file created owner-only (0600; an owner-only ACL on Windows), with a read-back test.
+29. `storage.no_plaintext_at_rest` test (0.16.6): a canary written through the layer is searched for as raw bytes under the data and scratch directories; the scanner is checked on a file known to hold the canary and on a masked one; the row is off for a plaintext store.
+
+**Result: no hit reads closely; nothing arguable above low.**
+
+| Idea | Patent | Owner | Status (Google) | Operative limitation we do not do | Verdict |
+|---|---|---|---|---|---|
+| 26 | US6564229B1 | IBM (Uniloc) | expired ~2021 | claims 1, 10, 16: pause and resume of the copy on a user request (dependent claim 7 shows an amount completed, and depends on the pause claim) | outside as read |
+| 26 | US7793062B2 | IBM | expired | hardware copy engine, control register, serialisation mechanism | outside as read |
+| 26 | US8375124B1 | Google | active | every independent claim: a timer reset on each received portion, partial object deleted on expiry | outside as read |
+| 26 | US9015601B2 | Box | active | every independent claim: compress a folder hierarchy into one item, upload it, parse it on the host | outside as read |
+| 27 | US8990257B2 | Rackspace (Citibank) | expired (fee), est. 2031 shown | claims 1, 20: segment the object and generate a manifest; claim 16 reconstitutes segments; we refuse an oversized value and segment nothing | outside as read |
+| 28 | US4135240A | Bell Labs (NCR Voyix) | expired | claims 1-3: temporarily switch to the file owner's identity (setuid style) | outside as read |
+| 28 | US8924674B2 | Google | active | every independent claim: assign one data object as the access control list of another after a parameter test | outside as read |
+| 29 | US9471794B2 | OPSWAT | active ~2034 | claims 1, 6, 14: read the file through two paths, compare, and conclude "not encrypted" when they match | outside as read |
+| 29 | US9697367B2 | OPSWAT | active ~2034 | claims 1, 7, 15: the same two-path read-and-compare | outside as read |
+
+**No patent found** for idea 26's callback itself (the pattern is common in vendor SDKs: Azure, Alibaba OSS, Ktor), for idea 27's boundary test or capability-from-advertised-limit, or for idea 28's owner-only creation as a driver option. That is not proof of absence.
+
+**Seen as search hits, not read, no verdict:** US10002083 (same OPSWAT family as idea 29), US8458801 (secure boot, writes a pattern and compares a bus capture), US7181641 (disk-driver verification with a seeded pseudo-random pattern).
+
+**Condition (new, standing):** idea 29 must keep deciding by a byte scan for a known canary. Never decide "encrypted or not" by reading the same data through two paths and comparing (the OPSWAT family's operative step).
+
 ## Needs review (to the PM)
 No confirmed overlap. The five hits first flagged were read in full with `tools/patent-claims.py` (US11507592B2, US10360233B2, US11036756B2, US11550556B1, US7987166B2) and are outside as read (not a clearance; the earlier word `clear` is withdrawn); `US7349926` could not be fetched (404) and stays unread. One active publication is **arguable, medium** on the words of its published claim 1, US20140280259A1 (run-time translation of a foreign-dialect query; see the 0.12.x verdicts below and the correction at the top), and is flagged to CireSnave by the PM, who records his decision. US9177017B2 (do not encode SQL as a type state machine) is a design-around condition on future work.
 
