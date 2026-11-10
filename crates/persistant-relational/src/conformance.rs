@@ -644,15 +644,15 @@ async fn join2<A: std::future::Future, B: std::future::Future>(
     let mut ra = None;
     let mut rb = None;
     std::future::poll_fn(|cx| {
-        if ra.is_none() {
-            if let Poll::Ready(v) = a.as_mut().poll(cx) {
-                ra = Some(v);
-            }
+        if ra.is_none()
+            && let Poll::Ready(v) = a.as_mut().poll(cx)
+        {
+            ra = Some(v);
         }
-        if rb.is_none() {
-            if let Poll::Ready(v) = b.as_mut().poll(cx) {
-                rb = Some(v);
-            }
+        if rb.is_none()
+            && let Poll::Ready(v) = b.as_mut().poll(cx)
+        {
+            rb = Some(v);
         }
         if ra.is_some() && rb.is_some() {
             Poll::Ready(())
