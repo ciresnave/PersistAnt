@@ -82,8 +82,9 @@ database, and none for Humboldt, which already works offline.
 What the decoder needs that does not exist yet (follow-up B, section 8): `FromValue` for `uuid::Uuid`, `chrono`
 (`DateTime<Utc>`, `NaiveDate`, `NaiveDateTime`, `NaiveTime`), `serde_json::Value`, `rust_decimal`/`bigdecimal` if used,
 behind cargo features, reading the canonical text the backends already return (`docs/DECODER-AUDIT.md`). **PostgreSQL
-arrays (`Vec<String>`, 2 fields in Humboldt) are loud in the driver today**; either the driver learns `text[]`/`uuid[]`
-or those columns are read through `array_to_json` (a statement edit). Decide when the first such module migrates.
+arrays (`Vec<String>`, 2 fields in Humboldt) were loud in the driver**; decided and built (0.16.15): the driver carries
+`text[]`, `varchar[]`, `name[]` and `char(n)[]` as JSON array text and `FromValue for Vec<String>` reads it. `uuid[]` and the rest stay loud
+(read them through `array_to_json` in the statement, or `PgBackend::pool`).
 
 ## 4. Parameters
 

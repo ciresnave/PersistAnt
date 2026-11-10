@@ -141,6 +141,10 @@ fn decode(row: &PgRow) -> Result<Row, RelError> {
                 Value::Text(row.try_get::<String, _>(i).map_err(classify)?)
             }
             "BYTEA" => Value::Bytes(row.try_get::<Vec<u8>, _>(i).map_err(classify)?),
+            // A text array: JSON array text, a NULL element as `null` (`FromValue for Vec<String>`).
+            "TEXT[]" | "VARCHAR[]" | "NAME[]" | "CHAR[]" => Value::Text(decode::json_string_array(
+                &row.try_get::<Vec<Option<String>>, _>(i).map_err(classify)?,
+            )),
             // Types with a canonical text form (`decode.rs`): carried as that text.
             "UUID" => Value::Text(
                 decode::uuid_text(raw.as_bytes().map_err(decode_failed)?)

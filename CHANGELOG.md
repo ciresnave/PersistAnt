@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.15
+
+- **`FromValue for Vec<String>`** (ROADMAP row 31, Humboldt's two `text[]` fields): the PostgreSQL driver now carries `text[]`, `varchar[]`, `name[]` and `char(n)[]` columns as **JSON array text** (`["a","b c"]`, a `NULL` element as `null`) instead of failing loud, and `Vec<String>` reads it (feature `json`; a `NULL` element is an error naming the type, `COALESCE` it away or read the text with `serde_json`). `uuid[]` and the other array types still fail loud, naming the type. The one behaviour change: a query that returned `Unsupported` for a text-array column now returns a value. Reading only; writing an array back is `ARRAY(SELECT jsonb_array_elements_text($1::jsonb))` in the statement. Additive otherwise.
+
 ## 0.16.14
 
 - **PostgreSQL layer cost against direct sqlx measured** (ROADMAP row 30, auth-framework's throughput question): new example `persistant-sqlx/examples/pg_vs_sqlx.rs` times the same statements on the same pool through `PgBackend` and through `sqlx::query`; `bench/pg-vs-sqlx.txt` records three runs on a developer machine against PostgreSQL 16.15 in a container. p50 ratio persistant/direct lay between 0.969 and 1.053 with no workload consistently on one side of 1.0: at a 1.7 to 5.8 ms round trip the layer's cost cannot be told from zero. One connection, one operation at a time; concurrency, a same-host server and the key-value index layer's extra keys are not measured. No library change.

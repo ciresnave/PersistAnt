@@ -156,11 +156,17 @@ async fn postgres() {
             ("inet", "'10.0.0.1/24'", t("10.0.0.1/24")),
             ("inet", "'::1'", t("::1")),
             ("cidr", "'10.0.0.0/24'", t("10.0.0.0/24")),
+            // Text arrays: JSON array text, a NULL element as `null`, quoting undone and redone.
+            ("text[]", "'{a,b}'", t(r#"["a","b"]"#)),
+            ("varchar(5)[]", "'{abc,\"d e\"}'", t(r#"["abc","d e"]"#)),
+            ("text[]", "'{}'", t("[]")),
+            ("text[]", "'{x,NULL}'", t(r#"["x",null]"#)),
+            ("text[]", r#"'{"q\"b","l1\nl2"}'"#, t(r#"["q\"b","l1nl2"]"#)),
             // Not carried: each fails loud, naming the type.
             ("timetz", "'12:34:56+02'", Loud("TIMETZ")),
             ("interval", "'1 day 2 hours'", Loud("INTERVAL")),
             ("integer[]", "'{1,2,3}'", Loud("INT4[]")),
-            ("text[]", "'{a,b}'", Loud("TEXT[]")),
+            // (A text array is carried, as JSON array text: see the cases above.)
             (
                 "uuid[]",
                 "'{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}'",
