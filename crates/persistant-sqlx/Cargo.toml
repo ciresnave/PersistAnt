@@ -24,7 +24,9 @@ bridge = ["persistant-relational/sql"]
 persistant-core = { workspace = true }
 persistant-relational = { workspace = true, features = ["catalog"] }
 tokio = { version = "1.53.2", default-features = false, features = ["sync", "time", "rt"] }
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "time"] }
+# The `Datelike` and `Timelike` traits, which sqlx does not re-export. sqlx's own `time` feature must stay off here: see tests/sqlx_features.rs.
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "migrate", "chrono"] }
 
 [dev-dependencies]
 sha2 = "0.11"

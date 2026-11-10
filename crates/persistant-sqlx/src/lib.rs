@@ -174,19 +174,19 @@ fn decode(row: &PgRow) -> Result<Row, RelError> {
                 }
             }
             "DATE" => Value::Text(decode::date_text(
-                row.try_get::<sqlx::types::time::Date, _>(i)
+                row.try_get::<sqlx::types::chrono::NaiveDate, _>(i)
                     .map_err(classify)?,
             )),
             "TIME" => Value::Text(decode::time_text(
-                row.try_get::<sqlx::types::time::Time, _>(i)
+                row.try_get::<sqlx::types::chrono::NaiveTime, _>(i)
                     .map_err(classify)?,
             )),
             "TIMESTAMP" => Value::Text(decode::naive_text(
-                row.try_get::<sqlx::types::time::PrimitiveDateTime, _>(i)
+                row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(i)
                     .map_err(classify)?,
             )),
             "TIMESTAMPTZ" => Value::Text(decode::utc_text(
-                row.try_get::<sqlx::types::time::OffsetDateTime, _>(i)
+                row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>, _>(i)
                     .map_err(classify)?,
             )),
             other => {
