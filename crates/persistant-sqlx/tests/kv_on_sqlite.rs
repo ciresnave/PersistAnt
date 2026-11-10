@@ -209,6 +209,7 @@ async fn the_relational_leaves_certify_on() {
     assert_eq!(
         ids,
         [
+            "rel.error.deadlock",
             "rel.isolation.repeatable_read",
             "rel.isolation.serializable",
             "rel.row_lock",

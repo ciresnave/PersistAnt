@@ -52,6 +52,8 @@ pub enum Leaf {
     Transaction,
     /// `rel.error.unique`
     UniqueClassified,
+    /// `rel.error.deadlock`
+    DeadlockClassified,
     /// `rel.foreign_key`
     ForeignKey,
     /// `rel.check_constraint`
@@ -74,10 +76,11 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 12] = [
+    pub const ALL: [Leaf; 13] = [
         Leaf::Values,
         Leaf::Transaction,
         Leaf::UniqueClassified,
+        Leaf::DeadlockClassified,
         Leaf::ForeignKey,
         Leaf::CheckConstraint,
         Leaf::IsolationNoDirtyRead,
@@ -95,6 +98,7 @@ impl Leaf {
             Leaf::Values => "rel.values",
             Leaf::Transaction => "rel.transaction",
             Leaf::UniqueClassified => "rel.error.unique",
+            Leaf::DeadlockClassified => "rel.error.deadlock",
             Leaf::ForeignKey => "rel.foreign_key",
             Leaf::CheckConstraint => "rel.check_constraint",
             Leaf::IsolationNoDirtyRead => "rel.isolation.no_dirty_read",
@@ -117,6 +121,7 @@ impl Leaf {
             | Leaf::Savepoint
             | Leaf::RowLock
             | Leaf::AdvisoryLock => &[Defect::NoTransactions],
+            Leaf::DeadlockClassified => &[Defect::NoTransactions, Defect::UnclassifiedErrors],
             Leaf::UniqueClassified => &[Defect::UnclassifiedErrors],
             Leaf::ForeignKey | Leaf::CheckConstraint | Leaf::UpsertWhere => &[],
         }
@@ -391,6 +396,7 @@ pub async fn run_leaf<R: RelationalBackend>(
         Leaf::Values => values(b, &s).await,
         Leaf::Transaction => transaction(b, &s).await,
         Leaf::UniqueClassified => unique(b, &s).await,
+        Leaf::DeadlockClassified => deadlock(b, &s).await,
         Leaf::ForeignKey => foreign_key(b, &s, constrained).await,
         Leaf::CheckConstraint => check(b, &s, constrained).await,
         Leaf::IsolationNoDirtyRead => no_dirty_read(b, &s).await,
@@ -624,6 +630,102 @@ async fn write_skew<R: RelationalBackend>(
     let c1 = finish(t1, &format!("UPDATE {table} SET n = 0 WHERE id = 1")).await?;
     let c2 = finish(t2, &format!("UPDATE {table} SET n = 0 WHERE id = 2")).await?;
     Ok((c1, c2))
+}
+
+/// Poll two futures together until both finish. The conformance suite has no async runtime of its
+/// own, and a deadlock cannot be made by awaiting one transaction at a time.
+async fn join2<A: std::future::Future, B: std::future::Future>(
+    a: A,
+    b: B,
+) -> (A::Output, B::Output) {
+    use std::task::Poll;
+    let mut a = Box::pin(a);
+    let mut b = Box::pin(b);
+    let mut ra = None;
+    let mut rb = None;
+    std::future::poll_fn(|cx| {
+        if ra.is_none()
+            && let Poll::Ready(v) = a.as_mut().poll(cx)
+        {
+            ra = Some(v);
+        }
+        if rb.is_none()
+            && let Poll::Ready(v) = b.as_mut().poll(cx)
+        {
+            rb = Some(v);
+        }
+        if ra.is_some() && rb.is_some() {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    })
+    .await;
+    (ra.unwrap(), rb.unwrap())
+}
+
+/// `rel.error.deadlock`: two transactions each hold one row and ask for the other's. The server picks
+/// a victim; the contract is that the victim's error is [`RelError::Deadlock`] and the other
+/// transaction completes and commits.
+async fn deadlock<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {
+    const T: &str = "persistant_rel_deadlock";
+    if matches!(s.0, Dialect::Sqlite) {
+        return Err(Failure::Backend(RelError::Unsupported(
+            "SQLite takes one write lock for the whole database, so two writers cannot wait on each other in a cycle".to_string(),
+        )));
+    }
+    drop_tables(b, &[T]).await?;
+    b.execute(
+        &format!(
+            "CREATE TABLE {T} ({}, n BIGINT NOT NULL){}",
+            s.pk("id"),
+            s.tail()
+        ),
+        &[],
+    )
+    .await?;
+    let ins = format!("INSERT INTO {T} (id, n) VALUES ({}, 0)", s.p(1));
+    b.execute(&ins, &[Value::Int(1)]).await?;
+    b.execute(&ins, &[Value::Int(2)]).await?;
+    let upd = |id: i64| format!("UPDATE {T} SET n = n + 1 WHERE id = {id}");
+    let result = async {
+        let mut t1 = b.begin(Isolation::ReadCommitted).await?;
+        let mut t2 = b.begin(Isolation::ReadCommitted).await?;
+        // Each holds one row ...
+        t1.execute(&upd(1), &[]).await?;
+        t2.execute(&upd(2), &[]).await?;
+        // ... and now asks for the other's: a cycle, which the server must break.
+        let (r1, r2) = join2(t1.execute(&upd(2), &[]), t2.execute(&upd(1), &[])).await;
+        let (victim, survivor) = match (r1, r2) {
+            (Err(RelError::Deadlock), Ok(_)) => (t1, t2),
+            (Ok(_), Err(RelError::Deadlock)) => (t2, t1),
+            (Ok(_), Ok(_)) => {
+                let _ = t1.rollback().await;
+                let _ = t2.rollback().await;
+                return wrong("a lock cycle was not broken: both transactions completed");
+            }
+            (Err(RelError::Deadlock), Err(RelError::Deadlock)) => {
+                let _ = t1.rollback().await;
+                let _ = t2.rollback().await;
+                return wrong("both transactions were refused as deadlock victims; one should survive");
+            }
+            (r1, r2) => {
+                let _ = t1.rollback().await;
+                let _ = t2.rollback().await;
+                return wrong(format!(
+                    "a lock cycle ended with {:?} and {:?}, not exactly one RelError::Deadlock and one success",
+                    r1.err(),
+                    r2.err()
+                ));
+            }
+        };
+        let _ = victim.rollback().await;
+        survivor.commit().await?;
+        Ok(())
+    }
+    .await;
+    drop_tables(b, &[T]).await?;
+    result
 }
 
 async fn serializable<R: RelationalBackend>(b: &R, s: &Sql) -> Result<(), Failure> {

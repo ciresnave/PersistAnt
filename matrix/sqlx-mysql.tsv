@@ -25,6 +25,7 @@ capability	kv.bounded_call	kv-on-relational:mysql	0.16+8.4.11	call_bound=set;dia
 capability	rel.values	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;probe=rel::rel.values	
 capability	rel.transaction	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;probe=rel::rel.transaction	
 capability	rel.error.unique	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;probe=rel::rel.error.unique	
+capability	rel.error.deadlock	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;probe=rel::rel.error.deadlock	
 capability	rel.foreign_key	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;probe=rel::rel.foreign_key	
 capability	rel.check_constraint	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;probe=rel::rel.check_constraint	
 capability	rel.isolation.no_dirty_read	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;probe=rel::rel.isolation.no_dirty_read	

@@ -159,6 +159,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a duplicate key is reported as a unique violation, not as an opaque backend error",
     ),
     (
+        "rel.error.deadlock",
+        "two transactions that each wait for a row the other has updated are broken by the server: exactly one is refused as a deadlock victim (RelError::Deadlock, not an opaque backend error) and the other completes and commits; absent where the engine has a single write lock and so no cycle (SQLite)",
+    ),
+    (
         "rel.foreign_key",
         "a reference to a missing row is rejected as a foreign key violation, and so is deleting a referenced row",
     ),

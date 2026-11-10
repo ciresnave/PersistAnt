@@ -24,6 +24,7 @@ capability	kv.bounded_call	kv-on-relational:sqlite	0.16+3.51.3	call_bound=unset;
 capability	rel.values	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.values	
 capability	rel.transaction	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.transaction	
 capability	rel.error.unique	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.error.unique	
+capability	rel.error.deadlock	sqlite	3.51.3	dialect=sqlite	no	missing	arch=x86_64;os=linux;probe=rel::rel.error.deadlock	database does not support: SQLite takes one write lock for the whole database, so two writers cannot wait on each other in a cycle
 capability	rel.foreign_key	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.foreign_key	
 capability	rel.check_constraint	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.check_constraint	
 capability	rel.isolation.no_dirty_read	sqlite	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.isolation.no_dirty_read	
@@ -64,6 +65,7 @@ capability	kv.bounded_call	kv-on-relational:sqlite-full	0.16+3.51.3	call_bound=u
 capability	rel.values	sqlite-full	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.values	
 capability	rel.transaction	sqlite-full	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.transaction	
 capability	rel.error.unique	sqlite-full	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.error.unique	
+capability	rel.error.deadlock	sqlite-full	3.51.3	dialect=sqlite	no	missing	arch=x86_64;os=linux;probe=rel::rel.error.deadlock	database does not support: SQLite takes one write lock for the whole database, so two writers cannot wait on each other in a cycle
 capability	rel.foreign_key	sqlite-full	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.foreign_key	
 capability	rel.check_constraint	sqlite-full	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.check_constraint	
 capability	rel.isolation.no_dirty_read	sqlite-full	3.51.3	dialect=sqlite	yes		arch=x86_64;os=linux;probe=rel::rel.isolation.no_dirty_read	
