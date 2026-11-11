@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.21
+
+- **CI only:** the portfolio workflow caller is repinned to coderipper 0.43.41 (`4bcf55e4`). No code change.
+
 ## 0.16.20
 
 - **Docs only:** ROADMAP row 33, a gap: no blob backend declares `Durability::Machine` with `blob.create_exclusive` (agent-loop's run record needs it). No code change.
