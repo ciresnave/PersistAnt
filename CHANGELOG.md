@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.20
+
+- **Docs only:** ROADMAP row 33, a gap: no blob backend declares `Durability::Machine` with `blob.create_exclusive` (agent-loop's run record needs it). No code change.
+
 ## 0.16.19
 
 - **Live check at open, opt-in** (ROADMAP row 10, `DESIGN-KINDS` D3): `OpenOptions::with_live_check()` runs one transaction on the server before the handle is returned: create a temporary table, write a row, read it back, drop the table, roll back. It proves what the recorded matrix cannot know about a deployment: that **this role** holds the `TEMP` privilege and that transactions roll back. Off by default (the matrix lookup stays the gate). A failure is `OpenError::LiveCheck { id, reason }`; `memory` and `fs` have no relational layer and are refused before any I/O with `OpenError::LiveCheckUnsupported { id }`. The opt-in sits on `OpenOptions`, the program's own open call, because `Needs` carries capabilities only. Additive (`OpenError` and `OpenOptions` are `#[non_exhaustive]`).
