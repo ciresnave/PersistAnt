@@ -324,6 +324,65 @@ async fn a_call_bound_is_refused_where_it_cannot_apply_and_required_where_needed
     assert!(!root.exists());
 }
 
+/// `OpenOptions::with_live_check` (ROADMAP row 10): refused, before any I/O, where there is no
+/// relational layer to run it on.
+#[tokio::test]
+async fn a_live_check_is_refused_where_there_is_nothing_to_run_it_on() {
+    let opts = OpenOptions::new().with_live_check();
+    let e = registry::open_named_with(
+        "memory",
+        &Endpoint::None,
+        &basic(Durability::Volatile),
+        &opts,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(e, OpenError::LiveCheckUnsupported { id: "memory" }),
+        "{e:?}"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("never");
+    let e = registry::open_named_with(
+        "fs",
+        &Endpoint::path(&root),
+        &basic(Durability::Process),
+        &opts,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(e, OpenError::LiveCheckUnsupported { id: "fs" }),
+        "{e:?}"
+    );
+    assert!(!root.exists(), "nothing was touched");
+    // Without the option the same opens still work (control: the refusal is the option's).
+    registry::open_named("memory", &Endpoint::None, &basic(Durability::Volatile))
+        .await
+        .unwrap();
+}
+
+#[cfg(feature = "registry-sqlite")]
+#[tokio::test]
+async fn a_live_check_passes_on_sqlite_and_leaves_the_store_usable() {
+    let dir = tempfile::tempdir().unwrap();
+    let opts = OpenOptions::new().with_live_check();
+    for name in ["sqlite", "sqlite-full"] {
+        let file = dir.path().join(format!("{name}-live.db"));
+        let h = registry::open_named_with(
+            name,
+            &Endpoint::path(&file),
+            &basic(Durability::Process),
+            &opts,
+        )
+        .await
+        .unwrap();
+        assert!(h.rel().is_none(), "the needs named no rel.* capability");
+        h.kv().put("k", b"v".to_vec(), None).await.unwrap();
+        assert_eq!(h.kv().get("k").await.unwrap(), Some(b"v".to_vec()));
+    }
+}
+
 #[cfg(feature = "registry-sqlite")]
 #[tokio::test]
 async fn sqlite_lists_kv_bounded_call_and_opens_bounded_only_with_a_bound() {

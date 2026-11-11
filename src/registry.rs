@@ -235,6 +235,21 @@ pub enum OpenError {
         /// The id asked for.
         id: &'static str,
     },
+    /// [`OpenOptions::live_check`] was asked for a provider with no relational layer to run it on
+    /// (`memory`, `fs`). Nothing was touched.
+    LiveCheckUnsupported {
+        /// The id asked for.
+        id: &'static str,
+    },
+    /// The live check ([`OpenOptions::live_check`]) failed: the server accepted the connection, but
+    /// this role could not create a temporary table, write and read it inside a transaction, or
+    /// roll back. Nothing was left behind.
+    LiveCheck {
+        /// The id asked for.
+        id: &'static str,
+        /// Which step failed, with the server's words.
+        reason: String,
+    },
     /// The server answered as a different backend than the id asked for (a MariaDB server behind
     /// the `mysql` id, or the reverse). Nothing was written.
     ServerMismatch {
@@ -287,6 +302,13 @@ impl fmt::Display for OpenError {
             OpenError::BoundUnsupported { id } => {
                 write!(f, "backend `{id}` cannot be opened with a call bound")
             }
+            OpenError::LiveCheckUnsupported { id } => write!(
+                f,
+                "backend `{id}` has no relational layer to run a live check on (`sqlite`, `sqlite-full`, `postgres`, `mysql` and `mariadb` do)"
+            ),
+            OpenError::LiveCheck { id, reason } => {
+                write!(f, "backend `{id}`: the live check at open failed: {reason}")
+            }
             OpenError::ServerMismatch { id, found } => {
                 write!(
                     f,
@@ -317,6 +339,14 @@ pub struct OpenOptions {
     /// (`persistant_sqlx::Bounded`). Needed for `kv.bounded_call`; only the database backends can
     /// be bounded.
     pub call_bound: Option<Duration>,
+    /// Run a short live check against the server before the handle is returned (ROADMAP row 10,
+    /// `DESIGN-KINDS` decision D3: the recorded matrix is the gate; this is an opt-in extra). Inside
+    /// one transaction it creates a temporary table, writes a row, reads it back, drops the table
+    /// and rolls back, so nothing is left behind. It proves what the matrix cannot know about this
+    /// deployment: that **this role** holds the `TEMP` privilege and that transactions roll back.
+    /// Only the database providers can run it ([`OpenError::LiveCheckUnsupported`] otherwise); a
+    /// failure is [`OpenError::LiveCheck`].
+    pub live_check: bool,
 }
 
 impl OpenOptions {
@@ -331,6 +361,58 @@ impl OpenOptions {
         self.call_bound = Some(bound);
         self
     }
+
+    /// Run the live check at open (see [`OpenOptions::live_check`]).
+    #[must_use]
+    pub fn with_live_check(mut self) -> Self {
+        self.live_check = true;
+        self
+    }
+}
+
+/// The live check: one transaction that creates a temporary table, writes and reads a row, drops
+/// the table and rolls back. `Err` names the step that failed.
+async fn run_live_check<R: RelationalBackend>(db: &R) -> Result<(), String> {
+    const T: &str = "persistant_live_check";
+    let drop = match db.dialect() {
+        // MySQL and MariaDB: `DROP TEMPORARY TABLE` does not commit the transaction; a plain
+        // `DROP TABLE` would.
+        Dialect::MySql | Dialect::MariaDb => format!("DROP TEMPORARY TABLE {T}"),
+        _ => format!("DROP TABLE {T}"),
+    };
+    let mut tx = db
+        .begin(Isolation::ReadCommitted)
+        .await
+        .map_err(|e| format!("begin a transaction: {e}"))?;
+    let steps: Result<(), String> = async {
+        tx.execute(
+            &format!("CREATE TEMPORARY TABLE {T} (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)"),
+            &[],
+        )
+        .await
+        .map_err(|e| format!("create a temporary table (does the role hold TEMP?): {e}"))?;
+        tx.execute(&format!("INSERT INTO {T} (id, v) VALUES (1, 7)"), &[])
+            .await
+            .map_err(|e| format!("write to a temporary table: {e}"))?;
+        let rows = tx
+            .query(&format!("SELECT v FROM {T} WHERE id = 1"), &[])
+            .await
+            .map_err(|e| format!("read a temporary table: {e}"))?;
+        if rows.len() != 1 {
+            return Err(format!(
+                "the row just written was read back {} time(s), not once",
+                rows.len()
+            ));
+        }
+        tx.execute(&drop, &[])
+            .await
+            .map_err(|e| format!("drop the temporary table: {e}"))?;
+        Ok(())
+    }
+    .await;
+    let rolled = tx.rollback().await;
+    steps?;
+    rolled.map_err(|e| format!("roll back: {e}"))
 }
 
 /// How a provider is described in the table: id, words for the operator, and where to look it up.
@@ -1303,6 +1385,9 @@ pub async fn open_named_with(
     if options.call_bound.is_some() && matches!(spec.id, "memory" | "fs") {
         return Err(OpenError::BoundUnsupported { id: spec.id });
     }
+    if options.live_check && spec.rel.is_none() {
+        return Err(OpenError::LiveCheckUnsupported { id: spec.id });
+    }
     let want = (spec.endpoint)();
     if !endpoint.fits(&want)? {
         return Err(OpenError::WrongEndpoint {
@@ -1331,6 +1416,24 @@ pub async fn open_named_with(
     } else {
         None
     };
+    if options.live_check {
+        // The program's needs may not name a relational capability: then the handle has no `rel`, and
+        // the check runs on a connection of its own that is dropped afterwards.
+        let own;
+        let db: &AnyRel = match &rel {
+            Some(r) => r,
+            None => {
+                own = open_rel(spec.id, endpoint, options.call_bound).await?;
+                &own
+            }
+        };
+        run_live_check(db)
+            .await
+            .map_err(|reason| OpenError::LiveCheck {
+                id: spec.id,
+                reason,
+            })?;
+    }
     // Again, for what was actually opened: one surface per kind the needs name, from the real
     // `backend()` / `version()` / config of that object.
     let kv_surface = Surface::new(
