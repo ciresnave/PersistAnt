@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.4 — persistant_sqlx::native: read-only transactions and identifier-safe statements (phase 1)
+
+Adds the Postgres-only `persistant_sqlx::native` module (docs/DESIGN-PG-NATIVE-SESSION.md, phase 1): `TxOptions` (isolation, `READ ONLY`, `DEFERRABLE`, snapshot fixed at begin) with `PgBackend::begin_with`; `Ident` (validated, quoted) and `PgTx::query_ident` / `execute_ident`, whose template is a `&'static str` with `{n}` holes taking one identifier or a comma-joined list. Verified against PostgreSQL 16: a write in a READ ONLY transaction is refused, the snapshot ignores later commits (and, with `snapshot_now(false)`, does not), commit and rollback work after an error and after a long gap, hostile names are quoted in holes and lists, and the `setval($1::regclass,$2,$3)` and `pg_stat_activity` statements run. Additive; nothing existing changes.
+
 ## 0.17.2 — docs: design note for a single-connection Postgres session
 
 Adds `docs/DESIGN-PG-NATIVE-SESSION.md`: whether and how `persistant-sqlx` offers one dedicated Postgres connection with

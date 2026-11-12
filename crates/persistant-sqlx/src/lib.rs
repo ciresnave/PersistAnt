@@ -15,6 +15,7 @@ mod decode;
 mod migrate;
 #[cfg(feature = "mysql")]
 mod mysql;
+pub mod native;
 mod options;
 #[cfg(feature = "sqlite")]
 mod sqlite;
