@@ -183,6 +183,10 @@ mod tests {
 
     #[test]
     fn version_is_the_manifest_version() {
-        assert_eq!(VERSION, "0.16.22");
+        // `VERSION` is the manifest's own number (`env!`), so a pushed change need not edit this test:
+        // the PM stamps the number (`tools/stamp-version.py`). It must be MAJOR.MINOR.PATCH.
+        let parts: Vec<&str> = VERSION.split('.').collect();
+        assert_eq!(parts.len(), 3, "{VERSION}");
+        assert!(parts.iter().all(|p| p.parse::<u32>().is_ok()), "{VERSION}");
     }
 }
