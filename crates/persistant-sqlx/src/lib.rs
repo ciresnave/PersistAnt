@@ -7,6 +7,7 @@
 //!
 //! Failures are classified from the server's SQLSTATE into [`persistant_relational::RelError`].
 
+pub mod advisory;
 mod bounded;
 #[cfg(feature = "bridge")]
 mod bridge;
