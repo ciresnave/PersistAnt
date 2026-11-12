@@ -127,3 +127,46 @@ fn known_bad_a_marker_file_is_still_held_after_its_holder_is_killed() {
         "the stale marker still excludes every later holder"
     );
 }
+
+/// Issue #220. While other threads fork children, a lock taken and dropped over and over is released
+/// at every drop: a child forked while the lock is held keeps its pre-`exec` copy of the open file
+/// description, so a drop that only closed the descriptor would leave the lock held for that moment.
+#[cfg(unix)]
+#[test]
+fn drop_always_releases_while_other_threads_spawn_children() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let dir = tempfile::tempdir().unwrap();
+    let p = lock_path(&dir);
+    let stop = Arc::new(AtomicBool::new(false));
+    let spawners: Vec<_> = (0..4)
+        .map(|_| {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    // A child that execs this binary and exits at once: fork, then exec.
+                    let _ = Command::new(std::env::current_exe().unwrap())
+                        .args(["--list"])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
+            })
+        })
+        .collect();
+    let mut failure = None;
+    for i in 0..4000 {
+        match ProcessLock::try_acquire(&p).unwrap() {
+            Some(lock) => drop(lock),
+            None => {
+                failure = Some(i);
+                break;
+            }
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    for s in spawners {
+        s.join().unwrap();
+    }
+    assert_eq!(failure, None, "a dropped lock was not released (iteration)");
+}
