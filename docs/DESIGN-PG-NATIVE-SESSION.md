@@ -44,7 +44,10 @@ value rendered by us: `DateStyle` (ISO only), `TimeZone` (`Utc` or a name checke
 `extra_float_digits` (-15..=3), `IntervalStyle` (enum), `statement_timeout`, `lock_timeout`,
 `idle_in_transaction_session_timeout` (a `Duration`), `application_name` (exists). They are sent as **startup
 parameters** (sqlx `PgConnectOptions::options`; the exact method to be checked against the sqlx version at build time),
-so no `SET` statement text exists at all. Refused: any other GUC, `SET ROLE`, `SET SESSION AUTHORIZATION`,
+so no `SET` statement text exists at all. **Built (phase 2) with one correction:** sqlx fixes `DateStyle` and `TimeZone` in its
+own startup packet and that wins over `-c`, so those two are applied right after connect with
+`SELECT set_config($1, $2, false)` (name from the allow-list, value checked, both bound parameters): still no SQL text
+built from a value. The others (`IntervalStyle`, the timeouts, `extra_float_digits`) are startup parameters. Refused: any other GUC, `SET ROLE`, `SET SESSION AUTHORIZATION`,
 `search_path` (a caller who needs it qualifies identifiers instead).
 
 **Isolation and read-only.** `TxOptions { isolation: Isolation, access: ReadWrite|ReadOnly, deferrable: bool }`
