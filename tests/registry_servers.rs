@@ -7,6 +7,7 @@
 //! **unless** the matching `PERSISTANT_REQUIRE_DATABASE` / `PERSISTANT_REQUIRE_MYSQL` is `1` (set by
 //! the CI jobs that provide a server): a skipped test must not look like a green one there.
 #![cfg(any(feature = "registry-postgres", feature = "registry-mysql"))]
+#![allow(deprecated)] // `Endpoint::Url` is deprecated (0.17.0); this test still covers it
 
 use persistant::capability::CapabilityId;
 use persistant::capability::choose::Durability;

@@ -41,10 +41,7 @@ fn servers() -> Option<Servers> {
 }
 
 fn opts(tls: TlsPolicy) -> ConnectOptions {
-    ConnectOptions {
-        tls,
-        ..ConnectOptions::default()
-    }
+    ConnectOptions::default().with_tls(tls)
 }
 
 #[tokio::test]

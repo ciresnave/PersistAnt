@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.17.0 — **BREAKING**: `ConnectOptions` is `#[non_exhaustive]` and gains `application_name`
+
+- **BREAKING (`persistant-sqlx`): `ConnectOptions` is `#[non_exhaustive]`** (PM ruling A, Humboldt stage 2), so a later setting is not breaking again. A struct literal from another crate (`ConnectOptions { tls, max_connections, acquire_timeout }`, with or without `..ConnectOptions::default()`) no longer compiles. Build one from `ConnectOptions::default()` and set what differs: new `with_tls`, `with_max_connections`, `with_acquire_timeout`, `with_application_name` (or assign the pub fields).
+- **New: `ConnectOptions::application_name`** (`Option<String>`, default `None`): the name the server shows for the connection (`pg_stat_activity.application_name`). `Some` overrides the URL's own `application_name`; `None` leaves it alone. PostgreSQL only; `MysqlBackend::connect_with` ignores it. Verified against a real PostgreSQL 16 (`SHOW application_name`, three cases).
+- **Not a gap, now said in the docs:** `acquire_timeout` has been configurable since 0.4.31 (default 10 s, sqlx's own is 30 s); `ConnectOptions` documents it and `with_acquire_timeout` sets it.
+- **Deprecated: `persistant::registry::Endpoint::Url(String)`** (ROADMAP row 23, held for this release). Replace `Endpoint::Url(url)` with `Endpoint::Secret(ConnectionSecret::literal(url))`, or `Endpoint::url_env("NAME")` to read it from the environment at open. Matching on `Endpoint::Url` keeps working (with a deprecation warning); a build with `-D warnings` must change it.
+- **Consumers that must repin (one line each):** Humboldt (`backend/src/db.rs:40`, pin 0.16.16): replace the `ConnectOptions { tls, max_connections, acquire_timeout }` literal with `ConnectOptions::default().with_tls(..).with_max_connections(..).with_acquire_timeout(..).with_application_name("db-wipe")`. lightbulb (`src/api/mod.rs:610`, pin 0.9.24, far behind): same literal-to-builder change when it next moves. configurant (`src/persistant/transfer.rs:93,297,492`): `Endpoint::Url` is only deprecated, so add `#[allow(deprecated)]` or move to `Endpoint::Secret`; needed before a `-D warnings` build on 0.17. agent-loop, auth-framework, synapse, agentlife, commy: no `ConnectOptions` literal and no `Endpoint::Url` found, so no source change; the pin moves when they next update.
+
+- **A minor bump regenerates the matrices, and a check says so** (found when the 0.17.0 stamp turned CI red): the `kv-on-blob` / `kv-on-relational` rows of `matrix/*.tsv` record the crate's `MAJOR.MINOR`, so every row goes stale at a minor bump and the registry finds no row. `tools/check-matrix-version.py` (a step of the `spdx` job, with a self-test) fails with `regenerate matrix/*.tsv for <MAJOR.MINOR>` when they differ. The 0.17 matrices are the generator's own output from a run on the stamped head; only the `0.16+` to `0.17+` strings changed.
+
 ## 0.16.24 — **CI**
 
 - **CI only:** the portfolio workflow caller is repinned to coderipper 0.43.49 (`33cc3b7e`, coderipper#307), replacing 0.43.41. No code change.
