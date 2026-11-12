@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.23 — **Tooling**
+
+- **CHANGELOG fragments and a stamp tool** (CireSnave 2026-11-12: every PR stops editing version lines). A PR now adds one `changelog.d/<topic>.md` and never edits `CHANGELOG.md`, a `Cargo.toml` version or `Cargo.lock`; the PM allocates the number and runs `python tools/stamp-version.py <version>` at merge. `tools/check-fragment.py` and the `Changelog fragment` workflow enforce one fragment per PR (or a manual bump). The kit's stamp tool was patched for this repo: it also stamps `Cargo.lock` entries of crates that inherit `version.workspace`, and `[workspace.dependencies]` lines that write `version` before `path`. The `VERSION` unit test in `src/lib.rs` no longer hard-codes the number. No library change.
+
 ## 0.16.21
 
 - **CI only:** the portfolio workflow caller is repinned to coderipper 0.43.41 (`4bcf55e4`). No code change.
