@@ -1,0 +1,1 @@
+{"db_name":"PostgreSQL","query":"SELECT count(*) AS \"n!\" FROM persistant_arr WHERE id = ANY($1)","describe":{"columns":[{"ordinal":0,"name":"n!","type_info":"Int8","origin":"Expression"}],"parameters":{"Left":["UuidArray"]},"nullable":[null]},"hash":"4d5fa7d836d7866b2ffd0b5530b80d9fb686789dbb69b04dedd072c208e6dd14"}
