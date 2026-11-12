@@ -37,15 +37,36 @@ pub enum TlsPolicy {
 }
 
 /// Settings for [`PgBackend::connect_with`] (and `MysqlBackend::connect_with`, feature `mysql`).
+///
+/// `#[non_exhaustive]`: build one from [`ConnectOptions::default`] and set what differs, with the
+/// `with_*` methods or by assigning a field, so a later setting is not a breaking change. A struct
+/// literal from another crate does not compile:
+///
+/// ```compile_fail
+/// use persistant_sqlx::{ConnectOptions, TlsPolicy};
+/// let _ = ConnectOptions {
+///     tls: TlsPolicy::Require,
+///     max_connections: 4,
+///     acquire_timeout: std::time::Duration::from_secs(5),
+///     application_name: None,
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ConnectOptions {
     /// How the connection is secured. Overrides the URL's `sslmode`.
     pub tls: TlsPolicy,
     /// Most connections the pool opens.
     pub max_connections: u32,
     /// How long a caller waits for a connection before [`RelError::Unavailable`]. Bounded by
-    /// default so a saturated pool is an error, not a hang.
+    /// default (10 s; sqlx's own default is 30 s) so a saturated pool is an error, not a hang.
+    /// Configurable: set it here or with [`ConnectOptions::with_acquire_timeout`].
     pub acquire_timeout: Duration,
+    /// The name the server shows for this connection (`pg_stat_activity.application_name`, the
+    /// `%a` of a log line), so an operator can tell which program holds a connection. `Some` **overrides**
+    /// the URL's own `application_name`; `None` leaves the URL's alone. PostgreSQL only: MySQL has no
+    /// such setting, and `MysqlBackend::connect_with` ignores it.
+    pub application_name: Option<String>,
 }
 
 impl Default for ConnectOptions {
@@ -54,7 +75,39 @@ impl Default for ConnectOptions {
             tls: TlsPolicy::default(),
             max_connections: 16,
             acquire_timeout: Duration::from_secs(10),
+            application_name: None,
         }
+    }
+}
+
+impl ConnectOptions {
+    /// Set how the connection is secured ([`ConnectOptions::tls`]).
+    #[must_use]
+    pub fn with_tls(mut self, tls: TlsPolicy) -> Self {
+        self.tls = tls;
+        self
+    }
+
+    /// Set the most connections the pool opens ([`ConnectOptions::max_connections`]).
+    #[must_use]
+    pub fn with_max_connections(mut self, max_connections: u32) -> Self {
+        self.max_connections = max_connections;
+        self
+    }
+
+    /// Set how long a caller waits for a connection ([`ConnectOptions::acquire_timeout`]; the default is
+    /// 10 s, sqlx's own is 30 s).
+    #[must_use]
+    pub fn with_acquire_timeout(mut self, acquire_timeout: Duration) -> Self {
+        self.acquire_timeout = acquire_timeout;
+        self
+    }
+
+    /// Set the name the server shows for this connection ([`ConnectOptions::application_name`]).
+    #[must_use]
+    pub fn with_application_name(mut self, name: impl Into<String>) -> Self {
+        self.application_name = Some(name.into());
+        self
     }
 }
 
@@ -87,6 +140,9 @@ impl PgBackend {
                 }
             }
         };
+        if let Some(name) = &options.application_name {
+            o = o.application_name(name);
+        }
         let pool = PgPoolOptions::new()
             .max_connections(options.max_connections)
             .acquire_timeout(options.acquire_timeout)
