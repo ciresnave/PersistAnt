@@ -58,7 +58,7 @@ statement by default (`TxOptions::snapshot_now()`, on by default) and "the snaps
 `NAMEDATALEN - 1`), and renders as `"` + text with `"` doubled + `"`. `Ident::qualified(schema, name)` for the two-part
 form. Dynamic statements are `query_ident(template: &'static str, idents: &[&Ident], params: &[Value])`: the template
 must be a **`&'static str`** (a caller's runtime text cannot be the template), `{0}`, `{1}` are the only holes and take
-only `Ident`s, and every value still goes through `$n` parameters. The static-template rule is the guard; a compile-fail
+only `Ident`s or a non-empty `&[Ident]` list (comma-joined, each quoted: variable column and `ORDER BY` lists), and every value still goes through `$n` parameters. The static-template rule is the guard; a compile-fail
 doctest shows a `String` template refused. `SHOW` is `show(name)` with the name checked against `[a-z_.]+`. Catalog
 reads are ordinary static templates with ident holes and parameters.
 
@@ -97,3 +97,11 @@ confirms the exact signature, because it is the largest surface and the one raw 
 additive (minor or patch); none breaks a published API. Open for the PM/Humboldt: whether `pg_export_snapshot` (parallel
 workers on one snapshot) is wanted, and whether `statement_timeout` belongs in the allow-list for a run that holds a
 snapshot for hours.
+
+## 7. Amendments after Humboldt's read (2026-11-12)
+
+- Phase 1 alone is not enough for the transfer tool: its source side needs one connection that also holds `SET`s, so it
+  uses the native surface after phase 2. Phases 1 and 2 go in order and quickly; phase 3 (COPY) is announced before it starts.
+- `date_style_iso()` pins the exact string `ISO, MDY`. `CopyFormat::Text` keeps the current column list and NULL semantics.
+- Dropping a COPY stream early is fine; no default timeout of any kind is added (a long snapshot is the point).
+- `commit()` and `rollback()` work after a long gap and after an error inside the transaction (tested in phase 1).
