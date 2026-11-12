@@ -98,6 +98,10 @@ name = "bridge_gaps"
 required-features = ["bridge"]
 
 [[test]]
+name = "array_params"
+required-features = ["bridge"]
+
+[[test]]
 name = "tls_mysql"
 required-features = ["mysql"]
 

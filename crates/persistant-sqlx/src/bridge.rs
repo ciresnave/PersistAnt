@@ -7,8 +7,8 @@
 //! [`PgBackend`](crate::PgBackend) decodes them, so a statement moves between the two with no change
 //! to its call site beyond the argument of `fetch_*`. No raw connection is exposed.
 
-use crate::{bind, classify, decode};
-use persistant_relational::{Dialect, RelError, Row, Runner, Sql, Value, prepare};
+use crate::{bind_hinted, classify, decode};
+use persistant_relational::{ArrayElem, Dialect, RelError, Row, Runner, Sql, Value, prepare};
 
 /// An sqlx pool as a [`Runner`]: `query.fetch_all(OnPool(&pool))`.
 pub struct OnPool<'p>(pub &'p sqlx::PgPool);
@@ -19,15 +19,41 @@ pub struct OnConn<'c>(pub &'c mut sqlx::PgConnection);
 
 impl Runner for OnPool<'_> {
     async fn run_query(&mut self, sql: &Sql, params: &[Value]) -> Result<Vec<Row>, RelError> {
+        self.run_query_hinted(sql, params, &[]).await
+    }
+
+    async fn run_execute(&mut self, sql: &Sql, params: &[Value]) -> Result<u64, RelError> {
+        self.run_execute_hinted(sql, params, &[]).await
+    }
+
+    async fn run_query_hinted(
+        &mut self,
+        sql: &Sql,
+        params: &[Value],
+        hints: &[Option<ArrayElem>],
+    ) -> Result<Vec<Row>, RelError> {
         let (text, ordered) = prepare(sql, &Dialect::Postgres, params)?;
-        let q = bind(sqlx::query(sqlx::AssertSqlSafe(text.to_string())), &ordered)?;
+        let q = bind_hinted(
+            sqlx::query(sqlx::AssertSqlSafe(text.to_string())),
+            &ordered,
+            hints,
+        )?;
         let rows = q.fetch_all(self.0).await.map_err(classify)?;
         rows.iter().map(decode).collect()
     }
 
-    async fn run_execute(&mut self, sql: &Sql, params: &[Value]) -> Result<u64, RelError> {
+    async fn run_execute_hinted(
+        &mut self,
+        sql: &Sql,
+        params: &[Value],
+        hints: &[Option<ArrayElem>],
+    ) -> Result<u64, RelError> {
         let (text, ordered) = prepare(sql, &Dialect::Postgres, params)?;
-        let q = bind(sqlx::query(sqlx::AssertSqlSafe(text.to_string())), &ordered)?;
+        let q = bind_hinted(
+            sqlx::query(sqlx::AssertSqlSafe(text.to_string())),
+            &ordered,
+            hints,
+        )?;
         q.execute(self.0)
             .await
             .map(|r| r.rows_affected())
@@ -37,15 +63,41 @@ impl Runner for OnPool<'_> {
 
 impl Runner for OnConn<'_> {
     async fn run_query(&mut self, sql: &Sql, params: &[Value]) -> Result<Vec<Row>, RelError> {
+        self.run_query_hinted(sql, params, &[]).await
+    }
+
+    async fn run_execute(&mut self, sql: &Sql, params: &[Value]) -> Result<u64, RelError> {
+        self.run_execute_hinted(sql, params, &[]).await
+    }
+
+    async fn run_query_hinted(
+        &mut self,
+        sql: &Sql,
+        params: &[Value],
+        hints: &[Option<ArrayElem>],
+    ) -> Result<Vec<Row>, RelError> {
         let (text, ordered) = prepare(sql, &Dialect::Postgres, params)?;
-        let q = bind(sqlx::query(sqlx::AssertSqlSafe(text.to_string())), &ordered)?;
+        let q = bind_hinted(
+            sqlx::query(sqlx::AssertSqlSafe(text.to_string())),
+            &ordered,
+            hints,
+        )?;
         let rows = q.fetch_all(&mut *self.0).await.map_err(classify)?;
         rows.iter().map(decode).collect()
     }
 
-    async fn run_execute(&mut self, sql: &Sql, params: &[Value]) -> Result<u64, RelError> {
+    async fn run_execute_hinted(
+        &mut self,
+        sql: &Sql,
+        params: &[Value],
+        hints: &[Option<ArrayElem>],
+    ) -> Result<u64, RelError> {
         let (text, ordered) = prepare(sql, &Dialect::Postgres, params)?;
-        let q = bind(sqlx::query(sqlx::AssertSqlSafe(text.to_string())), &ordered)?;
+        let q = bind_hinted(
+            sqlx::query(sqlx::AssertSqlSafe(text.to_string())),
+            &ordered,
+            hints,
+        )?;
         q.execute(&mut *self.0)
             .await
             .map(|r| r.rows_affected())

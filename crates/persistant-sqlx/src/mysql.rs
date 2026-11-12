@@ -513,3 +513,19 @@ impl persistant_relational::Migrates for MysqlBackend {
             .map_err(backend_error)
     }
 }
+
+#[cfg(test)]
+mod array_tests {
+    use super::*;
+
+    #[test]
+    fn an_array_parameter_is_unsupported_on_mysql() {
+        for v in [Value::Array(vec![Value::Int(1)]), Value::Array(vec![])] {
+            let e = bind(sqlx::query("SELECT ?"), std::slice::from_ref(&v))
+                .map(|_| ())
+                .unwrap_err();
+            assert!(matches!(e, RelError::Unsupported(_)), "{e:?}");
+        }
+        assert!(bind(sqlx::query("SELECT ?"), &[Value::Int(1)]).is_ok());
+    }
+}
