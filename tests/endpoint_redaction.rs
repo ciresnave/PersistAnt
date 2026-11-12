@@ -3,6 +3,7 @@
 //! userinfo (`user:password@host`) or a token in its query. A `Debug` print of the endpoint, and of
 //! anything that holds one, must show neither (PM ruling 2026-11-01: a bug, not a design choice).
 #![cfg(feature = "registry")]
+#![allow(deprecated)] // `Endpoint::Url` is deprecated (0.17.0); this test still covers it
 
 use persistant::registry::Endpoint;
 

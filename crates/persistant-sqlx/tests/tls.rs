@@ -41,10 +41,7 @@ fn servers() -> Option<Servers> {
 }
 
 fn opts(tls: TlsPolicy) -> ConnectOptions {
-    ConnectOptions {
-        tls,
-        ..ConnectOptions::default()
-    }
+    ConnectOptions::default().with_tls(tls)
 }
 
 #[tokio::test]
@@ -139,11 +136,10 @@ async fn verify_full_refuses_an_untrusted_certificate_and_accepts_a_trusted_one(
 #[tokio::test]
 async fn an_exhausted_pool_is_an_error_after_the_bound_not_a_hang() {
     let Some(s) = servers() else { return };
-    let o = ConnectOptions {
-        tls: TlsPolicy::Disable,
-        max_connections: 1,
-        acquire_timeout: std::time::Duration::from_millis(300),
-    };
+    let o = ConnectOptions::default()
+        .with_tls(TlsPolicy::Disable)
+        .with_max_connections(1)
+        .with_acquire_timeout(std::time::Duration::from_millis(300));
     let db = PgBackend::connect_with(&ConnectionSecret::literal(s.plain_url), &o)
         .await
         .unwrap();

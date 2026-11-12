@@ -90,6 +90,15 @@ use persistant_sqlx::{SqliteBackend, SqliteTx};
 ///
 /// `Debug` never shows a credential: [`Endpoint::Url`] prints with its userinfo, its query values
 /// and its fragment replaced by `<redacted>`.
+///
+/// [`Endpoint::Url`] is deprecated (0.17.0): a program that builds with `-D warnings` sees it as an
+/// error. Use [`Endpoint::url_env`] or [`Endpoint::Secret`]:
+///
+/// ```compile_fail
+/// #![deny(deprecated)]
+/// use persistant::registry::Endpoint;
+/// let _ = Endpoint::Url("postgres://host/db".into());
+/// ```
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Endpoint {
@@ -100,6 +109,14 @@ pub enum Endpoint {
     /// A connection URL held as plain text. Prefer [`Endpoint::Secret`]: a URL usually carries a
     /// password. `Debug` redacts the userinfo, the query values and the fragment, but the text is
     /// still in memory, in `Clone`s and in anything that reads the field.
+    ///
+    /// **Deprecated (0.17.0).** Replace `Endpoint::Url(url)` with
+    /// `Endpoint::Secret(ConnectionSecret::literal(url))`, or with `Endpoint::url_env("NAME")` to read
+    /// the URL from the environment when the backend is opened. Matching on it keeps working.
+    #[deprecated(
+        since = "0.17.0",
+        note = "use `Endpoint::Secret(ConnectionSecret::literal(url))` or `Endpoint::url_env(name)`: a URL usually carries a password"
+    )]
     Url(String),
     /// A connection URL held as a secret: read from the environment, a file or a literal only when
     /// the backend is opened, and never printed.
@@ -145,6 +162,7 @@ fn redact_url(url: &str) -> String {
     out
 }
 
+#[allow(deprecated)]
 impl fmt::Debug for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -159,6 +177,7 @@ impl fmt::Debug for Endpoint {
     }
 }
 
+#[allow(deprecated)]
 impl Endpoint {
     /// A filesystem endpoint.
     pub fn path(p: impl AsRef<Path>) -> Self {
@@ -1499,6 +1518,7 @@ fn open_blob(id: &str, endpoint: &Endpoint) -> Result<AnyBlob, OpenError> {
 
 /// Open the relational database of provider `id`, plain or through `Bounded`. The tables of the
 /// key-value store were created first (by [`open_kv`]), so a bound never covers setup.
+#[allow(deprecated)]
 async fn open_rel(
     id: &str,
     endpoint: &Endpoint,
@@ -1553,6 +1573,7 @@ async fn open_rel(
 /// through `Bounded`; the tables are created first through an unbounded connection, because the DDL
 /// of a first open can outlast any bound short enough to be useful and what is bounded is the
 /// program's calls, not setup.
+#[allow(deprecated)]
 async fn open_kv(
     id: &str,
     endpoint: &Endpoint,

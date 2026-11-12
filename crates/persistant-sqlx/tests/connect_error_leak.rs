@@ -39,11 +39,10 @@ fn assert_clean(what: &str, e: &RelError) {
 }
 
 fn fast() -> ConnectOptions {
-    ConnectOptions {
-        tls: TlsPolicy::Disable,
-        max_connections: 1,
-        acquire_timeout: Duration::from_secs(5),
-    }
+    ConnectOptions::default()
+        .with_tls(TlsPolicy::Disable)
+        .with_max_connections(1)
+        .with_acquire_timeout(Duration::from_secs(5))
 }
 
 /// Nothing listens on port 1.
