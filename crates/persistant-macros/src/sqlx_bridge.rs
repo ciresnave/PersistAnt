@@ -521,7 +521,10 @@ mod tests {
     fn a_two_digit_placeholder_is_read_whole() {
         let mut t = vec!["Text".to_string(); 9];
         t.push("Date".to_string());
-        assert_eq!(rewrite_params("$10 $1", &t), "CAST(CAST($10 AS text) AS date) $1");
+        assert_eq!(
+            rewrite_params("$10 $1", &t),
+            "CAST(CAST($10 AS text) AS date) $1"
+        );
     }
 
     const SQL: &str = "SELECT id, name FROM t WHERE id = $1";
