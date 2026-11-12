@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.22
+
+- **Advisory locks on an sqlx connection, and a 64-bit key** (Humboldt stage 2). `persistant_sqlx::advisory::{lock, try_lock, lock64, try_lock64}` take a named transaction lock on a `&mut PgConnection` (`&mut *tx` of an `sqlx::Transaction` the program holds), so a module moving to persistant one statement at a time needs no `PgTx`. `persistant_relational::advisory::{lock64, try_lock64}` add the 64-bit key `hashtextextended(name, 0)` (PostgreSQL 11+) beside the existing `hashtext(name)` ones, which are **unchanged**. The two keys are different locks (a 32-bit and a 64-bit holder of one name do not contend): the module notes say when each is right. Additive.
+
 ## 0.16.21
 
 - **CI only:** the portfolio workflow caller is repinned to coderipper 0.43.41 (`4bcf55e4`). No code change.

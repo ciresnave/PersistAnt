@@ -15,6 +15,14 @@
 //!
 //! Two different names can hash to one lock (`hashtext` is 32 bits). That only ever makes work wait
 //! that need not; it never lets two holders of one name in.
+//!
+//! **Which key.** [`lock`] / [`try_lock`] use `hashtext(name)` (32 bits, the original key). [`lock64`] /
+//! [`try_lock64`] use `hashtextextended(name, 0)` (64 bits, PostgreSQL 11+): far fewer false collisions,
+//! and the key a program that already locks `pg_advisory_xact_lock(hashtextextended('name', 0))` shares.
+//! The two keys are different locks: a 32-bit holder and a 64-bit holder of one name do **not**
+//! contend, so move every taker of a name to one variant together (a rolling restart that mixes them
+//! has no mutual exclusion). Pick the variant the other takers (a trigger, another program) already use;
+//! for a new lock with no other taker, prefer the 64-bit one.
 
 use crate::{Dialect, RelError, RelationalTx, Value};
 
@@ -27,35 +35,51 @@ fn require_postgres(dialect: &Dialect) -> Result<(), RelError> {
     }
 }
 
-/// Take the lock `name` for the rest of `tx`, waiting for its current holder to finish. Taking a lock
-/// the same transaction already holds returns at once.
-pub async fn lock<T: RelationalTx>(
-    tx: &mut T,
-    dialect: &Dialect,
-    name: &str,
-) -> Result<(), RelError> {
-    require_postgres(dialect)?;
-    tx.execute(
-        "SELECT pg_advisory_xact_lock(hashtext($1))",
-        &[Value::Text(name.to_string())],
-    )
-    .await
-    .map(|_| ())
+/// Which hash turns the name into the advisory key.
+#[derive(Clone, Copy)]
+enum Key {
+    /// `hashtext(name)`, 32 bits.
+    Hash32,
+    /// `hashtextextended(name, 0)`, 64 bits.
+    Hash64,
 }
 
-/// Take the lock `name` for the rest of `tx` if nobody else holds it. `Ok(false)`: another transaction
-/// holds it, and nothing was taken.
-pub async fn try_lock<T: RelationalTx>(
+impl Key {
+    fn lock_sql(self) -> &'static str {
+        match self {
+            Key::Hash32 => "SELECT pg_advisory_xact_lock(hashtext($1))",
+            Key::Hash64 => "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        }
+    }
+    fn try_sql(self) -> &'static str {
+        match self {
+            Key::Hash32 => "SELECT pg_try_advisory_xact_lock(hashtext($1))",
+            Key::Hash64 => "SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))",
+        }
+    }
+}
+
+async fn lock_with<T: RelationalTx>(
     tx: &mut T,
     dialect: &Dialect,
     name: &str,
+    key: Key,
+) -> Result<(), RelError> {
+    require_postgres(dialect)?;
+    tx.execute(key.lock_sql(), &[Value::Text(name.to_string())])
+        .await
+        .map(|_| ())
+}
+
+async fn try_lock_with<T: RelationalTx>(
+    tx: &mut T,
+    dialect: &Dialect,
+    name: &str,
+    key: Key,
 ) -> Result<bool, RelError> {
     require_postgres(dialect)?;
     let rows = tx
-        .query(
-            "SELECT pg_try_advisory_xact_lock(hashtext($1))",
-            &[Value::Text(name.to_string())],
-        )
+        .query(key.try_sql(), &[Value::Text(name.to_string())])
         .await?;
     match rows.first().and_then(|r| r.values.first()) {
         Some(Value::Bool(got)) => Ok(*got),
@@ -63,4 +87,43 @@ pub async fn try_lock<T: RelationalTx>(
             "pg_try_advisory_xact_lock returned {other:?}, not a boolean"
         ))),
     }
+}
+
+/// Take the lock `name` for the rest of `tx`, waiting for its current holder to finish. Taking a lock
+/// the same transaction already holds returns at once. Key: `hashtext(name)` (32 bits).
+pub async fn lock<T: RelationalTx>(
+    tx: &mut T,
+    dialect: &Dialect,
+    name: &str,
+) -> Result<(), RelError> {
+    lock_with(tx, dialect, name, Key::Hash32).await
+}
+
+/// Take the lock `name` for the rest of `tx` if nobody else holds it. `Ok(false)`: another transaction
+/// holds it, and nothing was taken. Key: `hashtext(name)` (32 bits).
+pub async fn try_lock<T: RelationalTx>(
+    tx: &mut T,
+    dialect: &Dialect,
+    name: &str,
+) -> Result<bool, RelError> {
+    try_lock_with(tx, dialect, name, Key::Hash32).await
+}
+
+/// As [`lock`], with the 64-bit key `hashtextextended(name, 0)` (PostgreSQL 11+). A different lock from
+/// [`lock`]'s for the same name: see the module notes on which to use.
+pub async fn lock64<T: RelationalTx>(
+    tx: &mut T,
+    dialect: &Dialect,
+    name: &str,
+) -> Result<(), RelError> {
+    lock_with(tx, dialect, name, Key::Hash64).await
+}
+
+/// As [`try_lock`], with the 64-bit key `hashtextextended(name, 0)` (PostgreSQL 11+).
+pub async fn try_lock64<T: RelationalTx>(
+    tx: &mut T,
+    dialect: &Dialect,
+    name: &str,
+) -> Result<bool, RelError> {
+    try_lock_with(tx, dialect, name, Key::Hash64).await
 }
