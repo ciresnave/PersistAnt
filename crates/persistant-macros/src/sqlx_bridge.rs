@@ -196,7 +196,7 @@ fn cast_of(sqlx_type: &str) -> Option<&'static str> {
     })
 }
 
-/// `sql` with `$n` replaced by `CAST($n AS type)` where parameter `n` needs it (sections 4 of the
+/// `sql` with `$n` replaced by `CAST(CAST($n AS text) AS type)` where parameter `n` needs it (the inner cast pins the parameter's own type to text, so an untyped NULL bound first cannot make the server infer `type` for a statement cached for later text values) (sections 4 of the
 /// design). String literals, quoted identifiers and comments are left alone.
 pub(crate) fn rewrite_params(sql: &str, types: &[String]) -> String {
     let b = sql.as_bytes();
@@ -242,7 +242,7 @@ pub(crate) fn rewrite_params(sql: &str, types: &[String]) -> String {
                     .and_then(|t| cast_of(t))
                 {
                     out.push_str(&sql[start..i]);
-                    out.push_str(&format!("CAST({} AS {t})", &sql[i..j]));
+                    out.push_str(&format!("CAST(CAST({} AS text) AS {t})", &sql[i..j]));
                     start = j;
                 }
                 i = j;
@@ -495,11 +495,11 @@ mod tests {
         let t = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
             rewrite_params("SELECT 1 WHERE id = $1 AND n = $2", &t(&["Uuid", "Int8"])),
-            "SELECT 1 WHERE id = CAST($1 AS uuid) AND n = $2"
+            "SELECT 1 WHERE id = CAST(CAST($1 AS text) AS uuid) AND n = $2"
         );
         assert_eq!(
             rewrite_params("WHERE a = $1 OR a = $1", &t(&["Timestamptz"])),
-            "WHERE a = CAST($1 AS timestamptz) OR a = CAST($1 AS timestamptz)"
+            "WHERE a = CAST(CAST($1 AS text) AS timestamptz) OR a = CAST(CAST($1 AS text) AS timestamptz)"
         );
     }
 
@@ -509,11 +509,11 @@ mod tests {
         let sql = "SELECT '$1', \"$1\" -- $1\n, /* $1 */ $1";
         assert_eq!(
             rewrite_params(sql, &t),
-            "SELECT '$1', \"$1\" -- $1\n, /* $1 */ CAST($1 AS uuid)"
+            "SELECT '$1', \"$1\" -- $1\n, /* $1 */ CAST(CAST($1 AS text) AS uuid)"
         );
         assert_eq!(
             rewrite_params("SELECT 'it''s $1' = $1", &t),
-            "SELECT 'it''s $1' = CAST($1 AS uuid)"
+            "SELECT 'it''s $1' = CAST(CAST($1 AS text) AS uuid)"
         );
     }
 
@@ -521,7 +521,7 @@ mod tests {
     fn a_two_digit_placeholder_is_read_whole() {
         let mut t = vec!["Text".to_string(); 9];
         t.push("Date".to_string());
-        assert_eq!(rewrite_params("$10 $1", &t), "CAST($10 AS date) $1");
+        assert_eq!(rewrite_params("$10 $1", &t), "CAST(CAST($10 AS text) AS date) $1");
     }
 
     const SQL: &str = "SELECT id, name FROM t WHERE id = $1";
