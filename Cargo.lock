@@ -1118,7 +1118,9 @@ dependencies = [
 name = "persistant-sqlx"
 version = "0.17.9"
 dependencies = [
+ "bytes",
  "chrono",
+ "futures-core",
  "persistant-core",
  "persistant-kv",
  "persistant-macros",
