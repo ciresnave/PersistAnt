@@ -1,0 +1,3 @@
+kind: fix: PostgreSQL statements whose placeholders appear out of order bound the wrong values
+---
+`prepare` reordered the values by the order the placeholders appear in the text, but PostgreSQL text keeps its own `$n`, so `UPDATE t SET a = $2, b = $3 WHERE id = $1` bound the id to `$2` (Humboldt saw `email_verified is boolean but expression is text`, or `bigint = text`). On PostgreSQL the values now go as written; only positional dialects (MySQL) take `param_order`. Verified by a unit test that fails without the change and a bridge test against PostgreSQL 16 that updates the row and reads it back.

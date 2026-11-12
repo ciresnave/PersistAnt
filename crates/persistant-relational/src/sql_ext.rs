@@ -55,11 +55,20 @@ pub fn prepare(
             n + 1
         )));
     }
-    let ordered = rendered
-        .param_order
-        .iter()
-        .map(|n| params[(*n - 1) as usize].clone())
-        .collect();
+    let ordered = if matches!(dialect, Dialect::Postgres) {
+        // PostgreSQL's text keeps the statement's own `$n`, so the values go as written: reordering
+        // them by the order the placeholders appear would bind `$1` to whatever appears first
+        // (`UPDATE t SET a = $2 WHERE id = $1` bound the id to `$2`). Only a positional dialect
+        // (MySQL's `?`) takes `param_order`.
+        let used = rendered.param_order.iter().copied().max().unwrap_or(0) as usize;
+        params[..used].to_vec()
+    } else {
+        rendered
+            .param_order
+            .iter()
+            .map(|n| params[(*n - 1) as usize].clone())
+            .collect()
+    };
     Ok((rendered.sql, ordered))
 }
 
@@ -279,6 +288,31 @@ mod tests {
             std::task::Poll::Ready(v) => v,
             std::task::Poll::Pending => panic!("the fake backend waited"),
         }
+    }
+
+    /// `UPDATE .. SET a = $2 WHERE id = $1`: PostgreSQL keeps the numbers, so the values bind as written
+    /// even though the placeholders appear in the order 2, 1 (UniSQL reports `param_order: [2, 1]`).
+    const OUT_OF_ORDER: Sql = Query {
+        params: 2,
+        constructs: &[],
+        rendered: &[Rendered {
+            target: Target::Postgres,
+            sql: "UPDATE t SET a = $2 WHERE id = $1",
+            param_order: &[2, 1],
+            param_bindings: &[Binding::Scalar, Binding::Scalar],
+        }],
+    };
+
+    #[test]
+    fn postgres_binds_values_as_written_when_placeholders_appear_out_of_order() {
+        let id = Value::Int(1);
+        let a = Value::Text("x".into());
+        let db = fake(Dialect::Postgres);
+        block(db.execute_sql(&OUT_OF_ORDER, &[id.clone(), a.clone()])).unwrap();
+        assert_eq!(
+            db.seen.0.lock().unwrap()[0],
+            ("UPDATE t SET a = $2 WHERE id = $1".to_string(), vec![id, a])
+        );
     }
 
     #[test]
