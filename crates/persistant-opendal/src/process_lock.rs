@@ -2,7 +2,8 @@
 //! `lock.process`: a lock held until the holding process dies, with no staleness.
 //!
 //! An operating-system advisory lock on a file (`std::fs::File::try_lock`: `flock` on Unix,
-//! `LockFileEx` on Windows). The operating system releases it when the process ends, however it
+//! `LockFileEx` on Windows). Dropping it unlocks explicitly (a forked child can hold a copy of the file
+//! description until it `exec`s, which keeps a `flock` held after a plain close). The operating system releases it when the process ends, however it
 //! ends, which is what a marker file cannot do. It is **local only**: it says nothing across a
 //! network filesystem, and it is advisory (a process that does not ask is not stopped).
 //!
@@ -36,6 +37,18 @@ impl ProcessLock {
             Err(TryLockError::WouldBlock) => Ok(None),
             Err(TryLockError::Error(e)) => Err(e),
         }
+    }
+}
+
+impl Drop for ProcessLock {
+    /// Release the lock now, explicitly. Closing the descriptor is not enough: a `flock` belongs to the
+    /// open file *description*, and a child forked while the lock was held keeps a copy of that
+    /// description until it `exec`s, so a close alone left the lock held for that moment (issue #220;
+    /// close-on-exec does not help before the `exec`). `unlock` acts on the description, whoever else
+    /// still holds a descriptor to it. An error is ignored: the descriptor closes right after, and the
+    /// operating system releases the lock when the process ends in any case.
+    fn drop(&mut self) {
+        let _ = self._file.unlock();
     }
 }
 
@@ -163,4 +176,52 @@ pub fn certify(work: &Path, env: &persistant_core::Config) -> io::Result<persist
             },
         },
     )
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// Issue #220. A `flock` belongs to the open file *description*, so a child forked while the lock is
+    /// held keeps it held, after the owner drops, until the child `exec`s. A duplicated descriptor
+    /// stands in for that child's copy: dropping the lock must release it all the same.
+    #[test]
+    fn drop_releases_while_another_descriptor_of_the_same_lock_is_alive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("the.lock");
+        let first = ProcessLock::try_acquire(&path)
+            .unwrap()
+            .expect("free lock is granted");
+        let copy = first._file.try_clone().unwrap();
+        drop(first);
+        assert!(
+            ProcessLock::try_acquire(&path).unwrap().is_some(),
+            "a dropped lock was still held by another descriptor of the same open file"
+        );
+        drop(copy);
+    }
+
+    /// std opens with close-on-exec, so an `exec`ed child never keeps the lock file: the part of the
+    /// inheritance story `O_CLOEXEC` does cover (the part before `exec` is the test above).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_lock_descriptor_is_close_on_exec() {
+        use std::os::fd::AsRawFd;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("the.lock");
+        let lock = ProcessLock::try_acquire(&path)
+            .unwrap()
+            .expect("free lock is granted");
+        let info = std::fs::read_to_string(format!("/proc/self/fdinfo/{}", lock._file.as_raw_fd()))
+            .unwrap();
+        let flags = info
+            .lines()
+            .find_map(|l| l.strip_prefix("flags:"))
+            .map(|v| u32::from_str_radix(v.trim(), 8).unwrap())
+            .expect("fdinfo has a flags line");
+        assert!(
+            flags & 0o2_000_000 != 0,
+            "O_CLOEXEC is not set: flags {flags:o}"
+        );
+    }
 }
