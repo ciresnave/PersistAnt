@@ -2,7 +2,11 @@
 
 ## 0.16.23 — **Tooling**
 
-- **CHANGELOG fragments and a stamp tool** (CireSnave 2026-11-12: every PR stops editing version lines). A PR now adds one `changelog.d/<topic>.md` and never edits `CHANGELOG.md`, a `Cargo.toml` version or `Cargo.lock`; the PM allocates the number and runs `python tools/stamp-version.py <version>` at merge. `tools/check-fragment.py` and the `Changelog fragment` workflow enforce one fragment per PR (or a manual bump). The kit's stamp tool was patched for this repo: it also stamps `Cargo.lock` entries of crates that inherit `version.workspace`, and `[workspace.dependencies]` lines that write `version` before `path`. The `VERSION` unit test in `src/lib.rs` no longer hard-codes the number. No library change.
+- **CHANGELOG fragments and a stamp tool** (CireSnave 2026-11-12: every PR stops editing version lines). A PR now adds one `changelog.d/<topic>.md` and never edits `CHANGELOG.md`, a `Cargo.toml` version or `Cargo.lock`; the PM allocates the number and runs `python tools/stamp-version.py <version>` at merge. `tools/check-fragment.py` and the `Changelog fragment` workflow enforce one fragment per PR (or a manual bump). The `VERSION` unit test in `src/lib.rs` no longer hard-codes the number. No library change.
+
+## 0.16.22
+
+- **Advisory locks on an sqlx connection, and a 64-bit key** (Humboldt stage 2). `persistant_sqlx::advisory::{lock, try_lock, lock64, try_lock64}` take a named transaction lock on a `&mut PgConnection` (`&mut *tx` of an `sqlx::Transaction` the program holds), so a module moving to persistant one statement at a time needs no `PgTx`. `persistant_relational::advisory::{lock64, try_lock64}` add the 64-bit key `hashtextextended(name, 0)` (PostgreSQL 11+) beside the existing `hashtext(name)` ones, which are **unchanged**. The two keys are different locks (a 32-bit and a 64-bit holder of one name do not contend): the module notes say when each is right. Additive.
 
 ## 0.16.21
 
