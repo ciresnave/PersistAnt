@@ -52,3 +52,54 @@ impl Runner for OnConn<'_> {
             .map_err(classify)
     }
 }
+
+/// Runtime SQL on a held sqlx pool or connection: a statement text built or written at run time, with its
+/// arguments as [`Value`]s, no build-time check and no `.sqlx` data.
+///
+/// The text is PostgreSQL's and goes **as written** (no UniSQL translation, no cast is added): the
+/// arguments bind by `$n` and the rows decode as [`PgBackend`](crate::PgBackend) decodes them, read with
+/// [`Row::get`]. Because nothing describes the statement's parameter types, a `uuid`, `timestamptz`, `date`
+/// or `jsonb` argument (a `Value::Text`) needs a cast in the text, and the cast must go through `text`:
+/// write `CAST(CAST($1 AS text) AS uuid)` (or `$1::text::uuid`), not `$1::uuid`. A bare `$1::uuid` lets the
+/// server infer the parameter as `uuid` when a `NULL` is bound first, and the connection's cached
+/// statement then rejects a later text value ("incorrect binary data format").
+macro_rules! runtime_sql {
+    ($ty:ident, $s:ident, $conn:expr) => {
+        impl $ty<'_> {
+            /// Every row of `sql`.
+            pub async fn query(&mut $s, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
+                let q = bind(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)?;
+                let rows = q.fetch_all($conn).await.map_err(classify)?;
+                rows.iter().map(decode).collect()
+            }
+
+            /// The first row, or an error if there is none (sqlx's `RowNotFound`).
+            pub async fn query_one(&mut $s, sql: &str, params: &[Value]) -> Result<Row, RelError> {
+                $s.query_optional(sql, params).await?.ok_or_else(|| {
+                    RelError::Backend("no rows returned by a query expected to return one".into())
+                })
+            }
+
+            /// The first row, or `None`.
+            pub async fn query_optional(
+                &mut $s,
+                sql: &str,
+                params: &[Value],
+            ) -> Result<Option<Row>, RelError> {
+                Ok($s.query(sql, params).await?.into_iter().next())
+            }
+
+            /// Run a statement that returns no rows; the number of rows affected.
+            pub async fn execute(&mut $s, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+                let q = bind(sqlx::query(sqlx::AssertSqlSafe(sql.to_string())), params)?;
+                q.execute($conn)
+                    .await
+                    .map(|r| r.rows_affected())
+                    .map_err(classify)
+            }
+        }
+    };
+}
+
+runtime_sql!(OnPool, self, self.0);
+runtime_sql!(OnConn, self, &mut *self.0);
