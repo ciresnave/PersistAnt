@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.13 — feat: runtime SQL on a held sqlx connection or pool (`OnConn`/`OnPool::query`, `execute`) and a typed `Row::get`
+
+`OnPool` and `OnConn` get `query`, `query_one`, `query_optional` and `execute`, each taking a statement text built or written at run time and `&[Value]` arguments: no build-time check and no `.sqlx` data, for the call sites that today use `sqlx::query(..).bind(..)` (ROADMAP row 35, Humboldt's about 250). The PostgreSQL text goes as written (no UniSQL translation, no cast added); arguments bind as the bridge binds them and rows decode as `PgBackend` decodes them. `Row::get::<T: FromValue>(i)` and `Row::get_opt::<T>(i)` read a column by index, the error naming the 1-based column. A `uuid`/`timestamptz`/`date`/`jsonb` argument needs a cast written through text (`CAST(CAST($1 AS text) AS uuid)`); a bare `$1::uuid` fails once a NULL has been bound first on the connection (the null-then-some bug of 0.17.7), which a test pins. Verified against PostgreSQL 16 by `tests/bridge_runtime_sql.rs` (execute, query, query_one on no rows, query_optional, NULL reads, a missing column, NULL then a value through the text cast, and a pool). Additive.
+
+— lane: persistant
+
 ## 0.17.12 — docs: ROADMAP rows 34 to 36, the server's message and SQLSTATE kept on RelError
 
 Adds rows 35 (runtime-SQL path on OnPool/OnConn plus `Row::get`) and 36 (TestDb without the per-test drop cost), and records the shape ruled for Humboldt's request (`ServerError` carried by the database-error variants and a new `Database` variant, `RelError::server_error()`, Breaking in 0.18.0) and its test plan. No code changes.
