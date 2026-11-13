@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.17.12 — docs: ROADMAP rows 34 to 36, the server's message and SQLSTATE kept on RelError
+
+Adds rows 35 (runtime-SQL path on OnPool/OnConn plus `Row::get`) and 36 (TestDb without the per-test drop cost), and records the shape ruled for Humboldt's request (`ServerError` carried by the database-error variants, `RelError::server_error()`, Breaking in 0.18.0) and its test plan. No code changes.
+
+— lane: persistant
+
+## 0.17.10 — persistant_sqlx::native: COPY out and in on a PgSession transaction (phase 3)
+
+Adds `PgTx::copy_out` (a `Stream` of `Bytes`) and `copy_in` (a sink with `send`, `finish`, `abort`) with the closed `CopyFormat` (Text, Csv, Binary, PostgreSQL defaults), `Ident` table and column lists, and a static-template `SELECT` source (docs/DESIGN-PG-NATIVE-SESSION.md, phase 3). Only on a `PgSession` transaction: a COPY abandoned half way leaves its connection mid-protocol, which a pooled connection would hand to the next caller, so a pooled transaction returns `Unsupported`. `CopyOutStream::drain` discards an unread rest. Verified on PostgreSQL 16: each format's bytes and NULL form, chunks that split rows, row counts, a dropped or aborted sink leaving nothing behind, a drained and an abandoned stream, hostile identifiers, and a 1000-row binary transfer between two sessions arriving identical. Adds `bytes` and `futures-core` as dependencies. Additive.
+
 ## 0.17.9 — persistant_sqlx::native: PgSession, one dedicated connection with allow-listed session settings (phase 2)
 
 Adds `native::PgSession` (docs/DESIGN-PG-NATIVE-SESSION.md, phase 2): one non-pooled PostgreSQL connection that keeps its session state, `SessionSettings` (a closed allow-list: `DateStyle` `ISO, MDY`, `TimeZone`, `extra_float_digits`, `IntervalStyle`, and statement/lock/idle-in-transaction timeouts that are off unless asked), `PgSession::begin(TxOptions)` returning the ordinary `PgTx`, and `show` for a `[a-z_.]` name. It never reconnects: a killed connection fails and keeps failing. `DateStyle` and `TimeZone` are set after connect with a parameterised `set_config` because sqlx fixes them in its startup packet; no SQL text is built from a value. Verified on PostgreSQL 16: settings arrive and the plain session has none (controls), state survives transactions, a terminated backend is an error and stays one, a connect failure does not carry the secret. Additive.
