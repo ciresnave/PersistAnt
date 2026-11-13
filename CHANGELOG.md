@@ -2,7 +2,7 @@
 
 ## 0.17.12 — docs: ROADMAP rows 34 to 36, the server's message and SQLSTATE kept on RelError
 
-Adds rows 35 (runtime-SQL path on OnPool/OnConn plus `Row::get`) and 36 (TestDb without the per-test drop cost), and records the shape ruled for Humboldt's request (`ServerError` carried by the database-error variants, `RelError::server_error()`, Breaking in 0.18.0) and its test plan. No code changes.
+Adds rows 35 (runtime-SQL path on OnPool/OnConn plus `Row::get`) and 36 (TestDb without the per-test drop cost), and records the shape ruled for Humboldt's request (`ServerError` carried by the database-error variants and a new `Database` variant, `RelError::server_error()`, Breaking in 0.18.0) and its test plan. No code changes.
 
 — lane: persistant
 
