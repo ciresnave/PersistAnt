@@ -94,6 +94,10 @@ name = "sqlx_bridge_null_then_some"
 required-features = ["bridge"]
 
 [[test]]
+name = "bridge_gaps"
+required-features = ["bridge"]
+
+[[test]]
 name = "tls_mysql"
 required-features = ["mysql"]
 
