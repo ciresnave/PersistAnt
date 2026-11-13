@@ -55,11 +55,20 @@ pub fn prepare(
             n + 1
         )));
     }
-    let ordered = rendered
-        .param_order
-        .iter()
-        .map(|n| params[(*n - 1) as usize].clone())
-        .collect();
+    let ordered = if matches!(dialect, Dialect::Postgres | Dialect::Sqlite) {
+        // PostgreSQL's text keeps the statement's own `$n` and SQLite's is numbered (`?2`), so the values
+        // go as written: reordering them by the order the placeholders appear would bind `$1` to
+        // whatever appears first (`UPDATE t SET a = $2 WHERE id = $1` bound the id to `$2`; `SELECT ?2,
+        // ?1` likewise). Only a positional dialect (MySQL's `?`) takes `param_order`.
+        let used = rendered.param_order.iter().copied().max().unwrap_or(0) as usize;
+        params[..used].to_vec()
+    } else {
+        rendered
+            .param_order
+            .iter()
+            .map(|n| params[(*n - 1) as usize].clone())
+            .collect()
+    };
     Ok((rendered.sql, ordered))
 }
 
@@ -281,6 +290,31 @@ mod tests {
         }
     }
 
+    /// `UPDATE .. SET a = $2 WHERE id = $1`: PostgreSQL keeps the numbers, so the values bind as written
+    /// even though the placeholders appear in the order 2, 1 (UniSQL reports `param_order: [2, 1]`).
+    const OUT_OF_ORDER: Sql = Query {
+        params: 2,
+        constructs: &[],
+        rendered: &[Rendered {
+            target: Target::Postgres,
+            sql: "UPDATE t SET a = $2 WHERE id = $1",
+            param_order: &[2, 1],
+            param_bindings: &[Binding::Scalar, Binding::Scalar],
+        }],
+    };
+
+    #[test]
+    fn postgres_binds_values_as_written_when_placeholders_appear_out_of_order() {
+        let id = Value::Int(1);
+        let a = Value::Text("x".into());
+        let db = fake(Dialect::Postgres);
+        block(db.execute_sql(&OUT_OF_ORDER, &[id.clone(), a.clone()])).unwrap();
+        assert_eq!(
+            db.seen.0.lock().unwrap()[0],
+            ("UPDATE t SET a = $2 WHERE id = $1".to_string(), vec![id, a])
+        );
+    }
+
     #[test]
     fn the_backends_own_text_and_parameter_order_are_used() {
         let a = Value::Int(10);
@@ -289,15 +323,15 @@ mod tests {
         block(db.execute_sql(&Q, &[a.clone(), b.clone()])).unwrap();
         let db2 = fake(Dialect::MySql);
         block(db2.query_sql(&Q, &[a.clone(), b.clone()])).unwrap();
-        // $2, $1, $1 for both
-        let want = vec![b.clone(), a.clone(), a.clone()];
+        // SQLite's `?2, ?1, ?1` is numbered: the values go as written, `?n` takes the n-th. MySQL's
+        // bare `?` takes them in the order the placeholders appear: $2, $1, $1.
         assert_eq!(
             db.seen.0.lock().unwrap()[0],
-            ("SELECT ?2, ?1, ?1".to_string(), want.clone())
+            ("SELECT ?2, ?1, ?1".to_string(), vec![a.clone(), b.clone()])
         );
         assert_eq!(
             db2.seen.0.lock().unwrap()[0],
-            ("SELECT ?, ?, ?".to_string(), want)
+            ("SELECT ?, ?, ?".to_string(), vec![b, a.clone(), a])
         );
     }
 

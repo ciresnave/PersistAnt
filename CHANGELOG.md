@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.17.7 — fix: a Uuid/timestamp/date/json parameter bound NULL first no longer breaks a later value on the same connection
+
+`persistant::sqlx_query!` rewrites a parameter sqlx described as `Uuid`, `Timestamptz`, `Timestamp`, `Date`, `Time`, `Json` or `Jsonb` to `CAST($n AS type)`, and binds values as text. The server infers an untyped parameter's type from that cast, so a connection that ran the statement with NULL first cached it with the parameter typed `uuid`, and the next run binding `Some(value)` failed with "incorrect binary data format in bind parameter N" (the statement cache is per connection and keyed by text; a pool hits it whenever it hands back that connection). The cast is now `CAST(CAST($n AS text) AS type)`, which pins the parameter itself to text. Reproduced before the fix and passing after, on `OnConn`, by `tests/sqlx_bridge_null_then_some.rs` (NULL then value, with an always-a-value control). Only a statement run with NULL for such a parameter before a non-NULL one could fail; value-first or NULL-only sequences never did.
+
+— lane: persistant
+
+## 0.17.6 — fix: PostgreSQL and SQLite statements whose placeholders appear out of order bound the wrong values
+
+`prepare` reordered the values by the order the placeholders appear in the text, but PostgreSQL text keeps its own `$n`, so `UPDATE t SET a = $2, b = $3 WHERE id = $1` bound the id to `$2` (Humboldt saw `email_verified is boolean but expression is text`, or `bigint = text`). On PostgreSQL the values now go as written, and so do SQLite's, whose text is numbered (`SELECT ?2, ?1` took its values by appearance); only positional dialects (MySQL) take `param_order`. Verified by unit tests (PostgreSQL and SQLite) that fail without the change and a bridge test against PostgreSQL 16 that updates the row and reads it back.
+
 ## 0.17.4 — persistant_sqlx::native: read-only transactions and identifier-safe statements (phase 1)
 
 Adds the Postgres-only `persistant_sqlx::native` module (docs/DESIGN-PG-NATIVE-SESSION.md, phase 1): `TxOptions` (isolation, `READ ONLY`, `DEFERRABLE`, snapshot fixed at begin) with `PgBackend::begin_with`; `Ident` (validated, quoted) and `PgTx::query_ident` / `execute_ident`, whose template is a `&'static str` with `{n}` holes taking one identifier or a comma-joined list. Verified against PostgreSQL 16: a write in a READ ONLY transaction is refused, the snapshot ignores later commits (and, with `snapshot_now(false)`, does not), commit and rollback work after an error and after a long gap, hostile names are quoted in holes and lists, and the `setval($1::regclass,$2,$3)` and `pg_stat_activity` statements run. Additive; nothing existing changes.

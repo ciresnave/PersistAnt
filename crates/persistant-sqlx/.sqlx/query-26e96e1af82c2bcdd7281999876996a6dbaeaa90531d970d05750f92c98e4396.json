@@ -1,0 +1,1 @@
+{"db_name":"PostgreSQL","query":"UPDATE gap_oauth SET tenant=$2, email=$3, email_verified=$4 WHERE id=$1","describe":{"columns":[],"parameters":{"Left":["Int8","Text","Text","Bool"]},"nullable":[]},"hash":"26e96e1af82c2bcdd7281999876996a6dbaeaa90531d970d05750f92c98e4396"}

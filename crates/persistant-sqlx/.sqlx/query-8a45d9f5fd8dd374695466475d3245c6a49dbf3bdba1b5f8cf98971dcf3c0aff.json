@@ -1,0 +1,1 @@
+{"db_name":"PostgreSQL","query":"INSERT INTO persistant_nullbind (a, at) VALUES ($1, $2)","describe":{"columns":[],"parameters":{"Left":["Uuid","Timestamptz"]},"nullable":[]},"hash":"8a45d9f5fd8dd374695466475d3245c6a49dbf3bdba1b5f8cf98971dcf3c0aff"}
