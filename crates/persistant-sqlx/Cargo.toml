@@ -93,6 +93,10 @@ name = "sqlx_bridge"
 required-features = ["bridge"]
 
 [[test]]
+name = "bridge_runtime_sql"
+required-features = ["bridge"]
+
+[[test]]
 name = "sqlx_bridge_null_then_some"
 required-features = ["bridge"]
 
