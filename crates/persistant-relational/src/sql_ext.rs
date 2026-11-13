@@ -55,11 +55,11 @@ pub fn prepare(
             n + 1
         )));
     }
-    let ordered = if matches!(dialect, Dialect::Postgres) {
-        // PostgreSQL's text keeps the statement's own `$n`, so the values go as written: reordering
-        // them by the order the placeholders appear would bind `$1` to whatever appears first
-        // (`UPDATE t SET a = $2 WHERE id = $1` bound the id to `$2`). Only a positional dialect
-        // (MySQL's `?`) takes `param_order`.
+    let ordered = if matches!(dialect, Dialect::Postgres | Dialect::Sqlite) {
+        // PostgreSQL's text keeps the statement's own `$n` and SQLite's is numbered (`?2`), so the values
+        // go as written: reordering them by the order the placeholders appear would bind `$1` to
+        // whatever appears first (`UPDATE t SET a = $2 WHERE id = $1` bound the id to `$2`; `SELECT ?2,
+        // ?1` likewise). Only a positional dialect (MySQL's `?`) takes `param_order`.
         let used = rendered.param_order.iter().copied().max().unwrap_or(0) as usize;
         params[..used].to_vec()
     } else {
@@ -323,15 +323,15 @@ mod tests {
         block(db.execute_sql(&Q, &[a.clone(), b.clone()])).unwrap();
         let db2 = fake(Dialect::MySql);
         block(db2.query_sql(&Q, &[a.clone(), b.clone()])).unwrap();
-        // $2, $1, $1 for both
-        let want = vec![b.clone(), a.clone(), a.clone()];
+        // SQLite's `?2, ?1, ?1` is numbered: the values go as written, `?n` takes the n-th. MySQL's
+        // bare `?` takes them in the order the placeholders appear: $2, $1, $1.
         assert_eq!(
             db.seen.0.lock().unwrap()[0],
-            ("SELECT ?2, ?1, ?1".to_string(), want.clone())
+            ("SELECT ?2, ?1, ?1".to_string(), vec![a.clone(), b.clone()])
         );
         assert_eq!(
             db2.seen.0.lock().unwrap()[0],
-            ("SELECT ?, ?, ?".to_string(), want)
+            ("SELECT ?, ?, ?".to_string(), vec![b, a.clone(), a])
         );
     }
 
