@@ -92,7 +92,7 @@ Today `Value` has six variants and the PostgreSQL driver binds `Value::Text` as 
 bound as text fails ("operator does not exist: uuid = text"). Two options:
 
 * **(recommended) Cast in the statement the macro emits, from the described parameter types.** `.sqlx` says `$1` is
-  `Uuid`, so the macro rewrites that placeholder to `CAST($1 AS uuid)` (`timestamptz`, `date`, `numeric`, `jsonb`
+  `Uuid`, so the macro rewrites that placeholder to `CAST(CAST($1 AS text) AS uuid)` (`timestamptz`, `date`, `numeric`, `jsonb`
   likewise) in the text handed to UniSQL. The sqlx check still sees the original literal. `Value` stays closed, and the
   same statement works on targets whose driver also binds text. Arguments convert with a `ToValue` trait (`Uuid` ->
   canonical text, `DateTime<Utc>` -> RFC 3339, `Option<T>` -> `Null`), the mirror of `FromValue`.
