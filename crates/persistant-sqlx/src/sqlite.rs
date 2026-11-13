@@ -25,11 +25,11 @@ fn classify(e: sqlx::Error) -> RelError {
             let constraint = db.constraint().map(str::to_string);
             match db.code().as_deref() {
                 // SQLITE_CONSTRAINT_UNIQUE, SQLITE_CONSTRAINT_PRIMARYKEY
-                Some("2067") | Some("1555") => RelError::UniqueViolation { constraint },
+                Some("2067") | Some("1555") => RelError::unique_violation(constraint, None),
                 // SQLITE_CONSTRAINT_FOREIGNKEY
-                Some("787") => RelError::ForeignKeyViolation { constraint },
+                Some("787") => RelError::foreign_key_violation(constraint, None),
                 // SQLITE_CONSTRAINT_CHECK, SQLITE_CONSTRAINT_NOTNULL
-                Some("275") | Some("1299") => RelError::CheckViolation { constraint },
+                Some("275") | Some("1299") => RelError::check_violation(constraint, None),
                 // SQLITE_BUSY, SQLITE_LOCKED: the lock was not obtained inside the timeout
                 Some("5") | Some("6") | Some("261") | Some("517") => RelError::Serialization,
                 _ => RelError::Backend(e.to_string()),

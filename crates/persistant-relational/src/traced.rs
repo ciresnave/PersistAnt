@@ -41,6 +41,7 @@ async fn span<T>(
             Err(RelError::Unavailable(_)) => "unavailable",
             Err(RelError::Unsupported(_)) => "unsupported",
             Err(RelError::Timeout { .. }) => "timeout",
+            Err(RelError::Database { .. }) => "database",
             Err(RelError::Backend(_)) => "backend",
         },
     );
@@ -265,9 +266,10 @@ mod tests {
             Ok(vec![])
         }
         async fn commit(self) -> Result<(), RelError> {
-            Err(RelError::UniqueViolation {
-                constraint: Some("secret_constraint".to_string()),
-            })
+            Err(RelError::unique_violation(
+                Some("secret_constraint".to_string()),
+                None,
+            ))
         }
         async fn rollback(self) -> Result<(), RelError> {
             Ok(())
