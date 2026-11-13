@@ -108,3 +108,21 @@ snapshot for hours.
 - `date_style_iso()` pins the exact string `ISO, MDY`. `CopyFormat::Text` keeps the current column list and NULL semantics.
 - Dropping a COPY stream early is fine; no default timeout of any kind is added (a long snapshot is the point).
 - `commit()` and `rollback()` work after a long gap and after an error inside the transaction (tested in phase 1).
+
+## 8. As built, phase 3 (COPY)
+
+`PgTx::copy_out(&CopyOut) -> CopyOutStream` (a `Stream<Item = Result<Bytes, RelError>>`) and `PgTx::copy_in(&CopyIn) ->
+CopyInSink` (`send`, `finish() -> rows`, `abort`), with a closed `CopyFormat { Text, Csv, Binary }` using PostgreSQL's own
+defaults for each (Text: tab, NULL as `\N`; Csv: comma, NULL as an empty field) and `Ident` table and column lists (the
+columns in the order given). A source can also be `CopyOut::query(&'static str template, idents)` for a `SELECT`, `WITH`
+or `VALUES`.
+
+**Rule: COPY only on a `PgSession` transaction, never a pooled one.** Measured on PostgreSQL 16: a COPY abandoned half
+way (a dropped sink, an unread stream) leaves its connection mid-protocol, and a pooled connection handed back in that
+state broke the next caller (`unexpected connection status after attempting to begin transaction`, `expected
+ParseComplete, got ReadyForQuery`). A dedicated connection fails visibly and goes away with its session; a pooled
+`copy_out`/`copy_in` returns `Unsupported`. What an abandoned COPY does: a dropped sink makes the server abort the
+transaction (its next statement fails with `COPY from stdin failed`; roll back; nothing lands); an early-dropped stream
+makes the next statement fail with `unexpected message: CopyData` and `rollback` succeeds. `CopyOutStream::drain()` reads
+and discards the rest so the transaction stays usable. The design said "dropping early drains/cancels the copy"; sqlx
+does not, so that sentence is replaced by this paragraph.

@@ -15,6 +15,9 @@
 //! - **No free `SET` text, no raw connection out, no silent reconnect** (phase 2 of the design): each
 //!   would let a caller's string reach the server as SQL, or lose session state unseen.
 
+mod copy;
+pub use copy::{CopyFormat, CopyIn, CopyInSink, CopyOut, CopyOutStream};
+
 use crate::{PgBackend, PgTx, bind, classify, decode};
 use persistant_relational::{Isolation, RelError, Row, Value};
 
@@ -236,6 +239,7 @@ impl PgBackend {
                 .begin_with(sqlx::AssertSqlSafe(statement))
                 .await
                 .map_err(classify)?,
+            dedicated: false,
         };
         if options.snapshot_now {
             // `SELECT 1` plans as a query, which takes the transaction snapshot.
@@ -496,6 +500,7 @@ impl PgSession {
                 .begin_with(sqlx::AssertSqlSafe(statement))
                 .await
                 .map_err(classify)?,
+            dedicated: true,
         };
         if options.snapshot_now {
             tx.execute_static("SELECT 1").await?;
