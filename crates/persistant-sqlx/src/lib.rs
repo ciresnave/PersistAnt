@@ -287,6 +287,7 @@ impl RelationalBackend for PgBackend {
         };
         Ok(PgTx {
             tx: self.pool.begin_with(statement).await.map_err(classify)?,
+            dedicated: false,
         })
     }
 }
@@ -295,6 +296,8 @@ impl RelationalBackend for PgBackend {
 #[derive(Debug)]
 pub struct PgTx<'a> {
     tx: sqlx::Transaction<'a, Postgres>,
+    /// On a connection nothing else shares (`native::PgSession`), where `native` COPY is allowed.
+    dedicated: bool,
 }
 
 impl RelationalTx for PgTx<'_> {
