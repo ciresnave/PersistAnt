@@ -257,7 +257,9 @@ fn the_blocking_blob_handle_reads_ranges_and_streams_writes_through_the_same_key
                 } else {
                     blob.write_stream(key)
                 };
-                let e = r.err().expect("a reserved key opens no stream");
+                let Err(e) = r else {
+                    panic!("a reserved key opens no stream");
+                };
                 assert!(e.to_string().contains("key-value store"), "{id} {key}: {e}");
             }
         }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.8 — fix: a test no longer trips clippy err_expect on Rust 1.100
+
+`tests/blocking_registry.rs` used `r.err().expect(..)`, which `clippy::err_expect` (new in Rust 1.100) rejects under `--all-features`; it now matches `let Err(e) = r else { panic!(..) }` (the Ok type is not `Debug`, so `expect_err` does not apply). Test-only. Verified: `cargo +stable clippy --workspace --all-targets --all-features -- -D warnings` fails before on this line and is clean after.
+
 ## 0.17.7 — fix: a Uuid/timestamp/date/json parameter bound NULL first no longer breaks a later value on the same connection
 
 `persistant::sqlx_query!` rewrites a parameter sqlx described as `Uuid`, `Timestamptz`, `Timestamp`, `Date`, `Time`, `Json` or `Jsonb` to `CAST($n AS type)`, and binds values as text. The server infers an untyped parameter's type from that cast, so a connection that ran the statement with NULL first cached it with the parameter typed `uuid`, and the next run binding `Some(value)` failed with "incorrect binary data format in bind parameter N" (the statement cache is per connection and keyed by text; a pool hits it whenever it hands back that connection). The cast is now `CAST(CAST($n AS text) AS type)`, which pins the parameter itself to text. Reproduced before the fix and passing after, on `OnConn`, by `tests/sqlx_bridge_null_then_some.rs` (NULL then value, with an always-a-value control). Only a statement run with NULL for such a parameter before a non-NULL one could fail; value-first or NULL-only sequences never did.
