@@ -356,6 +356,20 @@ impl ToValue for serde_json::Value {
     }
 }
 
+impl Row {
+    /// Column `i` (0-based) read as a `T`. A NULL is an error unless `T` is an `Option`; a missing
+    /// column, or a value `T` cannot read, is a [`RelError::Backend`] naming the column (1-based).
+    /// `let id: i64 = row.get(0)?; let note: Option<String> = row.get(1)?;`
+    pub fn get<T: FromValue>(&self, i: usize) -> Result<T, RelError> {
+        read(self, i, "?")
+    }
+
+    /// Column `i` as `Some(T)`, or `None` when it is NULL.
+    pub fn get_opt<T: FromValue>(&self, i: usize) -> Result<Option<T>, RelError> {
+        self.get::<Option<T>>(i)
+    }
+}
+
 /// Read field `index` (named `name`) of `T` from `row`. Used by `#[derive(FromRow)]`.
 pub fn read<T: FromValue>(row: &Row, index: usize, name: &str) -> Result<T, RelError> {
     let v = row.values.get(index).ok_or_else(|| {
