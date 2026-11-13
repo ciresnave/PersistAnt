@@ -90,6 +90,10 @@ name = "sqlx_bridge"
 required-features = ["bridge"]
 
 [[test]]
+name = "bridge_gaps"
+required-features = ["bridge"]
+
+[[test]]
 name = "tls_mysql"
 required-features = ["mysql"]
 
