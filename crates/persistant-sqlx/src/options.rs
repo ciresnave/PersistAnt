@@ -111,13 +111,13 @@ impl ConnectOptions {
     }
 }
 
-impl PgBackend {
-    /// Connect with an explicit TLS policy and pool bounds, to a connection string held as a
-    /// [`ConnectionSecret`] (resolved here, never printed).
-    pub async fn connect_with(
-        secret: &ConnectionSecret,
-        options: &ConnectOptions,
-    ) -> Result<Self, RelError> {
+/// The sqlx connect options for `secret` under `options`' TLS policy and application name: shared by
+/// the pool ([`PgBackend::connect_with`]) and the single connection (`native::PgSession`).
+pub(crate) fn pg_connect_options(
+    secret: &ConnectionSecret,
+    options: &ConnectOptions,
+) -> Result<PgConnectOptions, RelError> {
+    {
         let url = secret.resolve()?;
         let mut o = PgConnectOptions::from_str(url.expose())
             .map_err(|_| RelError::Backend("connection string is not valid".to_string()))?;
@@ -143,6 +143,18 @@ impl PgBackend {
         if let Some(name) = &options.application_name {
             o = o.application_name(name);
         }
+        Ok(o)
+    }
+}
+
+impl PgBackend {
+    /// Connect with an explicit TLS policy and pool bounds, to a connection string held as a
+    /// [`ConnectionSecret`] (resolved here, never printed).
+    pub async fn connect_with(
+        secret: &ConnectionSecret,
+        options: &ConnectOptions,
+    ) -> Result<Self, RelError> {
+        let o = pg_connect_options(secret, options)?;
         let pool = PgPoolOptions::new()
             .max_connections(options.max_connections)
             .acquire_timeout(options.acquire_timeout)

@@ -293,6 +293,236 @@ impl PgTx<'_> {
     }
 }
 
+/// `IntervalStyle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntervalStyle {
+    /// `postgres` (the server default).
+    Postgres,
+    /// `postgres_verbose`.
+    PostgresVerbose,
+    /// `sql_standard`.
+    SqlStandard,
+    /// `iso_8601`.
+    Iso8601,
+}
+
+impl IntervalStyle {
+    fn as_str(self) -> &'static str {
+        match self {
+            IntervalStyle::Postgres => "postgres",
+            IntervalStyle::PostgresVerbose => "postgres_verbose",
+            IntervalStyle::SqlStandard => "sql_standard",
+            IntervalStyle::Iso8601 => "iso_8601",
+        }
+    }
+}
+
+/// The session settings a [`PgSession`] may carry: a **closed allow-list**, each a typed value we
+/// render. Most are sent as connection startup parameters; `DateStyle` and `TimeZone` (which sqlx
+/// fixes in its own startup packet) are set right after connect with `set_config($1, $2, false)`,
+/// the value a bound parameter. So no `SET` statement text is ever built from a value. There is deliberately no way to set any other parameter, and
+/// no default timeout of any kind: a snapshot held for hours is a legitimate use.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SessionSettings {
+    date_style: bool,
+    time_zone: Option<String>,
+    extra_float_digits: Option<i8>,
+    interval_style: Option<IntervalStyle>,
+    statement_timeout: Option<std::time::Duration>,
+    lock_timeout: Option<std::time::Duration>,
+    idle_in_transaction_session_timeout: Option<std::time::Duration>,
+}
+
+impl SessionSettings {
+    /// No setting beyond the server's and sqlx's own.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `DateStyle` = exactly `ISO, MDY`.
+    pub fn date_style_iso(mut self) -> Self {
+        self.date_style = true;
+        self
+    }
+
+    /// `TimeZone` = `UTC`.
+    pub fn time_zone_utc(self) -> Self {
+        self.time_zone("UTC").expect("UTC is a valid time zone")
+    }
+
+    /// `TimeZone` = a zone name (letters, digits, `_ / + -`, 1 to 64 bytes: `Europe/Paris`, `UTC`,
+    /// `Etc/GMT+5`). Anything else is refused here, before a connection exists.
+    pub fn time_zone(mut self, name: &str) -> Result<Self, RelError> {
+        let ok = !name.is_empty()
+            && name.len() <= 64
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'/' | b'+' | b'-'));
+        if !ok {
+            return Err(RelError::Backend(format!(
+                "time zone {name:?} is not a plain zone name"
+            )));
+        }
+        self.time_zone = Some(name.to_string());
+        Ok(self)
+    }
+
+    /// `extra_float_digits` (-15..=3).
+    pub fn extra_float_digits(mut self, digits: i8) -> Result<Self, RelError> {
+        if !(-15..=3).contains(&digits) {
+            return Err(RelError::Backend(format!(
+                "extra_float_digits {digits} is outside -15..=3"
+            )));
+        }
+        self.extra_float_digits = Some(digits);
+        Ok(self)
+    }
+
+    /// `IntervalStyle`.
+    pub fn interval_style(mut self, style: IntervalStyle) -> Self {
+        self.interval_style = Some(style);
+        self
+    }
+
+    /// `statement_timeout`. Not set unless you ask.
+    pub fn statement_timeout(mut self, d: std::time::Duration) -> Self {
+        self.statement_timeout = Some(d);
+        self
+    }
+
+    /// `lock_timeout`. Not set unless you ask.
+    pub fn lock_timeout(mut self, d: std::time::Duration) -> Self {
+        self.lock_timeout = Some(d);
+        self
+    }
+
+    /// `idle_in_transaction_session_timeout`. Not set unless you ask.
+    pub fn idle_in_transaction_session_timeout(mut self, d: std::time::Duration) -> Self {
+        self.idle_in_transaction_session_timeout = Some(d);
+        self
+    }
+
+    /// What must be set after connect: the allow-listed name and its checked value.
+    pub(crate) fn after_connect(&self) -> Vec<(&'static str, String)> {
+        let mut o = Vec::new();
+        if self.date_style {
+            o.push(("DateStyle", "ISO, MDY".to_string()));
+        }
+        if let Some(z) = &self.time_zone {
+            o.push(("TimeZone", z.clone()));
+        }
+        o
+    }
+
+    /// The `-c name=value` startup options, values rendered by us (a space is escaped by sqlx).
+    /// `DateStyle` and `TimeZone` are not here: sqlx sends both in its own startup packet, which wins
+    /// over `-c`, so [`SessionSettings::after_connect`] sets them.
+    pub(crate) fn startup_options(&self) -> Vec<(&'static str, String)> {
+        let ms = |d: std::time::Duration| d.as_millis().to_string();
+        let mut o = Vec::new();
+        if let Some(s) = self.interval_style {
+            o.push(("IntervalStyle", s.as_str().to_string()));
+        }
+        if let Some(d) = self.statement_timeout {
+            o.push(("statement_timeout", ms(d)));
+        }
+        if let Some(d) = self.lock_timeout {
+            o.push(("lock_timeout", ms(d)));
+        }
+        if let Some(d) = self.idle_in_transaction_session_timeout {
+            o.push(("idle_in_transaction_session_timeout", ms(d)));
+        }
+        o
+    }
+}
+
+/// One dedicated, non-pooled PostgreSQL connection that keeps its session state for its whole life.
+///
+/// It **never reconnects**: a new connection would have lost the session settings and any snapshot, so
+/// a dead connection is an error the caller sees (later calls keep failing). [`PgSession::begin`]
+/// borrows the session mutably, so two transactions at once do not compile. No `&mut PgConnection`
+/// is handed out (that is the escape hatch: use sqlx's own connection).
+pub struct PgSession {
+    conn: sqlx::PgConnection,
+}
+
+impl std::fmt::Debug for PgSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PgSession").finish_non_exhaustive()
+    }
+}
+
+impl PgSession {
+    /// Connect once, applying `settings` as startup parameters. TLS policy and application name come
+    /// from `options` as for [`PgBackend::connect_with`]; the pool fields of `options` do not apply.
+    /// The connection string is resolved here and never part of an error.
+    pub async fn connect(
+        secret: &persistant_relational::ConnectionSecret,
+        options: &crate::ConnectOptions,
+        settings: SessionSettings,
+    ) -> Result<Self, RelError> {
+        use sqlx::ConnectOptions as _;
+        let mut o = crate::options::pg_connect_options(secret, options)?;
+        if let Some(n) = settings.extra_float_digits {
+            o = o.extra_float_digits(n);
+        }
+        let startup = settings.startup_options();
+        if !startup.is_empty() {
+            o = o.options(startup);
+        }
+        let mut conn = o.connect().await.map_err(classify)?;
+        for (name, value) in settings.after_connect() {
+            // `false`: for the session, not just the current transaction.
+            sqlx::query("SELECT set_config($1, $2, false)")
+                .bind(name)
+                .bind(value)
+                .execute(&mut conn)
+                .await
+                .map_err(classify)?;
+        }
+        Ok(PgSession { conn })
+    }
+
+    /// Begin a transaction on this connection (read-only, snapshot at begin, ... per `options`). The
+    /// result is the ordinary [`PgTx`]: `commit`, `rollback`, `query_ident`, the macros through
+    /// `OnConn` are all as on a pooled transaction.
+    pub async fn begin(&mut self, options: TxOptions) -> Result<PgTx<'_>, RelError> {
+        use sqlx::Connection as _;
+        let statement = options.statement()?;
+        let mut tx = PgTx {
+            tx: self
+                .conn
+                .begin_with(sqlx::AssertSqlSafe(statement))
+                .await
+                .map_err(classify)?,
+        };
+        if options.snapshot_now {
+            tx.execute_static("SELECT 1").await?;
+        }
+        Ok(tx)
+    }
+
+    /// `SHOW <name>` for a setting name made of `[a-z_.]` only, outside any transaction.
+    pub async fn show(&mut self, name: &str) -> Result<String, RelError> {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || matches!(b, b'_' | b'.'))
+        {
+            return Err(RelError::Backend(format!(
+                "setting name {name:?} is not [a-z_.]+"
+            )));
+        }
+        // `name` is checked above: lowercase letters, `_` and `.` cannot end a statement.
+        let sql = format!("SHOW {name}");
+        sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
+            .fetch_one(&mut self.conn)
+            .await
+            .map_err(classify)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,6 +554,41 @@ mod tests {
         assert!(render("SELECT } {0}", &[one(&a)]).is_err(), "stray");
         assert!(render("SELECT {x}", &[one(&a)]).is_err(), "not a number");
         assert!(render("SELECT {0}", &[list(&[])]).is_err(), "empty list");
+    }
+
+    #[test]
+    fn session_settings_are_a_closed_typed_set() {
+        let s = SessionSettings::new()
+            .date_style_iso()
+            .time_zone("Europe/Paris")
+            .unwrap()
+            .interval_style(IntervalStyle::Iso8601)
+            .statement_timeout(std::time::Duration::from_secs(2));
+        assert_eq!(
+            s.startup_options(),
+            vec![
+                ("IntervalStyle", "iso_8601".to_string()),
+                ("statement_timeout", "2000".to_string()),
+            ]
+        );
+        assert_eq!(
+            s.after_connect(),
+            vec![
+                ("DateStyle", "ISO, MDY".to_string()),
+                ("TimeZone", "Europe/Paris".to_string()),
+            ]
+        );
+        assert!(
+            SessionSettings::new().startup_options().is_empty()
+                && SessionSettings::new().after_connect().is_empty(),
+            "no default setting, no timeout"
+        );
+        for bad in ["", "a b", "x;y", "UTC'--", &"z".repeat(65)] {
+            assert!(SessionSettings::new().time_zone(bad).is_err(), "{bad:?}");
+        }
+        assert!(SessionSettings::new().extra_float_digits(4).is_err());
+        assert!(SessionSettings::new().extra_float_digits(-16).is_err());
+        assert!(SessionSettings::new().extra_float_digits(3).is_ok());
     }
 
     #[test]

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.9 — persistant_sqlx::native: PgSession, one dedicated connection with allow-listed session settings (phase 2)
+
+Adds `native::PgSession` (docs/DESIGN-PG-NATIVE-SESSION.md, phase 2): one non-pooled PostgreSQL connection that keeps its session state, `SessionSettings` (a closed allow-list: `DateStyle` `ISO, MDY`, `TimeZone`, `extra_float_digits`, `IntervalStyle`, and statement/lock/idle-in-transaction timeouts that are off unless asked), `PgSession::begin(TxOptions)` returning the ordinary `PgTx`, and `show` for a `[a-z_.]` name. It never reconnects: a killed connection fails and keeps failing. `DateStyle` and `TimeZone` are set after connect with a parameterised `set_config` because sqlx fixes them in its startup packet; no SQL text is built from a value. Verified on PostgreSQL 16: settings arrive and the plain session has none (controls), state survives transactions, a terminated backend is an error and stays one, a connect failure does not carry the secret. Additive.
+
 ## 0.17.8 — fix: a test no longer trips clippy err_expect on Rust 1.100
 
 `tests/blocking_registry.rs` used `r.err().expect(..)`, which `clippy::err_expect` (new in Rust 1.100) rejects under `--all-features`; it now matches `let Err(e) = r else { panic!(..) }` (the Ok type is not `Debug`, so `expect_err` does not apply). Test-only. Verified: `cargo +stable clippy --workspace --all-targets --all-features -- -D warnings` fails before on this line and is clean after.
