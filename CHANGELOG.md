@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.12 — docs: ROADMAP rows 34 to 36, the server's message and SQLSTATE kept on RelError
+
+Adds rows 35 (runtime-SQL path on OnPool/OnConn plus `Row::get`) and 36 (TestDb without the per-test drop cost), and records the shape ruled for Humboldt's request (`ServerError` carried by the database-error variants and a new `Database` variant, `RelError::server_error()`, Breaking in 0.18.0) and its test plan. No code changes.
+
+— lane: persistant
+
 ## 0.17.10 — persistant_sqlx::native: COPY out and in on a PgSession transaction (phase 3)
 
 Adds `PgTx::copy_out` (a `Stream` of `Bytes`) and `copy_in` (a sink with `send`, `finish`, `abort`) with the closed `CopyFormat` (Text, Csv, Binary, PostgreSQL defaults), `Ident` table and column lists, and a static-template `SELECT` source (docs/DESIGN-PG-NATIVE-SESSION.md, phase 3). Only on a `PgSession` transaction: a COPY abandoned half way leaves its connection mid-protocol, which a pooled connection would hand to the next caller, so a pooled transaction returns `Unsupported`. `CopyOutStream::drain` discards an unread rest. Verified on PostgreSQL 16: each format's bytes and NULL form, chunks that split rows, row counts, a dropped or aborted sink leaving nothing behind, a drained and an abandoned stream, hostile identifiers, and a 1000-row binary transfer between two sessions arriving identical. Adds `bytes` and `futures-core` as dependencies. Additive.
