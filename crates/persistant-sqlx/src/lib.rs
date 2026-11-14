@@ -32,7 +32,7 @@ pub use options::{ConnectOptions, TlsPolicy};
 pub use persistant_relational::{MigrateError, MigrateReport, Migrates, Migration};
 #[cfg(feature = "sqlite")]
 pub use sqlite::{SqliteBackend, SqliteTx};
-pub use testdb::TestDb;
+pub use testdb::{Cleanup, TestDb, TestDbOptions};
 
 use persistant_relational::{
     Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
