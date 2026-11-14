@@ -6,7 +6,8 @@
 //! server).
 
 use persistant_relational::{Migration, RelationalBackend, Value};
-use persistant_sqlx::{PgBackend, TestDb};
+use persistant_sqlx::{Cleanup, PgBackend, TestDb, TestDbOptions};
+use std::time::Duration;
 
 async fn admin() -> Option<PgBackend> {
     match std::env::var("PERSISTANT_TEST_DATABASE_URL") {
@@ -124,4 +125,77 @@ async fn a_test_database_that_goes_out_of_scope_is_dropped_on_a_multi_thread_run
         db.name().to_string()
     };
     assert!(!exists(&admin, &name).await, "{name} outlived its TestDb");
+}
+
+/// `Cleanup::Defer` leaves the database when the handle goes away; `drop_database` still drops it.
+#[tokio::test]
+async fn a_deferred_database_outlives_its_handle_until_it_is_dropped_by_name() {
+    let Some(admin) = admin().await else { return };
+    let opts = TestDbOptions::default().cleanup(Cleanup::Defer);
+    let db = TestDb::create_with(&admin, opts).await.unwrap();
+    let name = db.name().to_string();
+    drop(db);
+    assert!(exists(&admin, &name).await, "Defer leaves the database");
+    // The control: the default mode drops it with the handle.
+    let db = TestDb::create_with(&admin, TestDbOptions::default())
+        .await
+        .unwrap();
+    let dropped = db.name().to_string();
+    drop(db);
+    assert!(!exists(&admin, &dropped).await, "Drop removes it");
+    // An explicit drop_database drops even a deferred one.
+    let db = TestDb::create_with(&admin, opts).await.unwrap();
+    let explicit = db.name().to_string();
+    db.drop_database().await.unwrap();
+    assert!(!exists(&admin, &explicit).await);
+    // Clean up the first (a sweep with a zero bound would also hit other tests' live databases).
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {name} WITH (FORCE)"
+    )))
+    .execute(admin.pool())
+    .await
+    .unwrap();
+}
+
+/// `sweep` drops only the old databases this module names, and no younger one.
+#[tokio::test]
+async fn sweep_drops_only_old_databases_made_by_testdb() {
+    let Some(admin) = admin().await else { return };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let two_hours = 2 * 3600 * 1_000_000_000_u128;
+    // Unique per run: this process id, so a parallel run's leftovers are not confused with these.
+    let pid = std::process::id();
+    let old = format!("persistant_test_{pid}_{}_0", now - two_hours);
+    let young = format!("persistant_test_{pid}_{now}_1");
+    let decoys = [
+        format!("persistant_test_notmine_{pid}"),
+        format!("persistant_test_{pid}_abc_2"),
+    ];
+    let all: Vec<&String> = [&old, &young].into_iter().chain(decoys.iter()).collect();
+    for n in &all {
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {n}")))
+            .execute(admin.pool())
+            .await
+            .unwrap();
+    }
+    let n = TestDb::sweep(&admin, Duration::from_secs(3600))
+        .await
+        .unwrap();
+    assert!(n >= 1, "at least the old one went, got {n}");
+    assert!(!exists(&admin, &old).await, "old and ours: dropped");
+    assert!(exists(&admin, &young).await, "younger than the bound: kept");
+    for d in &decoys {
+        assert!(exists(&admin, d).await, "{d} is not a TestDb name: kept");
+    }
+    for n in all {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {n} WITH (FORCE)"
+        )))
+        .execute(admin.pool())
+        .await
+        .unwrap();
+    }
 }
