@@ -222,6 +222,29 @@ impl<T: ToValue + ?Sized> ToValue for &T {
     }
 }
 
+/// Array parameters (`= ANY($1)`): PostgreSQL only; see [`Value::Array`]. A `Vec<T>` is the same array.
+macro_rules! array_to_value {
+    ($($t:ty),*) => {$(
+        impl ToValue for [$t] {
+            fn to_value(&self) -> Value {
+                Value::Array(self.iter().map(ToValue::to_value).collect())
+            }
+        }
+        impl ToValue for Vec<$t> {
+            fn to_value(&self) -> Value {
+                self.as_slice().to_value()
+            }
+        }
+    )*};
+}
+array_to_value!(i64, i32, f64, bool, String);
+
+impl ToValue for [&str] {
+    fn to_value(&self) -> Value {
+        Value::Array(self.iter().map(|s| Value::Text((*s).to_string())).collect())
+    }
+}
+
 impl<T: ToValue> ToValue for Option<T> {
     fn to_value(&self) -> Value {
         self.as_ref().map_or(Value::Null, ToValue::to_value)
@@ -251,6 +274,23 @@ impl FromValue for uuid::Uuid {
 impl ToValue for uuid::Uuid {
     fn to_value(&self) -> Value {
         Value::Text(self.hyphenated().to_string())
+    }
+}
+
+/// A `uuid[]` parameter: the elements are canonical uuid text, so a statement run through `sqlx_query!`
+/// gets the `uuid[]` type from sqlx's description of the parameter; run by hand it would bind as `text[]`.
+/// PostgreSQL only. Feature `uuid`.
+#[cfg(feature = "uuid")]
+impl ToValue for [uuid::Uuid] {
+    fn to_value(&self) -> Value {
+        Value::Array(self.iter().map(ToValue::to_value).collect())
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl ToValue for Vec<uuid::Uuid> {
+    fn to_value(&self) -> Value {
+        self.as_slice().to_value()
     }
 }
 
@@ -353,6 +393,20 @@ impl FromValue for Vec<String> {
 impl ToValue for serde_json::Value {
     fn to_value(&self) -> Value {
         Value::Text(self.to_string())
+    }
+}
+
+impl Row {
+    /// Column `i` (0-based) read as a `T`. A NULL is an error unless `T` is an `Option`; a missing
+    /// column, or a value `T` cannot read, is a [`RelError::Backend`] naming the column (1-based).
+    /// `let id: i64 = row.get(0)?; let note: Option<String> = row.get(1)?;`
+    pub fn get<T: FromValue>(&self, i: usize) -> Result<T, RelError> {
+        read(self, i, "?")
+    }
+
+    /// Column `i` as `Some(T)`, or `None` when it is NULL.
+    pub fn get_opt<T: FromValue>(&self, i: usize) -> Result<Option<T>, RelError> {
+        self.get::<Option<T>>(i)
     }
 }
 
@@ -548,6 +602,16 @@ mod tests {
         assert_eq!("a".to_value(), Value::Text("a".into()));
         assert_eq!("a".to_string().to_value(), Value::Text("a".into()));
         assert_eq!(vec![1u8, 2].to_value(), Value::Bytes(vec![1, 2]));
+        // a Vec<u8> is bytes, not an array of integers; any other element type is an array
+        assert_eq!(
+            vec![1_i64, 2].to_value(),
+            Value::Array(vec![Value::Int(1), Value::Int(2)])
+        );
+        assert_eq!(
+            ["a", "b"][..].to_value(),
+            Value::Array(vec![Value::Text("a".into()), Value::Text("b".into())])
+        );
+        assert_eq!(Vec::<bool>::new().to_value(), Value::Array(vec![]));
         assert_eq!(Some(true).to_value(), Value::Bool(true));
         assert_eq!(Option::<i64>::None.to_value(), Value::Null);
     }
