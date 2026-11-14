@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.1 — ROADMAP rows 37 to 39
+
+ROADMAP rows 37 (`PgSession::connect_with_options`, built in #235), 38 (a tested secure-delete capability) and 39 (a text-index capability), the last two requested by SageAnt through the PM. Documentation only.
+
 ## 0.18.0 — **BREAKING**: `RelError` keeps the server's SQLSTATE and message; new `RelError::Database`
 
 **Breaking.** `RelError::UniqueViolation`, `ForeignKeyViolation` and `CheckViolation` gain a field `server: Option<Box<ServerError>>` (boxed so `RelError` stays small) and, with the new variant `RelError::Database { constraint, server }`, become `#[non_exhaustive]`. `ServerError` (`sqlstate`, `message`, `table`, `column`, `detail`; build with `ServerError::new(..).with_table(..)`) is new, as are `RelError::server_error() -> Option<&ServerError>` and `RelError::constraint() -> Option<&str>` (the name lives once, in the variant's `constraint`). Driver crates build the variants through `RelError::unique_violation(constraint, server)`, `foreign_key_violation`, `check_violation` and `database`.
