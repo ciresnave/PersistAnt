@@ -98,6 +98,10 @@ impl<B: BlobBackend> BlobBackend for Instrumented<'_, B> {
         self.note("delete", self.inner.delete(key).await)
     }
 
+    async fn delete_erased(&self, key: &str) -> Result<(), BlobError> {
+        self.note("delete_erased", self.inner.delete_erased(key).await)
+    }
+
     async fn stat(&self, key: &str) -> Result<Option<Entry>, BlobError> {
         self.note("stat", self.inner.stat(key).await)
     }

@@ -157,6 +157,17 @@ pub trait BlobBackend: Send + Sync {
     /// Remove `key`. Removing an absent key is `Ok`.
     fn delete(&self, key: &str) -> impl Future<Output = Result<(), BlobError>> + Send;
 
+    /// Remove `key` after overwriting its stored bytes in place, so the file or buffer that held
+    /// them no longer does (`blob.delete_erased`). The promise is **"the contents were overwritten
+    /// before the name was removed"**, not "gone from the disk": a journaling or copy-on-write file
+    /// system, SSD wear levelling, snapshots and backups can keep copies this call cannot reach.
+    /// Removing an absent key is `Ok`. A backend that cannot overwrite in place returns
+    /// [`BlobError::Unsupported`]; the default does, and the leaf is off until a test passes.
+    fn delete_erased(&self, key: &str) -> impl Future<Output = Result<(), BlobError>> + Send {
+        let _ = key;
+        async { Err(BlobError::Unsupported("delete_erased".to_string())) }
+    }
+
     /// The entry at `key` without reading its value, or `None` if absent.
     fn stat(&self, key: &str) -> impl Future<Output = Result<Option<Entry>, BlobError>> + Send;
 
