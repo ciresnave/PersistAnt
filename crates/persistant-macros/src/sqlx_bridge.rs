@@ -196,6 +196,35 @@ fn cast_of(sqlx_type: &str) -> Option<&'static str> {
     })
 }
 
+/// The element type of an array parameter, from sqlx's description (`UuidArray` is a `uuid[]`).
+fn array_elem_of(sqlx_type: &str) -> Option<&'static str> {
+    Some(match sqlx_type {
+        "BoolArray" => "Bool",
+        "Int8Array" => "Int8",
+        "Float8Array" => "Float8",
+        "TextArray" | "VarcharArray" => "Text",
+        "UuidArray" => "Uuid",
+        _ => return None,
+    })
+}
+
+/// `::std::vec![None, Some(ArrayElem::Uuid), ..]`, one entry per parameter, or `None` when no parameter
+/// is an array (the common case emits nothing extra). An empty array binds with this type, since there
+/// are no elements to show it.
+fn array_hints(rel: &str, types: &[String]) -> Option<String> {
+    if !types.iter().any(|t| array_elem_of(t).is_some()) {
+        return None;
+    }
+    let items: Vec<String> = types
+        .iter()
+        .map(|t| match array_elem_of(t) {
+            Some(e) => format!("::core::option::Option::Some({rel}::ArrayElem::{e})"),
+            None => "::core::option::Option::None".to_string(),
+        })
+        .collect();
+    Some(format!("::std::vec![{}]", items.join(", ")))
+}
+
 /// `sql` with `$n` replaced by `CAST(CAST($n AS text) AS type)` where parameter `n` needs it (the inner cast pins the parameter's own type to text, so an untyped NULL bound first cannot make the server infer `type` for a statement cached for later text values) (sections 4 of the
 /// design). String literals, quoted identifiers and comments are left alone.
 pub(crate) fn rewrite_params(sql: &str, types: &[String]) -> String {
@@ -479,6 +508,9 @@ fn assemble(
     let mut bound = tokens(&format!("{rel}::Bound::new"));
     let bargs = comma_list([query, params, tokens(&decode)]);
     bound.extend([paren(bargs)]);
+    if let Some(hints) = array_hints(rel, &described.params) {
+        bound.extend(tokens(&format!(".with_array_hints({hints})")));
+    }
     out.extend(bound);
     Ok(TokenStream::from(TokenTree::Group(Group::new(
         Delimiter::Brace,
@@ -489,6 +521,21 @@ fn assemble(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_array_parameter_gets_an_element_hint_and_no_cast() {
+        let t = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let types = t(&["Int8", "UuidArray", "TextArray"]);
+        assert_eq!(
+            array_hints("::r", &types).unwrap(),
+            "::std::vec![::core::option::Option::None, ::core::option::Option::Some(::r::ArrayElem::Uuid), ::core::option::Option::Some(::r::ArrayElem::Text)]"
+        );
+        assert_eq!(array_hints("::r", &t(&["Int8", "Uuid"])), None);
+        assert_eq!(
+            rewrite_params("WHERE id = ANY($1)", &t(&["UuidArray"])),
+            "WHERE id = ANY($1)"
+        );
+    }
 
     #[test]
     fn a_placeholder_is_cast_by_its_described_type() {
