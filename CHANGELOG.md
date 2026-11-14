@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.0 — **BREAKING**: `RelError` keeps the server's SQLSTATE and message; new `RelError::Database`
+
+**Breaking.** `RelError::UniqueViolation`, `ForeignKeyViolation` and `CheckViolation` gain a field `server: Option<Box<ServerError>>` (boxed so `RelError` stays small) and, with the new variant `RelError::Database { constraint, server }`, become `#[non_exhaustive]`. `ServerError` (`sqlstate`, `message`, `table`, `column`, `detail`; build with `ServerError::new(..).with_table(..)`) is new, as are `RelError::server_error() -> Option<&ServerError>` and `RelError::constraint() -> Option<&str>` (the name lives once, in the variant's `constraint`). Driver crates build the variants through `RelError::unique_violation(constraint, server)`, `foreign_key_violation`, `check_violation` and `database`.
+
+A PostgreSQL database error with no category of its own (a trigger's `RAISE` with any SQLSTATE, a syntax error) is now `Database`, not `Backend(String)`: its code and message are in `server_error()`. `Backend` stays for failures that did not come from the server (decode, bind, protocol). The PostgreSQL driver and the `OnPool`/`OnConn` bridge fill `server`; SQLite and MySQL leave it `None` and keep `Backend` for unmapped errors.
+
+Migration: add `..` to every pattern on those three variants (`UniqueViolation { constraint, .. }`), add a `Database { .. }` arm (or a wildcard) to an exhaustive match, and read a PostgreSQL error you matched as `Backend(text)` through `server_error()`. Verified against PostgreSQL 16: a trigger's `RAISE` with a custom SQLSTATE, one with `check_violation`, a UNIQUE and a CHECK violation each give their code and message through `PgBackend` and `OnConn`; a `Backend` error has none.
+
 ## 0.17.16 — `PgSession::connect_with_options`
 
 `native::PgSession::connect_with_options(PgConnectOptions, SessionSettings)` connects from ready-made sqlx options, for a caller that holds options rather than a URL (the options of a test pool): options cannot be turned back into a URL without losing the password and TLS settings. `PgSession::connect` now builds its options and calls it, so the two share one path. Additive. Verified against PostgreSQL 16: the session carries the settings, and an error from a wrong password does not contain it.

@@ -36,7 +36,7 @@ mod traced;
 mod value;
 
 pub use backend::{Isolation, RelationalBackend, RelationalTx};
-pub use error::RelError;
+pub use error::{RelError, ServerError};
 pub use fault::{Faulty, FaultyTx};
 pub use migrate::{MigrateError, MigrateReport, Migrates, Migration};
 pub use secret::{ConnectionSecret, Redacted};
