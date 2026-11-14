@@ -199,3 +199,162 @@ async fn sweep_drops_only_old_databases_made_by_testdb() {
         .unwrap();
     }
 }
+
+/// Migrations that no other test (or earlier run) has used, so the template is built by this test.
+fn unique_migrations() -> Vec<Migration> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    vec![
+        Migration::new(
+            1,
+            "items",
+            format!("-- {nanos}\nCREATE TABLE items (id BIGINT PRIMARY KEY, label TEXT NOT NULL)"),
+        ),
+        Migration::new(
+            2,
+            "seed",
+            "INSERT INTO items VALUES (1, 'from the template')",
+        ),
+    ]
+}
+
+/// A template-made database has the migrated schema and data, and is independent of its siblings.
+#[tokio::test]
+async fn a_database_made_from_a_template_has_the_schema_and_is_its_own() {
+    let Some(admin) = admin().await else { return };
+    let migrations = unique_migrations();
+    let template = TestDb::template(&admin, &migrations).await.unwrap();
+    assert!(exists(&admin, template.name()).await);
+    let (a, b) = (
+        TestDb::create_from(&template).await.unwrap(),
+        TestDb::create_from(&template).await.unwrap(),
+    );
+    assert_ne!(a.name(), b.name());
+    for db in [&a, &b] {
+        let rows = db
+            .backend()
+            .query("SELECT label FROM items", &[])
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+    }
+    // independent: a write in one is not in the other, and not in the template
+    a.backend()
+        .execute("INSERT INTO items VALUES (2, 'only in a')", &[])
+        .await
+        .unwrap();
+    let in_b = b
+        .backend()
+        .query("SELECT id FROM items", &[])
+        .await
+        .unwrap();
+    assert_eq!(in_b.len(), 1);
+    let c = TestDb::create_from(&template).await.unwrap();
+    let in_c = c
+        .backend()
+        .query("SELECT id FROM items", &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        in_c.len(),
+        1,
+        "a write to a copy must not reach the template"
+    );
+    // control: an empty TestDb has no such table
+    let plain = TestDb::create(&admin).await.unwrap();
+    assert!(
+        plain
+            .backend()
+            .query("SELECT id FROM items", &[])
+            .await
+            .is_err()
+    );
+    for db in [a, b, c, plain] {
+        db.drop_database().await.unwrap();
+    }
+    template.drop_database().await.unwrap();
+}
+
+/// The same migrations find the same template, different ones a different template, and many callers at
+/// once build it once and all get a copy.
+#[tokio::test]
+async fn a_template_is_named_for_its_migrations_and_built_once_under_concurrency() {
+    let Some(admin) = admin().await else { return };
+    let migrations = unique_migrations();
+    let first = TestDb::template(&admin, &migrations).await.unwrap();
+    let again = TestDb::template(&admin, &migrations).await.unwrap();
+    assert_eq!(first.name(), again.name());
+    let mut changed = migrations.clone();
+    changed[1] = Migration::new(2, "seed", "INSERT INTO items VALUES (1, 'different')");
+    let other = TestDb::template(&admin, &changed).await.unwrap();
+    assert_ne!(first.name(), other.name());
+    first.drop_database().await.unwrap();
+    other.drop_database().await.unwrap();
+
+    // now gone: eight callers race to build it
+    let fresh = unique_migrations();
+    let mut tasks = Vec::new();
+    for _ in 0..8 {
+        let (admin_url, fresh) = (
+            std::env::var("PERSISTANT_TEST_DATABASE_URL").unwrap(),
+            fresh.clone(),
+        );
+        tasks.push(tokio::spawn(async move {
+            let admin = PgBackend::connect(&admin_url).await.unwrap();
+            let t = TestDb::template(&admin, &fresh).await.unwrap();
+            let db = TestDb::create_from(&t).await.unwrap();
+            let n = db
+                .backend()
+                .query("SELECT id FROM items", &[])
+                .await
+                .unwrap()
+                .len();
+            let name = t.name().to_string();
+            db.drop_database().await.unwrap();
+            (name, n)
+        }));
+    }
+    let mut names = std::collections::BTreeSet::new();
+    for t in tasks {
+        let (name, n) = t.await.unwrap();
+        assert_eq!(n, 1);
+        names.insert(name);
+    }
+    assert_eq!(names.len(), 1, "one template for one list of migrations");
+    let name = names.into_iter().next().unwrap();
+    let rows = admin
+        .query(
+            "SELECT COUNT(*) FROM pg_database WHERE datname = $1",
+            &[Value::Text(name.clone())],
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows[0].int(0), Some(1));
+    // clean up through a handle for the same migrations
+    TestDb::template(&admin, &fresh)
+        .await
+        .unwrap()
+        .drop_database()
+        .await
+        .unwrap();
+}
+
+/// A migration that fails leaves no template to copy and reports the failure.
+#[tokio::test]
+async fn a_failing_migration_leaves_no_template() {
+    let Some(admin) = admin().await else { return };
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let bad = vec![Migration::new(
+        1,
+        "broken",
+        format!("-- {nanos}\nCREATE TABLE ("),
+    )];
+    assert!(TestDb::template(&admin, &bad).await.is_err());
+    // a second try fails the same way: nothing half-built was left behind as if it were done
+    assert!(TestDb::template(&admin, &bad).await.is_err());
+}
