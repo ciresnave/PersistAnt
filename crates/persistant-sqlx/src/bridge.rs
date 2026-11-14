@@ -7,7 +7,7 @@
 //! [`PgBackend`](crate::PgBackend) decodes them, so a statement moves between the two with no change
 //! to its call site beyond the argument of `fetch_*`. No raw connection is exposed.
 
-use crate::{bind_hinted, classify, decode};
+use crate::{bind, bind_hinted, classify, decode};
 use persistant_relational::{ArrayElem, Dialect, RelError, Row, Runner, Sql, Value, prepare};
 
 /// An sqlx pool as a [`Runner`]: `query.fetch_all(OnPool(&pool))`.
