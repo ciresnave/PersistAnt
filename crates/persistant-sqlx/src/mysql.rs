@@ -31,11 +31,11 @@ fn classify(e: sqlx::Error) -> RelError {
             let constraint = db.constraint().map(str::to_string);
             match number {
                 // ER_DUP_ENTRY, ER_DUP_ENTRY_WITH_KEY_NAME
-                Some(1062) | Some(1586) => RelError::UniqueViolation { constraint },
+                Some(1062) | Some(1586) => RelError::unique_violation(constraint, None),
                 // ER_NO_REFERENCED_ROW_2, ER_ROW_IS_REFERENCED_2
-                Some(1452) | Some(1451) => RelError::ForeignKeyViolation { constraint },
+                Some(1452) | Some(1451) => RelError::foreign_key_violation(constraint, None),
                 // ER_CHECK_CONSTRAINT_VIOLATED (MySQL), ER_CONSTRAINT_FAILED (MariaDB), ER_BAD_NULL_ERROR
-                Some(3819) | Some(4025) | Some(1048) => RelError::CheckViolation { constraint },
+                Some(3819) | Some(4025) | Some(1048) => RelError::check_violation(constraint, None),
                 // ER_LOCK_DEADLOCK
                 Some(1213) => RelError::Deadlock,
                 // ER_LOCK_WAIT_TIMEOUT
@@ -511,5 +511,21 @@ impl persistant_relational::Migrates for MysqlBackend {
             .fetch_all(&self.pool)
             .await
             .map_err(backend_error)
+    }
+}
+
+#[cfg(test)]
+mod array_tests {
+    use super::*;
+
+    #[test]
+    fn an_array_parameter_is_unsupported_on_mysql() {
+        for v in [Value::Array(vec![Value::Int(1)]), Value::Array(vec![])] {
+            let e = bind(sqlx::query("SELECT ?"), std::slice::from_ref(&v))
+                .map(|_| ())
+                .unwrap_err();
+            assert!(matches!(e, RelError::Unsupported(_)), "{e:?}");
+        }
+        assert!(bind(sqlx::query("SELECT ?"), &[Value::Int(1)]).is_ok());
     }
 }

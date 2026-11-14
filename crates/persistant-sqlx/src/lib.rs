@@ -8,6 +8,7 @@
 //! Failures are classified from the server's SQLSTATE into [`persistant_relational::RelError`].
 
 pub mod advisory;
+mod array;
 mod bounded;
 #[cfg(feature = "bridge")]
 mod bridge;
@@ -31,7 +32,7 @@ pub use options::{ConnectOptions, TlsPolicy};
 pub use persistant_relational::{MigrateError, MigrateReport, Migrates, Migration};
 #[cfg(feature = "sqlite")]
 pub use sqlite::{SqliteBackend, SqliteTx};
-pub use testdb::TestDb;
+pub use testdb::{Cleanup, TestDb, TestDbOptions};
 
 use persistant_relational::{
     Dialect, Isolation, RelError, RelationalBackend, RelationalTx, Row, Value,
@@ -45,16 +46,23 @@ pub(crate) fn classify(e: sqlx::Error) -> RelError {
     match &e {
         sqlx::Error::Database(db) => {
             let constraint = db.constraint().map(str::to_string);
+            let server = db.code().map(|code| {
+                let pg = db.try_downcast_ref::<sqlx::postgres::PgDatabaseError>();
+                persistant_relational::ServerError::new(code.as_ref(), db.message())
+                    .with_table(db.table().map(str::to_string))
+                    .with_column(pg.and_then(|p| p.column()).map(str::to_string))
+                    .with_detail(pg.and_then(|p| p.detail()).map(str::to_string))
+            });
             match db.code().as_deref() {
-                Some("23505") => RelError::UniqueViolation { constraint },
-                Some("23503") => RelError::ForeignKeyViolation { constraint },
-                Some("23514") | Some("23502") => RelError::CheckViolation { constraint },
+                Some("23505") => RelError::unique_violation(constraint, server),
+                Some("23503") => RelError::foreign_key_violation(constraint, server),
+                Some("23514") | Some("23502") => RelError::check_violation(constraint, server),
                 Some("40001") => RelError::Serialization,
                 Some("40P01") => RelError::Deadlock,
                 Some(c) if c.starts_with("08") || c.starts_with("57P") => {
                     RelError::Unavailable(e.to_string())
                 }
-                _ => RelError::Backend(e.to_string()),
+                _ => RelError::database(constraint, server),
             }
         }
         sqlx::Error::Io(_) | sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed => {
@@ -90,11 +98,23 @@ impl<'q> sqlx::Encode<'q, Postgres> for UntypedNull {
 }
 
 fn bind<'q>(
-    mut q: Query<'q, Postgres, PgArguments>,
+    q: Query<'q, Postgres, PgArguments>,
     params: &'q [Value],
 ) -> Result<Query<'q, Postgres, PgArguments>, RelError> {
-    for p in params {
+    bind_hinted(q, params, &[])
+}
+
+/// [`bind`] with the described element type of each array parameter (`hints[i]` for `params[i]`).
+fn bind_hinted<'q>(
+    mut q: Query<'q, Postgres, PgArguments>,
+    params: &'q [Value],
+    hints: &[Option<persistant_relational::ArrayElem>],
+) -> Result<Query<'q, Postgres, PgArguments>, RelError> {
+    for (i, p) in params.iter().enumerate() {
         q = match p {
+            Value::Array(items) => {
+                q.bind(array::PgArray::new(items, hints.get(i).copied().flatten())?)
+            }
             // A NULL of unspecified type: the server infers it from the statement.
             Value::Null => q.bind(UntypedNull),
             Value::Bool(b) => q.bind(*b),

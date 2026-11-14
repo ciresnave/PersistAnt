@@ -46,6 +46,32 @@ pub enum Value {
     Text(String),
     /// Bytes (`BYTEA`, `BLOB`).
     Bytes(Vec<u8>),
+    /// A one-dimensional array parameter, for `= ANY($1)` and the like. **PostgreSQL only**: every other
+    /// backend returns [`RelError::Unsupported`](crate::RelError::Unsupported). The elements are scalar
+    /// values of one kind (a `Null` element is allowed); a mixed list, a nested array, or an empty one
+    /// whose element type nobody described is an error, never a cast. The element type is the one the
+    /// elements show (`Int` is `int8[]`, `Text` is `text[]`, ...) unless a statement's [`ArrayElem`] hint says
+    /// otherwise (`uuid[]`, which `Value` carries as text).
+    Array(Vec<Value>),
+}
+
+/// The element type of an array parameter, when the elements alone do not say (a `uuid` is carried as
+/// text) or there are none. Given by `sqlx_query!` from sqlx's described parameter type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ArrayElem {
+    /// `boolean[]`: elements are `Bool`.
+    Bool,
+    /// `bigint[]`: elements are `Int`.
+    Int8,
+    /// `double precision[]`: elements are `Float`.
+    Float8,
+    /// `text[]`: elements are `Text`.
+    Text,
+    /// `bytea[]`: elements are `Bytes`.
+    Bytea,
+    /// `uuid[]`: elements are `Text` holding a uuid.
+    Uuid,
 }
 
 /// One result row, columns in select order.

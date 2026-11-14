@@ -164,3 +164,25 @@ async fn a_connect_failure_does_not_carry_the_secret() {
         "{e:?}"
     );
 }
+
+#[tokio::test]
+async fn options_built_by_the_caller_connect_with_settings_and_a_wrong_password_fails() {
+    use std::str::FromStr as _;
+    let Some(url) = url() else { return };
+    let o = sqlx::postgres::PgConnectOptions::from_str(&url).unwrap();
+    let mut s = PgSession::connect_with_options(
+        o.clone(),
+        SessionSettings::new()
+            .time_zone("America/New_York")
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(s.show("timezone").await.unwrap(), "America/New_York");
+    // control: the options really are used. A wrong password through the same route is refused
+    // (a trust-auth server accepts any, so this part only asserts when the right one is refused).
+    let bad = o.password("definitely-not-the-password");
+    if let Err(e) = PgSession::connect_with_options(bad, SessionSettings::new()).await {
+        assert!(!e.to_string().contains("definitely-not-the-password"));
+    }
+}

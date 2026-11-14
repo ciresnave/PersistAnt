@@ -25,11 +25,11 @@ fn classify(e: sqlx::Error) -> RelError {
             let constraint = db.constraint().map(str::to_string);
             match db.code().as_deref() {
                 // SQLITE_CONSTRAINT_UNIQUE, SQLITE_CONSTRAINT_PRIMARYKEY
-                Some("2067") | Some("1555") => RelError::UniqueViolation { constraint },
+                Some("2067") | Some("1555") => RelError::unique_violation(constraint, None),
                 // SQLITE_CONSTRAINT_FOREIGNKEY
-                Some("787") => RelError::ForeignKeyViolation { constraint },
+                Some("787") => RelError::foreign_key_violation(constraint, None),
                 // SQLITE_CONSTRAINT_CHECK, SQLITE_CONSTRAINT_NOTNULL
-                Some("275") | Some("1299") => RelError::CheckViolation { constraint },
+                Some("275") | Some("1299") => RelError::check_violation(constraint, None),
                 // SQLITE_BUSY, SQLITE_LOCKED: the lock was not obtained inside the timeout
                 Some("5") | Some("6") | Some("261") | Some("517") => RelError::Serialization,
                 _ => RelError::Backend(e.to_string()),
@@ -363,5 +363,22 @@ impl persistant_relational::Migrates for SqliteBackend {
             .fetch_all(&self.pool)
             .await
             .map_err(backend_error)
+    }
+}
+
+#[cfg(test)]
+mod array_tests {
+    use super::*;
+
+    #[test]
+    fn an_array_parameter_is_unsupported_on_sqlite() {
+        for v in [Value::Array(vec![Value::Int(1)]), Value::Array(vec![])] {
+            let e = bind(sqlx::query("SELECT ?"), std::slice::from_ref(&v))
+                .map(|_| ())
+                .unwrap_err();
+            assert!(matches!(e, RelError::Unsupported(_)), "{e:?}");
+        }
+        // control: a scalar binds
+        assert!(bind(sqlx::query("SELECT ?"), &[Value::Int(1)]).is_ok());
     }
 }

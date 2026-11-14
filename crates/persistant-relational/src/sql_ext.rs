@@ -48,7 +48,25 @@ pub fn prepare(
     if let Some(n) = rendered
         .param_bindings
         .iter()
-        .position(|b| *b != Binding::Scalar)
+        .enumerate()
+        .position(|(i, b)| *b == Binding::Scalar && matches!(params.get(i), Some(Value::Array(_))))
+    {
+        return Err(RelError::Unsupported(format!(
+            "parameter ${} is an array, but the statement uses it as a single value",
+            n + 1
+        )));
+    }
+    if let Some(n) = rendered
+        .param_bindings
+        .iter()
+        .enumerate()
+        .position(|(i, b)| {
+            *b != Binding::Scalar
+                // PostgreSQL takes a real array for a native-array placeholder (`= ANY($1)`).
+                && !(matches!(dialect, Dialect::Postgres)
+                    && *b == Binding::NativeArray
+                    && matches!(params.get(i), Some(Value::Array(_))))
+        })
     {
         return Err(RelError::Unsupported(format!(
             "parameter ${} is an array on {dialect}, which `Value` does not carry yet",
@@ -302,6 +320,32 @@ mod tests {
             param_bindings: &[Binding::Scalar, Binding::Scalar],
         }],
     };
+
+    const ANY_Q: Sql = Query {
+        params: 1,
+        constructs: &[],
+        rendered: &[Rendered {
+            target: Target::Postgres,
+            sql: "SELECT 1 WHERE a = ANY($1)",
+            param_order: &[1],
+            param_bindings: &[Binding::NativeArray],
+        }],
+    };
+
+    #[test]
+    fn a_native_array_placeholder_takes_an_array_value_on_postgres_only() {
+        let arr = Value::Array(vec![Value::Int(1), Value::Int(2)]);
+        let db = fake(Dialect::Postgres);
+        block(db.query_sql(&ANY_Q, std::slice::from_ref(&arr))).unwrap();
+        assert_eq!(db.seen.0.lock().unwrap()[0].1, vec![arr]);
+        // control: a text value in an array placeholder is still refused
+        let e = block(db.query_sql(&ANY_Q, &[Value::Text("{1,2}".into())])).unwrap_err();
+        assert!(matches!(e, RelError::Unsupported(_)), "{e:?}");
+        // and an array in a scalar placeholder is refused before it is sent
+        let e =
+            block(db.query_sql(&OUT_OF_ORDER, &[Value::Int(1), Value::Array(vec![])])).unwrap_err();
+        assert!(matches!(e, RelError::Unsupported(_)), "{e:?}");
+    }
 
     #[test]
     fn postgres_binds_values_as_written_when_placeholders_appear_out_of_order() {
