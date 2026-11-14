@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.2 — feat: `sqlx_query!` binds `Vec<Uuid>`, `Vec<bool>`, `Vec<i64>`, `Vec<f64>` and `Vec<String>` array parameters
+
+A parameter sqlx describes as `UuidArray`, `BoolArray`, `Int8Array`, `Float8Array`, `TextArray` or `VarcharArray` now carries its element type from the macro to the bind (`Bound::with_array_hints`), so `WHERE id = ANY($1)` with a `Vec<Uuid>` binds as `uuid[]`, and an empty array binds with its described type instead of having none to infer. A statement with no array parameter expands exactly as before. Verified on `OnConn` against PostgreSQL 16 by `tests/sqlx_bridge_array.rs` (values and empty), which fails with `operator does not exist: uuid = text` when the hint is not emitted; the macro's own unit tests cover the hint list and that an array placeholder gets no cast. An array parameter is accepted only in the `= ANY($n)` form (any other use is `Unsupported`, as for the other backends).
+
+— lane: persistant
+
+## 0.18.1 — ROADMAP rows 37 to 39
+
+ROADMAP rows 37 (`PgSession::connect_with_options`, built in #235), 38 (a tested secure-delete capability) and 39 (a text-index capability), the last two requested by SageAnt through the PM. Documentation only.
+
 ## 0.18.0 — **BREAKING**: `RelError` keeps the server's SQLSTATE and message; new `RelError::Database`
 
 **Breaking.** `RelError::UniqueViolation`, `ForeignKeyViolation` and `CheckViolation` gain a field `server: Option<Box<ServerError>>` (boxed so `RelError` stays small) and, with the new variant `RelError::Database { constraint, server }`, become `#[non_exhaustive]`. `ServerError` (`sqlstate`, `message`, `table`, `column`, `detail`; build with `ServerError::new(..).with_table(..)`) is new, as are `RelError::server_error() -> Option<&ServerError>` and `RelError::constraint() -> Option<&str>` (the name lives once, in the variant's `constraint`). Driver crates build the variants through `RelError::unique_violation(constraint, server)`, `foreign_key_violation`, `check_violation` and `database`.
