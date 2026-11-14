@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.4 — `BlobBackend::delete_erased` (row 38, first slice)
+
+New default method `BlobBackend::delete_erased(key)` (capability `blob.delete_erased`): overwrite the stored bytes, then remove the key. The default returns `Unsupported`, so no existing backend changes. `OpendalBlob` on `fs` implements it (zero-fill in place, `sync_all`, unlink); the memory service stays `Unsupported`. `Instrumented` and `Traced` forward it. The promise is "contents overwritten before the name was removed", not "gone from the disk": journaling and copy-on-write file systems, SSD wear levelling, snapshots and backups can keep copies.
+
+Verified by reading the file back through a second hard link to the same inode: plain `delete` leaves the canary readable there (the known-bad control), `delete_erased` leaves zeros; with the overwrite removed the test fails. Not yet done for row 38: `kv.delete_erased`, SQLite (`secure_delete`, WAL checkpoint), PostgreSQL / MySQL, and the matrix row.
+
 ## 0.18.3 — `TestDb::template` and `TestDb::create_from`
 
 `TestDb::template(&admin, &migrations)` migrates once into a database named for a hash of the migrations (`persistant_template_<32 hex>`), under a server advisory lock and through a scratch database renamed into place when complete, so concurrent callers build it once and nobody sees a half-migrated template; `TestDb::create_from(&template)` (and `create_from_with`) is `CREATE DATABASE .. TEMPLATE ..`, retried while the server reports the source in use. New `TestTemplate` (`name`, `drop_database`); templates outlive the binary and `sweep` does not touch them. Additive; no new dependency. Verified against PostgreSQL 16: schema and seed rows present, a write to one copy reaches neither a sibling nor the template, eight racing callers give one template and eight copies, a failing migration leaves no template and no scratch database. Timing (one run, a 60-table stand-in schema, not Humboldt's): 19 databases by migrating each 36.8 s, by template 11.8 s (`bench/testdb-template.md`).
