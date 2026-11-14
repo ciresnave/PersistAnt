@@ -43,7 +43,7 @@ pub use secret::{ConnectionSecret, Redacted};
 pub use sweep::{SweepError, SweepReport, sweep};
 #[cfg(feature = "tracing")]
 pub use traced::{Traced, TracedTx};
-pub use value::{Dialect, Row, Value};
+pub use value::{ArrayElem, Dialect, Row, Value};
 
 #[cfg(feature = "sql")]
 pub use bound::{Bound, InTx, Runner};

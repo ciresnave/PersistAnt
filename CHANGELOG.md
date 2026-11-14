@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.17.14 — persistant_relational::Value::Array: PostgreSQL array parameters (= ANY($1)) with a described element type
+
+Adds `Value::Array(Vec<Value>)` (PostgreSQL only), `ArrayElem` (the element type: `Bool`, `Int8`, `Float8`, `Text`, `Bytea`, `Uuid`), `ToValue` for slices and `Vec`s of `i64`, `i32`, `f64`, `bool`, `String`, `&str` and `Uuid`, `Bound::with_array_hints` and the provided `Runner::run_query_hinted` / `run_execute_hinted`. `persistant-sqlx` binds an array in the binary format with the element type in its header: from the elements when they show it (`Int` is `int8[]`, `Text` is `text[]`), or from the hint, which is how an empty array and a `uuid[]` (carried as text) get their type. `prepare` accepts an array for a native-array placeholder on PostgreSQL and refuses it for a scalar one. Nothing is cast: a mixed list, a nested array, an empty or all-NULL list with no described type, an element of the wrong kind, and a uuid that is not a uuid are `RelError::Unsupported`. SQLite and MySQL return `Unsupported` for an array (a test each). Verified on PostgreSQL 16: `int8[]`, `text[]`, `boolean[]`, `double precision[]`, a NULL element, an empty array and a `uuid[]` with their types, and the control that an unhinted uuid array is refused by the server as `uuid = text`. The `sqlx_query!` macro passing the hints is the next change; until then a `&[Uuid]` runs through `Bound` only with hints set by hand. Additive.
+
+## 0.17.13 — feat: runtime SQL on a held sqlx connection or pool (`OnConn`/`OnPool::query`, `execute`) and a typed `Row::get`
+
+`OnPool` and `OnConn` get `query`, `query_one`, `query_optional` and `execute`, each taking a statement text built or written at run time and `&[Value]` arguments: no build-time check and no `.sqlx` data, for the call sites that today use `sqlx::query(..).bind(..)` (ROADMAP row 35, Humboldt's about 250). The PostgreSQL text goes as written (no UniSQL translation, no cast added); arguments bind as the bridge binds them and rows decode as `PgBackend` decodes them. `Row::get::<T: FromValue>(i)` and `Row::get_opt::<T>(i)` read a column by index, the error naming the 1-based column. A `uuid`/`timestamptz`/`date`/`jsonb` argument needs a cast written through text (`CAST(CAST($1 AS text) AS uuid)`); a bare `$1::uuid` fails once a NULL has been bound first on the connection (the null-then-some bug of 0.17.7), which a test pins. Verified against PostgreSQL 16 by `tests/bridge_runtime_sql.rs` (execute, query, query_one on no rows, query_optional, NULL reads, a missing column, NULL then a value through the text cast, and a pool). Additive.
+
+— lane: persistant
+
+## 0.17.12 — docs: ROADMAP rows 34 to 36, the server's message and SQLSTATE kept on RelError
+
+Adds rows 35 (runtime-SQL path on OnPool/OnConn plus `Row::get`) and 36 (TestDb without the per-test drop cost), and records the shape ruled for Humboldt's request (`ServerError` carried by the database-error variants and a new `Database` variant, `RelError::server_error()`, Breaking in 0.18.0) and its test plan. No code changes.
+
+— lane: persistant
+
 ## 0.17.10 — persistant_sqlx::native: COPY out and in on a PgSession transaction (phase 3)
 
 Adds `PgTx::copy_out` (a `Stream` of `Bytes`) and `copy_in` (a sink with `send`, `finish`, `abort`) with the closed `CopyFormat` (Text, Csv, Binary, PostgreSQL defaults), `Ident` table and column lists, and a static-template `SELECT` source (docs/DESIGN-PG-NATIVE-SESSION.md, phase 3). Only on a `PgSession` transaction: a COPY abandoned half way leaves its connection mid-protocol, which a pooled connection would hand to the next caller, so a pooled transaction returns `Unsupported`. `CopyOutStream::drain` discards an unread rest. Verified on PostgreSQL 16: each format's bytes and NULL form, chunks that split rows, row counts, a dropped or aborted sink leaving nothing behind, a drained and an abandoned stream, hostile identifiers, and a 1000-row binary transfer between two sessions arriving identical. Adds `bytes` and `futures-core` as dependencies. Additive.
