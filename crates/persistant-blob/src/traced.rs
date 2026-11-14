@@ -145,6 +145,15 @@ impl<B: BlobBackend> BlobBackend for Traced<B> {
             .await
     }
 
+    async fn delete_erased(&self, key: &str) -> Result<(), BlobError> {
+        self.span(
+            "delete_erased",
+            "blob.delete_erased",
+            self.inner.delete_erased(key),
+        )
+        .await
+    }
+
     async fn stat(&self, key: &str) -> Result<Option<Entry>, BlobError> {
         self.span("stat", "blob.stat", self.inner.stat(key)).await
     }

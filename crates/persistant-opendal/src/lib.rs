@@ -269,6 +269,37 @@ impl BlobBackend for OpendalBlob {
         self.op.delete(key).await.map_err(backend)
     }
 
+    /// `fs` only: overwrite the file's bytes with zeros in place, sync, then unlink. The memory
+    /// service has no file to overwrite and returns `Unsupported`.
+    async fn delete_erased(&self, key: &str) -> Result<(), BlobError> {
+        let Some(FsDirs { root, .. }) = self.fs.as_ref() else {
+            return Err(BlobError::Unsupported("delete_erased".to_string()));
+        };
+        let path = key_path(root, key, "delete_erased")?;
+        let io = |what: &str, e: std::io::Error| BlobError::Backend(format!("{what}: {e}"));
+        match std::fs::metadata(&path) {
+            Ok(m) if m.is_file() => {
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&path)
+                    .map_err(|e| io("open for overwrite", e))?;
+                let zeros = [0u8; 8192];
+                let mut left = m.len();
+                while left > 0 {
+                    let n = left.min(zeros.len() as u64) as usize;
+                    f.write_all(&zeros[..n]).map_err(|e| io("overwrite", e))?;
+                    left -= n as u64;
+                }
+                f.sync_all().map_err(|e| io("sync the overwrite", e))?;
+            }
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(io("stat", e)),
+        }
+        self.op.delete(key).await.map_err(backend)
+    }
+
     async fn stat(&self, key: &str) -> Result<Option<Entry>, BlobError> {
         match self.op.stat(key).await {
             Ok(m) if m.is_file() => Ok(Some(Entry::new(key, m.content_length()))),
