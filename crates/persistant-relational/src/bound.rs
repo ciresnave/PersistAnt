@@ -4,7 +4,7 @@
 //! `Runner`s that execute one (`docs/DESIGN-SQLX-BRIDGE.md` sections 2 and 6). Feature `sql`.
 
 use crate::sql_ext::{RelationalSqlExt, RelationalTxSqlExt, Sql};
-use crate::{Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
+use crate::{ArrayElem, Dialect, RelError, RelationalBackend, RelationalTx, Row, Value};
 use std::future::Future;
 
 /// Something a [`Bound`] statement can run on: a backend (`&db`) or a transaction ([`InTx`]).
@@ -22,6 +22,29 @@ pub trait Runner {
         sql: &'a Sql,
         params: &'a [Value],
     ) -> impl Future<Output = Result<u64, RelError>> + Send + 'a;
+
+    /// [`Runner::run_query`] with the element type of each array parameter (`hints[n]` for `$n+1`).
+    /// A runner that cannot use them ignores them: the arrays then bind by what their elements show.
+    fn run_query_hinted<'a>(
+        &'a mut self,
+        sql: &'a Sql,
+        params: &'a [Value],
+        hints: &'a [Option<ArrayElem>],
+    ) -> impl Future<Output = Result<Vec<Row>, RelError>> + Send + 'a {
+        let _ = hints;
+        self.run_query(sql, params)
+    }
+
+    /// [`Runner::run_execute`] with array element hints; see [`Runner::run_query_hinted`].
+    fn run_execute_hinted<'a>(
+        &'a mut self,
+        sql: &'a Sql,
+        params: &'a [Value],
+        hints: &'a [Option<ArrayElem>],
+    ) -> impl Future<Output = Result<u64, RelError>> + Send + 'a {
+        let _ = hints;
+        self.run_execute(sql, params)
+    }
 }
 
 impl<B: RelationalBackend + ?Sized> Runner for &B {
@@ -84,6 +107,7 @@ pub struct Bound<R> {
     sql: Sql,
     params: Vec<Value>,
     decode: fn(&Row) -> Result<R, RelError>,
+    hints: Vec<Option<ArrayElem>>,
 }
 
 impl<R> Bound<R> {
@@ -93,12 +117,22 @@ impl<R> Bound<R> {
             sql,
             params,
             decode,
+            hints: Vec::new(),
         }
+    }
+
+    /// For the macros: the element type of each array parameter, as sqlx described it (`None` for a
+    /// parameter that is not an array).
+    pub fn with_array_hints(mut self, hints: Vec<Option<ArrayElem>>) -> Self {
+        self.hints = hints;
+        self
     }
 
     /// Every row.
     pub async fn fetch_all<E: Runner>(self, mut on: E) -> Result<Vec<R>, RelError> {
-        let rows = on.run_query(&self.sql, &self.params).await?;
+        let rows = on
+            .run_query_hinted(&self.sql, &self.params, &self.hints)
+            .await?;
         rows.iter().map(self.decode).collect()
     }
 
@@ -111,12 +145,15 @@ impl<R> Bound<R> {
 
     /// The first row, if any.
     pub async fn fetch_optional<E: Runner>(self, mut on: E) -> Result<Option<R>, RelError> {
-        let rows = on.run_query(&self.sql, &self.params).await?;
+        let rows = on
+            .run_query_hinted(&self.sql, &self.params, &self.hints)
+            .await?;
         rows.first().map(self.decode).transpose()
     }
 
     /// Run the statement, ignoring any rows, and return the number affected.
     pub async fn execute<E: Runner>(self, mut on: E) -> Result<u64, RelError> {
-        on.run_execute(&self.sql, &self.params).await
+        on.run_execute_hinted(&self.sql, &self.params, &self.hints)
+            .await
     }
 }
