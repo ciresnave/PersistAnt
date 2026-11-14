@@ -466,8 +466,21 @@ impl PgSession {
         options: &crate::ConnectOptions,
         settings: SessionSettings,
     ) -> Result<Self, RelError> {
+        let o = crate::options::pg_connect_options(secret, options)?;
+        Self::connect_with_options(o, settings).await
+    }
+
+    /// Connect once from ready-made sqlx [`sqlx::postgres::PgConnectOptions`] (password, TLS and every
+    /// other field as the caller built them), applying `settings` as for [`PgSession::connect`]. For a
+    /// caller that holds options rather than a URL, such as the options of a test pool: options cannot
+    /// be turned back into a URL without losing the password and TLS settings. The options are not
+    /// printed, and no error carries them.
+    pub async fn connect_with_options(
+        o: sqlx::postgres::PgConnectOptions,
+        settings: SessionSettings,
+    ) -> Result<Self, RelError> {
         use sqlx::ConnectOptions as _;
-        let mut o = crate::options::pg_connect_options(secret, options)?;
+        let mut o = o;
         if let Some(n) = settings.extra_float_digits {
             o = o.extra_float_digits(n);
         }
