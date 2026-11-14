@@ -26,6 +26,12 @@
 //! database; [`TestDb::sweep`] then drops, one at a time, every `persistant_test_*` database older than a
 //! bound, once, at the start of the test binary or the CI job. [`TestDb::drop_database`] always drops.
 //!
+//! **Migrate once (ROADMAP row 36c).** [`TestDb::template`] migrates into a database named for a hash of the
+//! migrations (`persistant_template_<hash>`) once, under an advisory lock so binaries racing for it build it
+//! once, and [`TestDb::create_from`] is `CREATE DATABASE .. TEMPLATE ..`: the migrate is paid once per schema,
+//! not per test. A template outlives the binary (that is the point: the next run finds it) and is not matched
+//! by [`TestDb::sweep`]; [`TestTemplate::drop_database`] removes it.
+//!
 //! PostgreSQL only: it is the engine Humboldt tests on. SQLite tests use a temporary file and MySQL a
 //! scratch database ([`crate::MysqlBackend::verify_fresh`]).
 
@@ -139,7 +145,6 @@ impl TestDb {
         admin: &PgBackend,
         options: TestDbOptions,
     ) -> Result<TestDb, RelError> {
-        let cleanup = options.cleanup;
         let name = unique_name();
         // The name is made here from digits and a fixed prefix, so it needs no quoting.
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
@@ -147,6 +152,15 @@ impl TestDb {
             .await
             .map_err(|e| failed("create the test database (does the role have CREATEDB?)", e))?;
         let admin_options = (*admin.pool().connect_options()).clone();
+        TestDb::connect_new(admin_options, name, options.cleanup).await
+    }
+
+    /// Connect to the database `name` that was just created, or drop it again if that fails.
+    async fn connect_new(
+        admin_options: PgConnectOptions,
+        name: String,
+        cleanup: Cleanup,
+    ) -> Result<TestDb, RelError> {
         let options = admin_options
             .clone()
             .database(&name)
@@ -161,7 +175,7 @@ impl TestDb {
         };
         match backend {
             Ok(backend) => Ok(TestDb {
-                admin: admin_options.clone(),
+                admin: admin_options,
                 name,
                 cleanup,
                 backend: Some(backend),
@@ -171,6 +185,81 @@ impl TestDb {
                 Err(e)
             }
         }
+    }
+
+    /// Migrate `migrations` into a template database once and return a handle to it. The template is named
+    /// for a hash of the migrations (`persistant_template_<32 hex digits>`), so the same migrations find the
+    /// same template on the next call, in this binary or the next run, and a changed migration makes a new
+    /// one. Concurrent callers (tests, binaries) build it once: the build runs under an advisory lock on the
+    /// server, into a scratch database that is renamed into place only when complete, so nobody sees a
+    /// half-migrated template.
+    pub async fn template(
+        admin: &PgBackend,
+        migrations: &[Migration],
+    ) -> Result<TestTemplate, RelError> {
+        let (name, lock_key) = template_name(migrations);
+        let admin_options = (*admin.pool().connect_options()).clone();
+        // The lock is held by this connection for the session, so it is released on any exit.
+        let mut lock = admin_options
+            .connect()
+            .await
+            .map_err(|e| failed("connect to build the template", e))?;
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(lock_key)
+            .execute(&mut lock)
+            .await
+            .map_err(|e| failed("lock the template build", e))?;
+        let built = build_template(&admin_options, &name, migrations).await;
+        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(lock_key)
+            .execute(&mut lock)
+            .await;
+        built?;
+        Ok(TestTemplate {
+            admin: admin_options,
+            name,
+        })
+    }
+
+    /// A new database made from `template` (`CREATE DATABASE .. TEMPLATE ..`): it has the template's
+    /// schema, is the test's own, and shares nothing with its siblings. Cleanup follows
+    /// [`TestDbOptions::from_env`].
+    pub async fn create_from(template: &TestTemplate) -> Result<TestDb, RelError> {
+        TestDb::create_from_with(template, TestDbOptions::from_env()).await
+    }
+
+    /// As [`create_from`](Self::create_from), with the cleanup mode given.
+    pub async fn create_from_with(
+        template: &TestTemplate,
+        options: TestDbOptions,
+    ) -> Result<TestDb, RelError> {
+        let name = unique_name();
+        let mut conn = template
+            .admin
+            .connect()
+            .await
+            .map_err(|e| failed("connect to create from the template", e))?;
+        // Another session still copying the same template makes the server refuse this one for a moment
+        // (55006, "source database is being accessed by other users"): retry, bounded.
+        let sql = format!("CREATE DATABASE {name} TEMPLATE {}", template.name);
+        let mut attempt = 0;
+        loop {
+            match sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+                .execute(&mut conn)
+                .await
+            {
+                Ok(_) => break,
+                Err(sqlx::Error::Database(e))
+                    if e.code().as_deref() == Some("55006") && attempt < 100 =>
+                {
+                    attempt += 1;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(e) => return Err(failed("create the test database from the template", e)),
+            }
+        }
+        drop(conn);
+        TestDb::connect_new(template.admin.clone(), name, options.cleanup).await
     }
 
     /// The database's name (`persistant_test_...`).
@@ -230,6 +319,116 @@ impl TestDb {
         self.backend.take();
         dropped
     }
+}
+
+/// A migrated template database that [`TestDb::create_from`] copies; made by [`TestDb::template`].
+#[derive(Debug, Clone)]
+pub struct TestTemplate {
+    admin: PgConnectOptions,
+    name: String,
+}
+
+impl TestTemplate {
+    /// The template's database name (`persistant_template_...`).
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Drop the template (a later [`TestDb::template`] with the same migrations builds it again).
+    pub async fn drop_database(self) -> Result<(), RelError> {
+        drop_named(&self.admin, &self.name).await
+    }
+}
+
+/// `persistant_template_<hash>` for `migrations`, and an `i64` from the same hash for the advisory lock.
+/// Each field is length-prefixed so two different lists cannot hash alike by moving text across a boundary.
+fn template_name(migrations: &[Migration]) -> (String, i64) {
+    // FNV-1a over a length-prefixed encoding, twice with different seeds: 128 bits for a name that only
+    // has to tell one migration list from another on one developer's server, with no dependency added.
+    let mut bytes = Vec::new();
+    for m in migrations {
+        bytes.extend_from_slice(&m.version.to_be_bytes());
+        for field in [m.description.as_bytes(), m.sql.as_bytes()] {
+            bytes.extend_from_slice(&(field.len() as u64).to_be_bytes());
+            bytes.extend_from_slice(field);
+        }
+    }
+    let fnv = |seed: u64| {
+        bytes.iter().fold(seed, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+        })
+    };
+    let (hi, lo) = (fnv(0xcbf2_9ce4_8422_2325), fnv(0x84222325_cbf29ce4));
+    (
+        format!("persistant_template_{hi:016x}{lo:016x}"),
+        i64::from_be_bytes(hi.to_be_bytes()),
+    )
+}
+
+/// Build the template `name` unless it exists: migrate into a scratch database, close every connection to
+/// it, rename it into place. The caller holds the advisory lock.
+async fn build_template(
+    admin: &PgConnectOptions,
+    name: &str,
+    migrations: &[Migration],
+) -> Result<(), RelError> {
+    let mut conn = admin
+        .connect()
+        .await
+        .map_err(|e| failed("connect to build the template", e))?;
+    let present: Option<i32> = sqlx::query_scalar("SELECT 1 FROM pg_database WHERE datname = $1")
+        .bind(name)
+        .fetch_optional(&mut conn)
+        .await
+        .map_err(|e| failed("look for the template", e))?;
+    if present.is_some() {
+        return Ok(());
+    }
+    let scratch = format!(
+        "persistant_template_build_{}",
+        &unique_name()["persistant_test_".len()..]
+    );
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {scratch}")))
+        .execute(&mut conn)
+        .await
+        .map_err(|e| {
+            failed(
+                "create the template database (does the role have CREATEDB?)",
+                e,
+            )
+        })?;
+    let migrated = async {
+        let options = admin.clone().database(&scratch).disable_statement_logging();
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect_with(options)
+            .await
+            .map_err(|e| failed("connect to the template database", e))?;
+        let backend = PgBackend::from_pool(pool.clone()).await?;
+        let r = backend
+            .migrate(migrations)
+            .await
+            .map_err(|e| RelError::Backend(format!("migrate the template: {e}")));
+        // Closed, so the rename (and every later copy) finds no session on it.
+        pool.close().await;
+        r.map(|_| ())
+    }
+    .await;
+    let renamed = match migrated {
+        Ok(()) => sqlx::query(sqlx::AssertSqlSafe(format!(
+            "ALTER DATABASE {scratch} RENAME TO {name}"
+        )))
+        .execute(&mut conn)
+        .await
+        .map(|_| ())
+        .map_err(|e| failed("rename the template into place", e)),
+        Err(e) => Err(e),
+    };
+    if renamed.is_err() {
+        let _ = drop_named(admin, &scratch).await;
+    }
+    renamed
 }
 
 /// Drop `name` over a connection of its own: a pooled connection belongs to the runtime that made the
