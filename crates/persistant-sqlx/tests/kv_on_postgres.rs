@@ -140,7 +140,7 @@ async fn errors_are_classified_by_sqlstate() {
         .execute("INSERT INTO persistant_errs VALUES (1, 1)", &[])
         .await;
     assert!(
-        matches!(&dup, Err(RelError::UniqueViolation { constraint: Some(c) }) if c == "persistant_errs_pkey"),
+        matches!(&dup, Err(RelError::UniqueViolation { constraint: Some(c), .. }) if c == "persistant_errs_pkey"),
         "{dup:?}"
     );
     let chk = db
@@ -151,7 +151,10 @@ async fn errors_are_classified_by_sqlstate() {
         "{chk:?}"
     );
     let syn = db.execute("SELEKT 1", &[]).await;
-    assert!(matches!(syn, Err(RelError::Backend(_))), "{syn:?}");
+    assert!(
+        matches!(&syn, Err(e) if e.server_error().map(|s| s.sqlstate.as_str()) == Some("42601")),
+        "{syn:?}"
+    );
     db.execute("DROP TABLE persistant_errs", &[]).await.unwrap();
 }
 
