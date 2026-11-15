@@ -98,6 +98,10 @@ required-features = ["text-index"]
 name = "text_index_sqlite"
 required-features = ["text-index", "registry-sqlite"]
 
+[[test]]
+name = "text_index_certify"
+required-features = ["text-index"]
+
 [[example]]
 name = "hello"
 required-features = ["registry"]
