@@ -176,6 +176,15 @@ impl<R: RelationalBackend> RelationalBackend for Faulty<R> {
         run(&self.state, "execute", self.inner.execute(sql, params)).await
     }
 
+    async fn execute_erased(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        run(
+            &self.state,
+            "execute_erased",
+            self.inner.execute_erased(sql, params),
+        )
+        .await
+    }
+
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
         run(&self.state, "query", self.inner.query(sql, params)).await
     }
