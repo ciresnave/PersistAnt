@@ -1,7 +1,7 @@
 # Design: a text index (lexical search), ROADMAP row 39
 
-Status: **layer over kv, first (PM 2026-11-15); shaped to SageAnt's answers the same day; no code until the PM and
-SageAnt accept section 3.** Written 2026-11-15 by the PersistAnt lane. Request: SageAnt (Knowledge Store), via
+Status: **layer over kv, first (PM 2026-11-15); section 3 accepted by SageAnt 2026-11-15 (v1 as written, erased replace
+not needed); waiting on the PM for the feature split in section 7 before code.** Written 2026-11-15 by the PersistAnt lane. Request: SageAnt (Knowledge Store), via
 the PM, 2026-11-14. SageAnt keeps its postings today in `KvTextIndex` (sageant-persistant 0.3.8, `src/index.rs`)
 over PersistAnt kv 0.18 on SQLite; nothing in PersistAnt offers lexical search (the only mention of full text is
 `tsvector` decoded loudly, `docs/DECODER-AUDIT.md`).
@@ -88,11 +88,11 @@ as part of a posting key), so there is nothing else to erase. **What it does not
 operating-system and engine caveats of `kv.delete_erased` (journals, snapshots, backups, wear levelling); (b) on
 SQLite, **a posting or record that was removed or overwritten earlier by a plain batch** (a re-index that dropped
 a term, a replaced document record) leaves its old bytes in the database's free space unless `secure_delete` was on
-at that moment; this is the open case of row 38. The proposed closure is a replace that removes terms through the
-erased path (`put(..., erase_dropped: true)`: the dropped term keys and the old record are erased first, then the
-new document written, a sequence the same journal makes resumable), and, as its own row-38 follow-up, an opt-in
-`SqliteBackend` profile with `secure_delete` on for every connection. SageAnt's "erased" wording waits for these,
-as it already says.
+at that moment; this is the open case of row 38. **SageAnt does not need an erased replace** (a version's text is immutable, so a
+re-index rewrites the same terms and drops none; whole-document erased removal is the only forget), so v1 has none.
+The closure for every other case is an opt-in `SqliteBackend` profile with `secure_delete` on for every connection,
+a row-38 follow-up declared as a capability (section 8, item 4) that SageAnt names as a **preference** in its storage
+need, never a requirement, so "unretrievable" becomes "erased" only on a store that has it.
 
 ## 4. Key layout
 
@@ -148,13 +148,16 @@ PM prefers one feature, `text-index` pulls both.
 1. `persistant_kv::text`: `put`, `remove_many`, `postings`, `doc_len`, `stats`, `docs`, `search`; leaf `text.index`;
    the tests above; matrix rows for memory, SQLite, `sqlite-full`, PostgreSQL, MySQL, MariaDB; refused on blob.
 2. The tokenising helper and its fixed-corpus test (feature `text-index-tokenizer`).
-3. `remove_erased`, `put(..., erase_dropped)` and leaf `text.index.erased`, behind `kv.delete_erased`.
+3. `remove_erased` and leaf `text.index.erased`, behind `kv.delete_erased`. `docs(index, after, limit)` returns the
+   `doc_id`s of the document records, so a consumer can find a document whose record exists but whose own store
+   entry is gone (SageAnt's retry-until-done for an interrupted removal).
 4. Row-38 follow-up: an opt-in SQLite profile with `secure_delete` on for every connection (closes the "removed
-   earlier by a plain batch" gap for every table, not only this index).
+   earlier by a plain batch" gap for every table, not only this index), declared as a capability a consumer can
+   list as a preference (the registry's `preferred` list, `Listing::preferred`), tested by the same raw-file read-back
+   with a plain `delete` and `put` overwrite as controls. SageAnt's request, 2026-11-15.
 5. Only if measured and asked: prefix queries; BM25 with sharded statistics; a native `text.native` per engine.
 
 ## 9. Questions still open
 
-1. **SageAnt:** does a document that carries pre-computed `(term, tf)` pairs (not raw text) suit your flow? Is the
-   erased replace (`erase_dropped`) needed, or is erased removal of whole documents enough?
-2. **PM:** one feature or two (section 7)?
+1. **PM:** one feature or two (section 7)?
+2. Answered by SageAnt 2026-11-15: pre-computed `(term, tf)` pairs suit its flow; erased replace is not needed.
