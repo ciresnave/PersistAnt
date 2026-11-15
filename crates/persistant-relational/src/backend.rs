@@ -111,6 +111,15 @@ pub trait RelationalTx: Send {
         params: &[Value],
     ) -> impl Future<Output = Result<Vec<Row>, RelError>> + Send;
 
+    /// Make this transaction an **erasing** one (`relational.execute_erased` for a whole
+    /// transaction): content its statements delete or overwrite is zeroed in the storage as it is
+    /// freed, and whatever log holds earlier images is truncated after the commit, so the commit's
+    /// own success or failure says whether that happened. Call it before the first statement. A
+    /// backend that cannot returns [`RelError::Unsupported`]; the default does, and nothing has run.
+    fn erase_on_commit(&mut self) -> impl Future<Output = Result<(), RelError>> + Send {
+        async { Err(RelError::Unsupported("erase_on_commit".to_string())) }
+    }
+
     /// Commit.
     fn commit(self) -> impl Future<Output = Result<(), RelError>> + Send;
 

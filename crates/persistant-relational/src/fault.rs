@@ -220,6 +220,15 @@ impl<T: RelationalTx> RelationalTx for FaultyTx<T> {
         run(&self.state, "tx.query", self.inner.query(sql, params)).await
     }
 
+    async fn erase_on_commit(&mut self) -> Result<(), RelError> {
+        run(
+            &self.state,
+            "tx.erase_on_commit",
+            self.inner.erase_on_commit(),
+        )
+        .await
+    }
+
     async fn commit(self) -> Result<(), RelError> {
         run(&self.state, "tx.commit", self.inner.commit()).await
     }
