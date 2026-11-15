@@ -1,6 +1,8 @@
 # Design: a text index (lexical search), ROADMAP row 39
 
-Status: **layer over kv, first (PM 2026-11-15); section 3 accepted by SageAnt 2026-11-15 (v1 as written, erased replace
+Status: **step 1 built (`persistant_kv::text`, feature `text-index`: `put`, `remove_many`, `postings`, `doc_len`, `stats`,
+`docs`, `search`; tests against an oracle on memory and SQLite; the matrix leaf `text.index`, the tokenising helper and the
+erased removal follow, section 8); layer over kv, first (PM 2026-11-15); section 3 accepted by SageAnt 2026-11-15 (v1 as written, erased replace
 not needed); waiting on the PM for the feature split in section 7 before code.** Written 2026-11-15 by the PersistAnt lane. Request: SageAnt (Knowledge Store), via
 the PM, 2026-11-14. SageAnt keeps its postings today in `KvTextIndex` (sageant-persistant 0.3.8, `src/index.rs`)
 over PersistAnt kv 0.18 on SQLite; nothing in PersistAnt offers lexical search (the only mention of full text is
@@ -50,13 +52,15 @@ namespace.
   list: the forward list), and the corpus totals, with a `Require` on the totals record; a lost race retries
   inside, bounded (SageAnt's loop, 16). Putting an existing `doc_id` replaces it: postings no longer in the new set
   are removed in the same batch and the totals move by the difference. `remove_many(index, &[doc_id])` is one
-  batch too (by lineage: the caller lists the versions). All keys of a document carry the same ttl.
-- **Read, as numbers.** `postings(index, term, after, limit) -> Vec<(doc_id, tf)>` in ascending `doc_id` order,
-  from one snapshot (`ordered_scan_values`), paged; `doc_len(index, doc_id)`; `stats(index) -> (docs, total_len)`;
+  batch too (by lineage: the caller lists the versions); an index left with no documents holds no keys. **v1 has no
+  expiry**: the corpus totals cannot expire with a document, so a time to live would make them drift.
+- **Read, as numbers.** `postings(index, term, after, limit) -> PostingPage` of `(doc_id, tf)` in ascending `doc_id`
+  order, from one snapshot (`ordered_scan_values`), paged; `doc_len(index, doc_id)`; `stats(index) -> (docs, total_len)`;
   `docs(index, after, limit)` scans the document records (the "all documents" scan). The number of documents
   holding a term is the posting count over the pages. All integers, no floats, so a consumer can rank bit-identically.
 - **Read, as a query (convenience).** `search(index, terms, Any | All, limit)`: `Any` is SageAnt's bag of words,
-  `All` is AND; results ordered by the sum of tf, ties by `doc_id` ascending. **No BM25 in v1** (a named later row,
+  `All` is AND; results ordered by the sum of tf, ties by `doc_id` ascending. Each term's postings are from a snapshot
+  of their own (`postings` is one snapshot per call); `search` is not one snapshot across terms. **No BM25 in v1** (a named later row,
   per the PM); SageAnt keeps its own ranker over `postings` / `doc_len` / `stats`, so it can delete `KvTextIndex`
   and implement its `TextIndex` trait over this.
 - **Tokenisation is optional and separate.** The index takes terms, not text, so it imposes no tokeniser on a

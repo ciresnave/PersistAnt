@@ -23,6 +23,8 @@ tracing = { version = "0.1.44", optional = true }
 
 [features]
 tracing = ["dep:tracing"]
+# `text::TextIndex`: a text index over any kv backend with `batch` and `ordered_scan_values`. No new dependency.
+text-index = []
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["rt", "macros"] }

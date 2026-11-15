@@ -69,6 +69,8 @@ relational = ["dep:persistant-relational"]
 relational-tracing = ["relational", "persistant-relational/tracing"]
 kv = ["dep:persistant-kv", "blob", "relational", "core"]
 kv-tracing = ["kv", "persistant-kv/tracing"]
+# `persistant::kv::text::TextIndex`: a text index over any kv backend with atomic batches (docs/DESIGN-TEXT-INDEX.md).
+text-index = ["kv", "persistant-kv/text-index"]
 opendal-driver = ["dep:persistant-opendal", "blob"]
 sqlx-driver = ["dep:persistant-sqlx", "relational"]
 # `persistant::registry`: needs in, sorted backends out, `open_named` by the id kept in config. `registry`
@@ -87,6 +89,14 @@ sql-json = ["sql-macros", "persistant-relational/json"]
 # `persistant::sqlx_query!`, `sqlx_query_as!`, `sqlx_query_scalar!`: sqlx's argument shape, typed from `.sqlx` offline data, run through UniSQL and PersistAnt (docs/DESIGN-SQLX-BRIDGE.md). `sqlx-query-checked` also runs sqlx's own check of each literal (your crate depends on sqlx with its `macros` feature).
 sqlx-query = ["sql-macros"]
 sqlx-query-checked = ["sqlx-query", "persistant-macros/sqlx-check"]
+
+[[test]]
+name = "text_index"
+required-features = ["text-index"]
+
+[[test]]
+name = "text_index_sqlite"
+required-features = ["text-index", "registry-sqlite"]
 
 [[example]]
 name = "hello"
