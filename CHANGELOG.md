@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.11 — docs: design note for a text index (ROADMAP row 39)
+
+`docs/DESIGN-TEXT-INDEX.md`: a lexical-search layer over kv (leaf `text.index`, same contract on every backend with `kv.batch_atomic` and `kv.ordered_scan_values`) first, native engines later as a separate capability (PM ruling 2026-11-15). Shaped to SageAnt's reply: v1 hands out integers (postings with tf, document length, corpus totals, an all-documents scan) so a consumer ranks with its own BM25, plus an Any/All search in term-frequency order; takes terms, not text; erased removal that is atomic for the statistics and resumable for the postings, with its stated limits (including the SQLite free-space case row 38 leaves open); key layout; tests with controls; the dependencies' MSRVs. Documentation only; no code.
+
 ## 0.18.10 — docs: README limits for atomic batches and erased delete; ROADMAP rows 38, 39, 40
 
 README "Limits" now says where `kv.batch_atomic` is available (SQLite, PostgreSQL, MySQL and MariaDB; not a blob store through `KvOnBlob`, so the matrix has no rows for memory or `fs`) and what `blob.delete_erased` / `kv.delete_erased` promise and do not (contents overwritten, not gone from the disk; per-backend state). ROADMAP row 38 records what is built, row 39 stays scheduled, row 40 records `Endpoint::fits` as done. Documentation only.
