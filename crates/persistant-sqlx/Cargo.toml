@@ -126,3 +126,7 @@ name = "pg_vs_sqlx"
 [[test]]
 name = "sqlite_delete_erased"
 required-features = ["sqlite"]
+
+[[test]]
+name = "kv_sqlite_delete_erased"
+required-features = ["sqlite"]
