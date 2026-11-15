@@ -234,6 +234,66 @@ async fn the_rel_handle_works_on_each_server_in_reach() {
     }
 }
 
+/// `providers` and `open_named` agree on each server in reach: every capability the registry lists
+/// the server for opens it (the gate, twice), alone and beside `kv.get`. The local twin is
+/// `registry_listed_opens.rs`; 0.18.12's `sqlite-full` was listed for `rel.*` and refused at open.
+#[tokio::test]
+async fn every_need_a_server_is_listed_for_opens_it() {
+    use persistant::capability::vocabulary;
+    let mut cases: Vec<(&str, String)> = Vec::new();
+    #[cfg(feature = "registry-postgres")]
+    if let Some(v) = url_var(
+        "PERSISTANT_TEST_DATABASE_URL",
+        "PERSISTANT_REQUIRE_DATABASE",
+    ) {
+        cases.push(("postgres", v));
+    }
+    #[cfg(feature = "registry-mysql")]
+    if let Some(v) = url_var("PERSISTANT_TEST_MYSQL_URL", "PERSISTANT_REQUIRE_MYSQL") {
+        let maria = std::env::var("PERSISTANT_TEST_MYSQL_FLAVOR").as_deref() == Ok("mariadb");
+        cases.push((if maria { "mariadb" } else { "mysql" }, v));
+    }
+    let mut refused = Vec::new();
+    let mut checked = 0;
+    for (name, var) in cases {
+        let ep = Endpoint::url_env(&var);
+        for (cap, _) in vocabulary::seed() {
+            // A bounded need wants a call bound at open; the options here carry none.
+            if cap.as_str() == "kv.bounded_call" {
+                continue;
+            }
+            let k = CapabilityId::new("kv.get").unwrap();
+            for ids in [vec![cap.clone()], vec![k, cap.clone()]] {
+                let n = ProviderNeeds::new(ids, Durability::Volatile);
+                let listed = registry::providers(&n)
+                    .map(|l| l.iter().any(|x| x.id == name))
+                    .unwrap_or(false);
+                if !listed {
+                    continue;
+                }
+                checked += 1;
+                if let Err(OpenError::Unmet(u)) = registry::open_named(name, &ep, &n).await {
+                    refused.push(format!(
+                        "{name} listed for {:?} but open_named says Unmet: {u:?}",
+                        n.ids()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        refused.is_empty(),
+        "{} listing(s) cannot be opened:
+{}",
+        refused.len(),
+        refused.join(
+            "
+"
+        )
+    );
+    eprintln!("checked {checked} listings");
+}
+
 /// The live check at open (ROADMAP row 10) passes on each server in reach, and leaves no table behind.
 #[tokio::test]
 async fn a_live_check_passes_on_each_server_in_reach() {
