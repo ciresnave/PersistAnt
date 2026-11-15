@@ -72,3 +72,49 @@ async fn the_memory_service_says_unsupported() {
     // Nothing was removed by the refusal.
     assert!(b.read("k").await.unwrap().is_some());
 }
+
+fn only_file(dir: &std::path::Path) -> std::path::PathBuf {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(d).unwrap() {
+            let e = e.unwrap();
+            if e.file_type().unwrap().is_dir() {
+                stack.push(e.path());
+            } else {
+                found.push(e.path());
+            }
+        }
+    }
+    assert_eq!(found.len(), 1, "{found:?}");
+    found.remove(0)
+}
+
+/// `kv.delete_erased` over `fs`: the record file (value inside an envelope) is overwritten.
+#[tokio::test]
+async fn kv_delete_erased_overwrites_the_record_file() {
+    use persistant_kv::{KvBackend, KvOnBlob};
+    let (dir, b, root) = setup();
+    let kv = KvOnBlob::with_in_place_put(b);
+    kv.put("user/1", CANARY.to_vec(), None).await.unwrap();
+    let alias = dir.path().join("alias");
+    std::fs::hard_link(only_file(&root), &alias).unwrap();
+    assert!(holds_canary(&alias));
+    kv.delete_erased("user/1").await.unwrap();
+    assert_eq!(kv.get("user/1").await.unwrap(), None);
+    assert!(!holds_canary(&alias), "the value survived the erase");
+    kv.delete_erased("absent").await.unwrap();
+}
+
+/// Control: plain `kv.delete` leaves the value readable through the second link.
+#[tokio::test]
+async fn kv_plain_delete_keeps_the_record_bytes() {
+    use persistant_kv::{KvBackend, KvOnBlob};
+    let (dir, b, root) = setup();
+    let kv = KvOnBlob::with_in_place_put(b);
+    kv.put("user/1", CANARY.to_vec(), None).await.unwrap();
+    let alias = dir.path().join("alias");
+    std::fs::hard_link(only_file(&root), &alias).unwrap();
+    kv.delete("user/1").await.unwrap();
+    assert!(holds_canary(&alias));
+}

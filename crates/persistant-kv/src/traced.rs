@@ -92,6 +92,15 @@ impl<K: KvBackend> KvBackend for Traced<K> {
             .await
     }
 
+    async fn delete_erased(&self, key: &str) -> Result<(), KvError> {
+        self.span(
+            "delete_erased",
+            "kv.delete_erased",
+            self.inner.delete_erased(key),
+        )
+        .await
+    }
+
     async fn put_if_absent(
         &self,
         key: &str,

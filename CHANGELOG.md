@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.5 — `KvBackend::delete_erased` (row 38, slice 2)
+
+New default method `KvBackend::delete_erased(key)` (capability `kv.delete_erased`): overwrite the bytes that stored the value, then remove the key. Default `Unsupported`, so no existing backend changes. `KvOnBlob` forwards to the blob's `delete_erased`, so it works over `OpendalBlob` on `fs` (zero-fill, sync, unlink) and is `Unsupported` over a blob that lacks it. `Instrumented`, `Traced` and the fault wrapper forward it. Same promise as the blob leaf: contents overwritten, not "gone from the disk".
+
+Verified through a second hard link to the record file: plain `kv.delete` leaves the value readable there (control); `kv.delete_erased` does not. Not yet: SQLite (`secure_delete`, WAL checkpoint), PostgreSQL / MySQL, KvOnRelational, and the matrix rows.
+
 ## 0.18.4 — `BlobBackend::delete_erased` (row 38, first slice)
 
 New default method `BlobBackend::delete_erased(key)` (capability `blob.delete_erased`): overwrite the stored bytes, then remove the key. The default returns `Unsupported`, so no existing backend changes. `OpendalBlob` on `fs` implements it (zero-fill in place, `sync_all`, unlink); the memory service stays `Unsupported`. `Instrumented` and `Traced` forward it. The promise is "contents overwritten before the name was removed", not "gone from the disk": journaling and copy-on-write file systems, SSD wear levelling, snapshots and backups can keep copies.
