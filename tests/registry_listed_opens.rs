@@ -7,7 +7,7 @@
 //! The server ids are not opened here (a port nothing listens on costs a connection timeout per
 //! listing: 48 minutes for the full vocabulary); `registry_servers.rs` runs the same check against
 //! the real servers the CI jobs provide.
-#![cfg(feature = "registry")]
+#![cfg(feature = "registry-sqlite")]
 
 use persistant::capability::choose::Durability;
 use persistant::capability::provider::ProviderNeeds;
@@ -56,19 +56,19 @@ async fn every_listed_provider_passes_the_open_gate_for_the_same_needs() {
                     continue;
                 }
                 checked += 1;
-                #[cfg(feature = "registry-sqlite")]
                 if l.id == "sqlite-full" && cap.as_str().starts_with("rel.") {
                     full_rel += 1;
                 }
                 let d = dir.path().join(format!("{checked}"));
                 std::fs::create_dir_all(&d).unwrap();
-                match registry::open_named(l.id, &endpoint_for(l.id, &d), &needs).await {
-                    Err(OpenError::Unmet(u)) => refused.push(format!(
+                if let Err(OpenError::Unmet(u)) =
+                    registry::open_named(l.id, &endpoint_for(l.id, &d), &needs).await
+                {
+                    refused.push(format!(
                         "{} listed for {:?} but open_named says Unmet: {u:?}",
                         l.id,
                         ids.iter().map(|i| i.as_str()).collect::<Vec<_>>()
-                    )),
-                    _ => {}
+                    ));
                 }
             }
         }
@@ -76,6 +76,10 @@ async fn every_listed_provider_passes_the_open_gate_for_the_same_needs() {
     assert!(
         checked > 20,
         "control: the test looked at {checked} listings only"
+    );
+    assert!(
+        full_rel > 5,
+        "control: sqlite-full was checked for only {full_rel} relational needs"
     );
     assert!(
         refused.is_empty(),
@@ -87,7 +91,6 @@ async fn every_listed_provider_passes_the_open_gate_for_the_same_needs() {
 
 /// The case that failed in 0.18.12, end to end: `sqlite-full` opens for relational needs and the
 /// relational handle runs a statement.
-#[cfg(feature = "registry-sqlite")]
 #[tokio::test]
 async fn sqlite_full_opens_for_relational_needs_and_runs_a_statement() {
     use persistant::capability::CapabilityId;
