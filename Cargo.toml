@@ -71,6 +71,8 @@ kv = ["dep:persistant-kv", "blob", "relational", "core"]
 kv-tracing = ["kv", "persistant-kv/tracing"]
 # `persistant::kv::text::TextIndex`: a text index over any kv backend with atomic batches (docs/DESIGN-TEXT-INDEX.md).
 text-index = ["kv", "persistant-kv/text-index"]
+# `persistant::kv::text_tokenizer::tokenize`: text to `(term, frequency)` for `TextIndex::put` (adds `unicode-segmentation` and `unicode-normalization`).
+text-index-tokenizer = ["text-index", "persistant-kv/text-index-tokenizer"]
 opendal-driver = ["dep:persistant-opendal", "blob"]
 sqlx-driver = ["dep:persistant-sqlx", "relational"]
 # `persistant::registry`: needs in, sorted backends out, `open_named` by the id kept in config. `registry`
@@ -109,6 +111,10 @@ required-features = ["registry-sqlite"]
 [[test]]
 name = "registry_listed_opens"
 required-features = ["registry-sqlite"]
+
+[[test]]
+name = "text_tokenizer"
+required-features = ["text-index-tokenizer"]
 
 [[example]]
 name = "hello"

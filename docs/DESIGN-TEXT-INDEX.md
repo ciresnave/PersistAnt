@@ -144,7 +144,7 @@ Both are below this workspace's 1.94, so neither raises it. `unicode-normalizati
 licence term, which `deny.toml` already allows (line 22, read at `origin/main`); the feature's PR still runs
 `cargo deny` with the feature on. **One refinement to confirm:** because the index takes terms, not text, only the
 tokenising helper needs the two crates. Proposed: feature `text-index` (the index; no new dependency) and feature
-`text-index-tokenizer` (the helper; the two crates), so SageAnt, which has its own tokeniser, pulls neither. If the
+`text-index-tokenizer` (the helper; the two crates), so SageAnt, which has its own tokeniser, pulls neither. **Built (step 3):** `persistant_kv::text_tokenizer::tokenize`, NFKC then lower-case then UAX #29 words, words over 64 bytes dropped; it adds no MSRV pressure (both crates are below 1.94). If the
 PM prefers one feature, `text-index` pulls both.
 
 ## 8. Order of work once agreed
