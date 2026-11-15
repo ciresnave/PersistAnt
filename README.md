@@ -177,7 +177,10 @@ Much of it is built since (key-value and relational kinds, SQLite, PostgreSQL, M
   space inside a page). Journaling and copy-on-write file systems, SSD wear levelling, snapshots and backups can keep
   copies. The memory service and PostgreSQL, MySQL and MariaDB record it off as missing: a deleted tuple stays until
   vacuum or purge, and the log and backups keep it. Each recorded row was read back from the files with a canary and a
-  known-bad control.
+  known-bad control. For a value an earlier plain `put` or `delete` left behind on SQLite, open the registry id
+  `sqlite-secure` (`SqliteBackend::open_secure`: `secure_delete` on for every connection, rollback journal): a plain
+  overwrite or delete then leaves no old bytes in the file (`storage.secure_delete`, read back from the files). It is not
+  WAL (`secure_delete` does not reach a WAL file's earlier page images), so `sqlite-full` does not claim it.
 - **`memory` counts as atomic** because a value becomes visible in one map insert on close.
 
 ## The other kinds (opt-in features)

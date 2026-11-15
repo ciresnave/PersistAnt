@@ -28,7 +28,7 @@
 //! and never change meaning**: a changed meaning is a new id (the list is pinned by a test). The
 //! version of the driver or server is not part of the id; the gate checks it ([`open_named`]
 //! re-reads the recorded matrix for the backend it actually opened and refuses if it is not on
-//! it). The ids today: `memory`, `fs`, `sqlite`, `sqlite-full`.
+//! it). The ids today: `memory`, `fs`, `sqlite`, `sqlite-full`, `sqlite-secure`.
 //!
 //! # What a build can offer, and when a rebuild is needed
 //! The table is **compiled in** from the enabled features (`registry` gives `memory` and `fs`;
@@ -525,6 +525,23 @@ fn specs() -> Vec<Spec> {
             ],
         });
     }
+    #[cfg(feature = "registry-sqlite")]
+    v.push(Spec {
+        id: "sqlite-secure",
+        title: "SQLite file, secure delete (freed content zeroed)",
+        kv_backend: "kv-on-relational:sqlite",
+        facts: &[("dialect", "sqlite"), ("secure_delete", "on")],
+        blob: None,
+        rel: Some((
+            "sqlite",
+            &[("dialect", "sqlite"), ("secure_delete", "on")],
+        )),
+        endpoint: || EndpointSpec::Path,
+        notes: &[
+            "Same engine and rollback journal as `sqlite` (default durability, no `synchronous` assertion), opened with `secure_delete` on for every connection: a delete or an overwrite leaves no old bytes in the database file. Slower writes.",
+            "Not WAL: `secure_delete` does not reach a WAL file's earlier page images, so there is no durable form; on a WAL database use `kv.delete_erased`, which checkpoints. The rollback journal's pre-images are removed, not zeroed, at the end of each transaction, and file systems, snapshots and backups can keep copies.",
+        ],
+    });
     #[cfg(feature = "registry-postgres")]
     v.push(Spec {
         id: "postgres",
@@ -1539,9 +1556,11 @@ async fn open_rel(
     let open = |e: &dyn fmt::Display| OpenError::Open(e.to_string());
     match (id, endpoint) {
         #[cfg(feature = "registry-sqlite")]
-        ("sqlite" | "sqlite-full", Endpoint::Path(file)) => {
+        ("sqlite" | "sqlite-full" | "sqlite-secure", Endpoint::Path(file)) => {
             let db = if id == "sqlite-full" {
                 SqliteBackend::open_durable(file).await
+            } else if id == "sqlite-secure" {
+                SqliteBackend::open_secure(file).await
             } else {
                 SqliteBackend::open(file).await
             }
@@ -1604,11 +1623,14 @@ async fn open_kv(
             Ok(AnyKv::Blob(kv))
         }
         #[cfg(feature = "registry-sqlite")]
-        ("sqlite" | "sqlite-full", Endpoint::Path(file)) => {
+        ("sqlite" | "sqlite-full" | "sqlite-secure", Endpoint::Path(file)) => {
             let durable = id == "sqlite-full";
+            let secure = id == "sqlite-secure";
             let connect = || async {
                 if durable {
                     SqliteBackend::open_durable(file).await
+                } else if secure {
+                    SqliteBackend::open_secure(file).await
                 } else {
                     SqliteBackend::open(file).await
                 }

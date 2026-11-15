@@ -99,6 +99,10 @@ pub const SEED: &[(&str, &str)] = &[
         "delete removes the key and a later get reports it absent",
     ),
     (
+        "storage.secure_delete",
+        "content a statement deletes or overwrites is zeroed in the database file as it is freed, so neither a delete nor an overwrite leaves the old bytes there, read back from the files; not a claim about a write-ahead log, a rollback journal's pre-images, or copies a file system, snapshot or backup keeps",
+    ),
+    (
         "kv.delete_erased",
         "a key removed this way has had the stored bytes of its value overwritten, or on a database the freed pages and the write-ahead log, before the key was removed, read back from the files; not a claim about copies a file system, snapshot or backup keeps",
     ),
