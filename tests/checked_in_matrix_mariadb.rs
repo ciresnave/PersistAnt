@@ -10,8 +10,8 @@ fn the_recorded_mariadb_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        42,
-        "twenty-two kv/lock leaves (kv.bounded_call twice: unset and set) and nineteen relational leaves (thirteen contract, six migration) are certified"
+        43,
+        "twenty-two kv/lock leaves (kv.bounded_call twice: unset and set) and nineteen relational leaves (thirteen contract, six migration) are certified, and kv.delete_erased once, off as missing"
     );
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),
@@ -24,6 +24,13 @@ fn the_recorded_mariadb_rows_are_all_on_and_read_by_the_gate() {
                 "{}",
                 r.note
             );
+            continue;
+        }
+        // No erasing statement on this server: recorded off, missing, from the call itself.
+        if r.subject.as_str() == "kv.delete_erased" {
+            assert!(!r.enabled, "{}", r.note);
+            assert_eq!(r.reason, Some(persistant::capability::Reason::Missing));
+            assert!(r.backend.starts_with("kv-on-relational:"), "{}", r.backend);
             continue;
         }
         // MariaDB commits DDL implicitly: that leaf is off.

@@ -75,5 +75,23 @@ async fn main() {
         .execute("DROP SCHEMA IF EXISTS persistant_mig_matrix CASCADE", &[])
         .await
         .expect("drop scratch schema");
+    // `kv.delete_erased`: this server has no erasing statement (a deleted tuple stays until
+    // vacuum or purge, and the log and backups keep it); the row is recorded from the call.
+    let erased = match persistant_kv::KvBackend::delete_erased(&kv, "matrix-probe").await {
+        Err(persistant_kv::KvError::Unsupported(m)) => persistant_core::erased::ErasedTrial {
+            unsupported: Some(format!("kv does not support: {m}")),
+            ..Default::default()
+        },
+        other => panic!("delete_erased was expected to be unsupported here: {other:?}"),
+    };
+    rows.push(persistant_core::erased::erased_row(
+        "kv.delete_erased",
+        persistant_kv::KvBackend::backend(&kv),
+        persistant_kv::KvBackend::version(&kv),
+        config.clone(),
+        &env,
+        "delete_erased::kv.delete_erased",
+        &erased,
+    ));
     print!("{}", Matrix::from_rows(rows).to_tsv());
 }

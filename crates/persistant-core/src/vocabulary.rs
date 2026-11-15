@@ -55,6 +55,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a value created with an owner-only mode is not readable by another user",
     ),
     (
+        "blob.delete_erased",
+        "a key removed this way has had the bytes of its value overwritten in place before the name was removed, read back through a second link to the same file; not a claim about copies a file system, snapshot or backup keeps",
+    ),
+    (
         "blob.append",
         "appended bytes are added after the existing bytes in call order",
     ),
@@ -93,6 +97,10 @@ pub const SEED: &[(&str, &str)] = &[
     (
         "kv.delete",
         "delete removes the key and a later get reports it absent",
+    ),
+    (
+        "kv.delete_erased",
+        "a key removed this way has had the stored bytes of its value overwritten, or on a database the freed pages and the write-ahead log, before the key was removed, read back from the files; not a claim about copies a file system, snapshot or backup keeps",
     ),
     (
         "kv.ttl",
