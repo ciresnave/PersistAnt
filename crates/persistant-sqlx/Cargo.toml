@@ -33,7 +33,8 @@ sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio
 
 [dev-dependencies]
 sha2 = "0.11"
-persistant-kv = { workspace = true }
+# The matrix examples certify `text.index` (`persistant_kv::text_conformance`).
+persistant-kv = { workspace = true, features = ["text-index"] }
 # `persistant::sql!` end to end: the macro, and the `sql` feature of persistant-relational for its traits.
 persistant-macros = { workspace = true }
 persistant-relational = { workspace = true, features = ["sql", "uuid", "chrono", "json"] }

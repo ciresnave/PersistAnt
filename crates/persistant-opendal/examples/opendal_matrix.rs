@@ -125,6 +125,11 @@ async fn run(env: Config, crash_rows: Vec<Row>, lock_row: Row) {
         let cfg = merged(kv.blob().config(), &kv.config());
         let certified = persistant_kv::conformance::certify(kv, &cfg, &env).await;
         rows.extend(clean(certified.into_iter().map(|c| c.row), &tmp));
+        // `text.index`: the text index over this kv (a blob store has no atomic batch: off, missing).
+        let text =
+            persistant_kv::text_conformance::certify(kv, kv.backend(), kv.version(), &cfg, &env)
+                .await;
+        rows.extend(clean([text], &tmp));
     }
 
     // `kv.delete_erased` over the same four configurations, each on a root of its own so the
