@@ -182,6 +182,16 @@ pub trait KvBackend: Send + Sync {
     /// Remove `key`. Removing an absent key is `Ok` (`kv.delete`).
     fn delete(&self, key: &str) -> impl Future<Output = Result<(), KvError>> + Send;
 
+    /// Remove `key` after overwriting the bytes that stored its value (`kv.delete_erased`). The
+    /// promise is "the stored bytes were overwritten before the key was removed", not "gone from
+    /// the disk": journals, copy-on-write, wear levelling, snapshots and backups can keep copies.
+    /// Removing an absent key is `Ok`. A backend that cannot overwrite in place returns
+    /// [`KvError::Unsupported`]; the default does.
+    fn delete_erased(&self, key: &str) -> impl Future<Output = Result<(), KvError>> + Send {
+        let _ = key;
+        async { Err(KvError::Unsupported("delete_erased".to_string())) }
+    }
+
     /// Store `value` only if the key is absent **or expired**. `Ok(true)` stored it, `Ok(false)`
     /// found a live value and changed nothing. Of concurrent calls for one key exactly one gets `Ok(true)`
     /// (`kv.put_if_absent`).

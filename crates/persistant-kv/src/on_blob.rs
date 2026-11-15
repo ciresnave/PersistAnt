@@ -329,6 +329,11 @@ impl<B: BlobBackend> KvBackend for KvOnBlob<B> {
         Ok(self.blob.delete(&self.blob_key(key)).await?)
     }
 
+    /// As the blob's `delete_erased`: the record file is overwritten, then removed.
+    async fn delete_erased(&self, key: &str) -> Result<(), KvError> {
+        Ok(self.blob.delete_erased(&self.blob_key(key)).await?)
+    }
+
     async fn put_if_absent(
         &self,
         key: &str,
