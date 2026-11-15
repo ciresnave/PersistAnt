@@ -515,6 +515,20 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         Ok(())
     }
 
+    /// The same delete through the relational backend's `execute_erased`: `Unsupported` where that
+    /// backend has none (PostgreSQL, MySQL), the freed pages and log overwritten on SQLite.
+    async fn delete_erased(&self, key: &str) -> Result<(), KvError> {
+        let (sql, params) = self
+            .tr
+            .prepare(
+                "DELETE FROM persistant_kv WHERE k = $1",
+                &[Value::Bytes(key.as_bytes().to_vec())],
+            )
+            .map_err(err)?;
+        self.db.execute_erased(&sql, &params).await.map_err(err)?;
+        Ok(())
+    }
+
     async fn put_if_absent(
         &self,
         key: &str,
