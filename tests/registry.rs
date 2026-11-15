@@ -775,3 +775,40 @@ async fn the_blob_handle_exists_only_for_a_need_that_named_a_blob_id() {
     // The key-value store is always there (additive).
     h.kv().put("k", b"v".to_vec(), None).await.unwrap();
 }
+
+#[test]
+fn endpoint_fits_says_which_listings_an_endpoint_can_open() {
+    use persistant::capability::provider::EndpointSpec;
+    use persistant::relational::ConnectionSecret;
+    let url = |s: &str| Endpoint::Secret(ConnectionSecret::literal(s));
+    let pg = EndpointSpec::Url {
+        schemes: vec!["postgres".into(), "postgresql".into()],
+    };
+    let dir = std::env::temp_dir();
+    assert!(Endpoint::None.fits(&EndpointSpec::None).unwrap());
+    assert!(!Endpoint::None.fits(&EndpointSpec::Path).unwrap());
+    assert!(Endpoint::path(&dir).fits(&EndpointSpec::Path).unwrap());
+    assert!(!Endpoint::path(&dir).fits(&pg).unwrap());
+    assert!(url("postgres://u:pw@h/db").fits(&pg).unwrap());
+    assert!(!url("mysql://u:pw@h/db").fits(&pg).unwrap());
+    assert!(!url("no-scheme-here").fits(&pg).unwrap());
+    assert!(
+        !url("postgres://u:pw@h/db")
+            .fits(&EndpointSpec::Path)
+            .unwrap()
+    );
+    // An unreadable secret is an error that does not carry what it could not read.
+    let e = Endpoint::url_env("PERSISTANT_NO_SUCH_VARIABLE_FOR_FITS")
+        .fits(&pg)
+        .unwrap_err();
+    assert!(!format!("{e} {e:?}").contains("pw"));
+    // Every listing a consumer gets can be asked the same question.
+    let needs = basic(Durability::Volatile);
+    let listings = registry::providers(&needs).unwrap();
+    let ids: Vec<_> = listings
+        .iter()
+        .filter(|l| Endpoint::None.fits(&l.endpoint).unwrap())
+        .map(|l| l.id)
+        .collect();
+    assert_eq!(ids, ["memory"]);
+}
