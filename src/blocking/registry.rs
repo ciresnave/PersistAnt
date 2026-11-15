@@ -163,6 +163,14 @@ impl KvHandle {
         self.call(|h| async move { h.kv().delete(&key).await })
     }
 
+    /// See [`KvBackend::delete_erased`]: the value's stored bytes are overwritten before the key is
+    /// removed, where the backend can (`fs`, SQLite, including a WAL database); `Unsupported` where it
+    /// cannot (memory, PostgreSQL, MySQL, MariaDB).
+    pub fn delete_erased(&self, key: &str) -> Result<(), KvError> {
+        let key = key.to_string();
+        self.call(|h| async move { h.kv().delete_erased(&key).await })
+    }
+
     /// See [`KvBackend::put_if_absent`].
     pub fn put_if_absent(
         &self,
@@ -328,6 +336,13 @@ impl BlobHandle<'_> {
     pub fn delete(&self, key: &str) -> Result<(), BlobError> {
         let key = key.to_string();
         self.run(|h| async move { h.blob().expect("present").delete(&key).await })
+    }
+
+    /// See [`BlobBackend::delete_erased`]: the file's bytes are overwritten before it is unlinked
+    /// (`fs`); `Unsupported` on the memory service.
+    pub fn delete_erased(&self, key: &str) -> Result<(), BlobError> {
+        let key = key.to_string();
+        self.run(|h| async move { h.blob().expect("present").delete_erased(&key).await })
     }
 
     /// See [`BlobBackend::stat`].
@@ -526,6 +541,19 @@ impl RelHandle<'_> {
     pub fn execute(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
         let (sql, params) = (sql.to_string(), params.to_vec());
         self.run(|h| async move { h.rel().expect("present").execute(&sql, &params).await })
+    }
+
+    /// See [`RelationalBackend::execute_erased`]: on SQLite the statement runs with `secure_delete`
+    /// on and the write-ahead log is truncated after it; `Unsupported` on PostgreSQL, MySQL and
+    /// MariaDB.
+    pub fn execute_erased(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        let (sql, params) = (sql.to_string(), params.to_vec());
+        self.run(|h| async move {
+            h.rel()
+                .expect("present")
+                .execute_erased(&sql, &params)
+                .await
+        })
     }
 
     /// See [`RelationalBackend::query`].

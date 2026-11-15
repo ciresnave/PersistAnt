@@ -88,6 +88,10 @@ sql-json = ["sql-macros", "persistant-relational/json"]
 sqlx-query = ["sql-macros"]
 sqlx-query-checked = ["sqlx-query", "persistant-macros/sqlx-check"]
 
+[[test]]
+name = "registry_erased"
+required-features = ["registry-sqlite"]
+
 [[example]]
 name = "hello"
 required-features = ["registry"]
