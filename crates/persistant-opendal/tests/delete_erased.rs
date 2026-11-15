@@ -118,3 +118,25 @@ async fn kv_plain_delete_keeps_the_record_bytes() {
     kv.delete("user/1").await.unwrap();
     assert!(holds_canary(&alias));
 }
+
+/// The rows the matrix records: on for `fs` (both configurations) with both controls held, off as
+/// missing for the memory service, which has no file to overwrite.
+#[tokio::test]
+async fn certify_records_fs_on_and_memory_missing() {
+    use persistant_core::{Config, Reason};
+    let work = tempfile::tempdir().unwrap();
+    let rows = persistant_opendal::certify_delete_erased(work.path(), &Config::new())
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 3);
+    for r in &rows {
+        assert_eq!(r.subject.as_str(), "blob.delete_erased");
+        if r.backend == "opendal-memory" {
+            assert!(!r.enabled);
+            assert_eq!(r.reason, Some(Reason::Missing));
+        } else {
+            assert_eq!(r.backend, "opendal-fs");
+            assert!(r.enabled, "{r:?}");
+        }
+    }
+}

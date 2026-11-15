@@ -7,9 +7,10 @@
 //! CI regenerates this and fails if it differs from the checked-in `matrix/sqlx-sqlite.tsv`. Rows
 //! are keyed by the SQLite library's version, so a bump of the bundled library is a visible change.
 
+use persistant_core::erased::ErasedTrial;
 use persistant_core::{Config, Matrix};
-use persistant_kv::KvOnRelational;
 use persistant_kv::conformance::Leaf;
+use persistant_kv::{KvBackend, KvOnRelational};
 use persistant_sqlx::{Bounded, SqliteBackend};
 use std::time::Duration;
 
@@ -100,6 +101,23 @@ async fn main() {
             .map(|c| c.row),
         );
     }
+    // `kv.delete_erased`: the database file, `-wal` and `-journal` read back for a canary after
+    // the delete, for each profile. A plain `kv.delete` is the known-bad control.
+    for durable in [false, true] {
+        let t = erase_trial(durable).await;
+        let (kv, dir) = erase_kv(durable, "row").await;
+        rows.push(persistant_core::erased::erased_row(
+            "kv.delete_erased",
+            kv.backend(),
+            kv.version(),
+            config.clone(),
+            &env,
+            "delete_erased::kv.delete_erased",
+            &t,
+        ));
+        drop(kv);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     print!("{}", Matrix::from_rows(rows).to_tsv());
     for base in [&path, &full_path] {
         for ext in ["", "-wal", "-shm"] {
@@ -108,4 +126,73 @@ async fn main() {
             let _ = std::fs::remove_file(p);
         }
     }
+}
+
+const CANARY: &[u8] = b"CANARY-0c8e5d11-not-a-secret";
+
+/// A fresh database of its own under the temp directory, with some ballast keys.
+async fn erase_kv(durable: bool, tag: &str) -> (KvOnRelational<SqliteBackend>, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!(
+        "persistant-matrix-erase-{}-{}-{tag}",
+        std::process::id(),
+        u8::from(durable)
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create dir");
+    let path = dir.join("kv.sqlite");
+    let db = if durable {
+        SqliteBackend::open_durable(&path).await
+    } else {
+        SqliteBackend::open(&path).await
+    }
+    .expect("open");
+    let kv = KvOnRelational::open(db).await.expect("open kv");
+    for i in 0..20 {
+        kv.put(&format!("ballast/{i}"), vec![b'.'; 100], None)
+            .await
+            .expect("put");
+    }
+    (kv, dir)
+}
+
+fn holds_canary(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir).expect("read dir").any(|e| {
+        std::fs::read(e.expect("entry").path())
+            .expect("read file")
+            .windows(CANARY.len())
+            .any(|w| w == CANARY)
+    })
+}
+
+/// A plain delete on one database (the control: its canary stays in the files), an erased delete
+/// on another (it must not).
+async fn erase_trial(durable: bool) -> ErasedTrial {
+    let (plain, plain_dir) = erase_kv(durable, "plain").await;
+    plain
+        .put("user/1", CANARY.to_vec(), None)
+        .await
+        .expect("put");
+    let mut t = ErasedTrial {
+        positive: holds_canary(&plain_dir),
+        ..Default::default()
+    };
+    plain.delete("user/1").await.expect("delete");
+    t.control_kept = holds_canary(&plain_dir);
+    drop(plain);
+    let _ = std::fs::remove_dir_all(&plain_dir);
+
+    let (kv, dir) = erase_kv(durable, "erased").await;
+    kv.put("user/1", CANARY.to_vec(), None).await.expect("put");
+    match kv.delete_erased("user/1").await {
+        Ok(()) => {
+            t.erased = kv.get("user/1").await.expect("get").is_none() && !holds_canary(&dir);
+        }
+        Err(persistant_kv::KvError::Unsupported(m)) => {
+            t.unsupported = Some(format!("kv does not support: {m}"));
+        }
+        Err(e) => panic!("delete_erased: {e}"),
+    }
+    drop(kv);
+    let _ = std::fs::remove_dir_all(&dir);
+    t
 }

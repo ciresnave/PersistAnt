@@ -41,3 +41,4 @@ capability	rel.migrate.newer	postgres	16.15	dialect=postgres	yes		arch=x86_64;os
 capability	rel.migrate.atomic	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.atomic	
 capability	rel.migrate.ddl_atomic	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.ddl_atomic	
 capability	rel.migrate.concurrent	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.concurrent	
+capability	kv.delete_erased	kv-on-relational:postgres	0.18+16.15	dialect=postgres	no	missing	arch=x86_64;controls=not-run;os=linux;probe=delete_erased::kv.delete_erased	kv does not support: execute_erased

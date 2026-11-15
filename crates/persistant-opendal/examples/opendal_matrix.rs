@@ -10,8 +10,10 @@
 
 use persistant_blob::BlobBackend;
 use persistant_core::{Config, Matrix, Row};
-use persistant_kv::KvOnBlob;
+use persistant_kv::{KvBackend, KvOnBlob};
+use persistant_opendal::ErasedTrial;
 use persistant_opendal::OpendalBlob;
+use std::path::Path;
 
 fn clean(rows: impl IntoIterator<Item = Row>, tmp: &[&str]) -> Vec<Row> {
     rows.into_iter()
@@ -104,6 +106,14 @@ async fn run(env: Config, crash_rows: Vec<Row>, lock_row: Row) {
     let plain_tmp = plain_work.path().to_string_lossy().into_owned();
     rows.extend(clean(plain_rows, &[plain_tmp.as_str()]));
 
+    // `blob.delete_erased`: the file read back through a second hard link after the delete.
+    let erase_work = tempfile::tempdir().unwrap();
+    let erase_rows = persistant_opendal::certify_delete_erased(erase_work.path(), &env)
+        .await
+        .expect("delete_erased test ran");
+    let erase_tmp = erase_work.path().to_string_lossy().into_owned();
+    rows.extend(clean(erase_rows, &[erase_tmp.as_str()]));
+
     // KvOnBlob over each, strict; plus the explicit in-place mode on fs without a scratch dir.
     let kvs = [
         KvOnBlob::new(OpendalBlob::memory().unwrap()),
@@ -117,8 +127,80 @@ async fn run(env: Config, crash_rows: Vec<Row>, lock_row: Row) {
         rows.extend(clean(certified.into_iter().map(|c| c.row), &tmp));
     }
 
+    // `kv.delete_erased` over the same four configurations, each on a root of its own so the
+    // hard links see only this trial's files.
+    let kv_work = tempfile::tempdir().unwrap();
+    let mem_kv = KvOnBlob::new(OpendalBlob::memory().unwrap());
+    let mut erase_kvs: Vec<(KvOnBlob<OpendalBlob>, Option<std::path::PathBuf>)> =
+        vec![(mem_kv, None)];
+    for (i, (scratch, in_place)) in [(false, false), (false, true), (true, false)]
+        .into_iter()
+        .enumerate()
+    {
+        let root = kv_work.path().join(format!("root{i}"));
+        std::fs::create_dir_all(&root).unwrap();
+        let scratch_dir = kv_work.path().join(format!("scratch{i}"));
+        let blob = OpendalBlob::fs(&root, scratch.then_some(scratch_dir.as_path())).unwrap();
+        let kv = if in_place {
+            KvOnBlob::with_in_place_put(blob)
+        } else {
+            KvOnBlob::new(blob)
+        };
+        erase_kvs.push((kv, Some(root)));
+    }
+    let kv_tmp = kv_work.path().to_string_lossy().into_owned();
+    for (i, (kv, root)) in erase_kvs.iter().enumerate() {
+        let t = kv_erased_trial(kv, root.as_deref(), &kv_work.path().join(format!("a{i}"))).await;
+        let cfg = merged(kv.blob().config(), &kv.config());
+        let row = persistant_opendal::erased_row(
+            "kv.delete_erased",
+            kv.backend(),
+            kv.version(),
+            cfg,
+            &env,
+            "delete_erased::kv.delete_erased",
+            &t,
+        );
+        rows.extend(clean([row], &[kv_tmp.as_str()]));
+    }
+
     // Keep the example honest about what it did: every row names its backend.
     assert!(rows.iter().all(|r| !r.backend.is_empty()));
     let _ = fs_unset.backend();
     print!("{}", Matrix::from_rows(rows).to_tsv());
+}
+
+/// As the blob trial, one layer up: the record file of a key, read back through a second link.
+async fn kv_erased_trial(
+    kv: &KvOnBlob<OpendalBlob>,
+    root: Option<&Path>,
+    work: &Path,
+) -> ErasedTrial {
+    let canary = persistant_opendal::ERASED_CANARY.to_vec();
+    let mut t = ErasedTrial::default();
+    for key in ["user/erased", "user/plain"] {
+        if let Err(e) = kv.put(key, canary.clone(), None).await {
+            t.unsupported = Some(format!("needs kv.put, which this configuration lacks: {e}"));
+            return t;
+        }
+    }
+    if let Some(root) = root {
+        persistant_opendal::link_all(root, work, "f").unwrap();
+        t.positive = persistant_opendal::erased_hits(work).unwrap().len() == 2;
+    }
+    match kv.delete_erased("user/erased").await {
+        Ok(()) => {}
+        Err(persistant_kv::KvError::Unsupported(m)) => {
+            t.unsupported = Some(format!("kv does not support: {m}"));
+            return t;
+        }
+        Err(e) => panic!("delete_erased: {e}"),
+    }
+    kv.delete("user/plain").await.unwrap();
+    let gone = kv.get("user/erased").await.unwrap().is_none();
+    let left = persistant_opendal::erased_hits(work).unwrap();
+    // Linked in blob-key order: the hex of `user/erased` sorts before that of `user/plain`.
+    t.control_kept = left.contains(&"f-1".to_string());
+    t.erased = gone && !left.contains(&"f-0".to_string());
+    t
 }
