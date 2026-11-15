@@ -50,7 +50,7 @@ namespace.
 - **Write.** `put(index, doc_id, terms)` takes the document's terms with their frequencies (`&[(String, u32)]`; a
   helper turns text into them). In **one `batch`** it writes the postings, the document record (length and the term
   list: the forward list), and the corpus totals, with a `Require` on the totals record; a lost race retries
-  inside, bounded (SageAnt's loop, 16). Putting an existing `doc_id` replaces it: postings no longer in the new set
+  inside, bounded (64 tries with a yield between; SageAnt's loop is 16, and 12 writers racing exhausted 16 in a test). Putting an existing `doc_id` replaces it: postings no longer in the new set
   are removed in the same batch and the totals move by the difference. `remove_many(index, &[doc_id])` is one
   batch too (by lineage: the caller lists the versions); an index left with no documents holds no keys. **v1 has no
   expiry**: the corpus totals cannot expire with a document, so a time to live would make them drift.

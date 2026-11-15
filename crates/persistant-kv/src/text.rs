@@ -13,7 +13,7 @@
 //! Every change is **one [`KvBackend::batch`]** with a [`BatchOp::Require`] on the corpus totals
 //! and on the document's own record, so a crash or a concurrent change never leaves postings
 //! without their record, or totals that disagree with the documents. A lost race retries, at most
-//! 16 times. **The corpus totals are one record that every writer requires, so writers
+//! 64 times (yielding between tries). **The corpus totals are one record that every writer requires, so writers
 //! serialise**; that is stated, not hidden, and is fine for personal stores (thousands to about
 //! 100k documents, unmeasured above).
 //!
@@ -36,8 +36,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The separator inside keys.
 const SEP: char = '\u{1f}';
-/// A lost race is retried this many times, then reported.
-const MAX_TRIES: usize = 16;
+/// A lost race is retried this many times, then reported. Each lost race means another writer
+/// won, so this many writers racing at once all finish; more than that may report the race.
+const MAX_TRIES: usize = 64;
 /// Entries per page when the layer scans on its own account.
 const PAGE: usize = 500;
 /// The longest term, in bytes.
@@ -294,6 +295,7 @@ impl<'a, K: KvBackend> TextIndex<'a, K> {
             if self.kv.batch(&ops).await? {
                 return Ok(());
             }
+            tokio::task::yield_now().await;
         }
         Err(KvError::Backend(format!(
             "text index: put of {doc_id:?} lost the race {MAX_TRIES} times"
@@ -348,6 +350,7 @@ impl<'a, K: KvBackend> TextIndex<'a, K> {
             if self.kv.batch(&ops).await? {
                 return Ok(removed as usize);
             }
+            tokio::task::yield_now().await;
         }
         Err(KvError::Backend(format!(
             "text index: remove_many lost the race {MAX_TRIES} times"
