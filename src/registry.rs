@@ -1498,7 +1498,10 @@ pub async fn open_named_with(
         ));
     }
     if let Some(r) = &rel {
-        let dialect = r.backend().to_string();
+        // The `dialect` fact is the SQL dialect (`sqlite`), not the backend's name: `sqlite-full` is
+        // the same dialect as `sqlite`, and its recorded rows say `dialect=sqlite` (0.18.12 used the
+        // name, so every `rel.*` need on `sqlite-full` was refused `NoRow` at open).
+        let dialect = r.dialect().to_string();
         opened.push((
             Kind::Rel,
             Surface::new(
