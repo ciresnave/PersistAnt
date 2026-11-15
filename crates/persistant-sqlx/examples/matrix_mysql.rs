@@ -32,6 +32,17 @@ async fn main() {
         .into_iter()
         .map(|c| c.row)
         .collect();
+    // `text.index`: the text index over this kv.
+    rows.push(
+        persistant_kv::text_conformance::certify(
+            &kv,
+            persistant_kv::KvBackend::backend(&kv),
+            persistant_kv::KvBackend::version(&kv),
+            &config,
+            &env,
+        )
+        .await,
+    );
     // `kv.bounded_call` for the same server opened with a call bound (row config `call_bound=set`);
     // the unbounded run above recorded it as `call_bound=unset`.
     let bounded = KvOnRelational::open(Bounded::new(

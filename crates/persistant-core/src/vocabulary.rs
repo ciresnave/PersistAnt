@@ -103,6 +103,10 @@ pub const SEED: &[(&str, &str)] = &[
         "content a statement deletes or overwrites is zeroed in the database file as it is freed, so neither a delete nor an overwrite leaves the old bytes there, read back from the files; not a claim about a write-ahead log, a rollback journal's pre-images, or copies a file system, snapshot or backup keeps",
     ),
     (
+        "text.index",
+        "a text index over a key-value store keeps its postings, document lengths and corpus totals equal to what the documents put, replaced and removed say, after every operation and under concurrent writers, from one atomic batch per change; ranking is the consumer's",
+    ),
+    (
         "kv.delete_erased",
         "a key removed this way has had the stored bytes of its value overwritten, or on a database the freed pages and the write-ahead log, before the key was removed, read back from the files; not a claim about copies a file system, snapshot or backup keeps",
     ),

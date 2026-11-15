@@ -22,7 +22,7 @@ tokio = { version = "1.53.2", features = ["rt", "fs"] }
 
 [dev-dependencies]
 persistant-opendal = { path = ".", features = ["failpoint"] }
-persistant-kv = { workspace = true }
+persistant-kv = { workspace = true, features = ["text-index"] }
 tempfile = "3.27.0"
 tokio = { version = "1.53.2", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 
