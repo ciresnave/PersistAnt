@@ -118,6 +118,24 @@ async fn main() {
         drop(kv);
         let _ = std::fs::remove_dir_all(&dir);
     }
+    // `storage.secure_delete`: the `open_secure` profile (rollback journal, `secure_delete` on for
+    // every connection). A canary value overwritten, and another deleted, by plain statements must
+    // be in none of the files; the same overwrite on the default profile is the known-bad control.
+    {
+        let t = secure_trial().await;
+        let (kv, dir) = open_kv(false, true, "row").await;
+        rows.push(persistant_core::erased::erased_row(
+            "storage.secure_delete",
+            kv.backend(),
+            kv.version(),
+            config.clone().with("secure_delete", "on"),
+            &env,
+            "secure_delete::storage.secure_delete",
+            &t,
+        ));
+        drop(kv);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     print!("{}", Matrix::from_rows(rows).to_tsv());
     for base in [&path, &full_path] {
         for ext in ["", "-wal", "-shm"] {
@@ -132,16 +150,27 @@ const CANARY: &[u8] = b"CANARY-0c8e5d11-not-a-secret";
 
 /// A fresh database of its own under the temp directory, with some ballast keys.
 async fn erase_kv(durable: bool, tag: &str) -> (KvOnRelational<SqliteBackend>, std::path::PathBuf) {
+    open_kv(durable, false, tag).await
+}
+
+async fn open_kv(
+    durable: bool,
+    secure: bool,
+    tag: &str,
+) -> (KvOnRelational<SqliteBackend>, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!(
-        "persistant-matrix-erase-{}-{}-{tag}",
+        "persistant-matrix-erase-{}-{}{}-{tag}",
         std::process::id(),
-        u8::from(durable)
+        u8::from(durable),
+        if secure { "s" } else { "" }
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create dir");
     let path = dir.join("kv.sqlite");
     let db = if durable {
         SqliteBackend::open_durable(&path).await
+    } else if secure {
+        SqliteBackend::open_secure(&path).await
     } else {
         SqliteBackend::open(&path).await
     }
@@ -195,4 +224,47 @@ async fn erase_trial(durable: bool) -> ErasedTrial {
     drop(kv);
     let _ = std::fs::remove_dir_all(&dir);
     t
+}
+
+const CANARY_B: &[u8] = b"CANARY-8e19c3d4-not-a-secret";
+
+/// The same plain statements on the default profile (the known-bad control: some canary stays in
+/// the file) and on the secure profile (none may): two canary values written, one overwritten by a
+/// short value and the other deleted.
+async fn secure_trial() -> ErasedTrial {
+    async fn run(secure: bool, tag: &str) -> (bool, bool) {
+        let (kv, dir) = open_kv(false, secure, tag).await;
+        kv.put("user/over", CANARY.to_vec(), None)
+            .await
+            .expect("put");
+        kv.put("user/del", CANARY_B.to_vec(), None)
+            .await
+            .expect("put");
+        let before = holds_bytes(&dir, CANARY) && holds_bytes(&dir, CANARY_B);
+        kv.put("user/over", b"short".to_vec(), None)
+            .await
+            .expect("put");
+        kv.delete("user/del").await.expect("delete");
+        let after = holds_bytes(&dir, CANARY) || holds_bytes(&dir, CANARY_B);
+        drop(kv);
+        let _ = std::fs::remove_dir_all(&dir);
+        (before, after)
+    }
+    let (positive, control_kept) = run(false, "ctl").await;
+    let (_, secure_after) = run(true, "sec").await;
+    ErasedTrial {
+        positive,
+        control_kept,
+        erased: !secure_after,
+        ..Default::default()
+    }
+}
+
+fn holds_bytes(dir: &std::path::Path, needle: &[u8]) -> bool {
+    std::fs::read_dir(dir).expect("read dir").any(|e| {
+        std::fs::read(e.expect("entry").path())
+            .expect("read file")
+            .windows(needle.len())
+            .any(|w| w == needle)
+    })
 }

@@ -102,6 +102,7 @@ pub struct SqliteBackend {
     version: String,
     migrating: std::sync::Arc<tokio::sync::Mutex<()>>,
     full_sync: bool,
+    secure_delete: bool,
 }
 
 /// Create `path` empty and owner-only if it is not there, so SQLite finds an existing zero-length
@@ -216,6 +217,44 @@ impl SqliteBackend {
         Ok(me)
     }
 
+    /// As [`open`](Self::open), with `secure_delete` on for **every** connection of the pool and the
+    /// rollback journal named explicitly (`journal_mode=DELETE`): content a statement frees or
+    /// overwrites is zeroed in the database file as it goes, so a delete or an overwrite by a plain
+    /// `put` leaves no old bytes in the file (the case `execute_erased` cannot reach afterwards).
+    /// Costs some write speed. It reports itself as `sqlite` (the same engine and journal as
+    /// [`open`](Self::open)); [`secure_delete`](Self::secure_delete) says it was asked for, and the
+    /// registry offers it as `sqlite-secure`.
+    ///
+    /// **Not WAL.** In WAL mode `secure_delete` does not help: earlier page images stay in the
+    /// `-wal` file until a truncating checkpoint (measured: a canary stayed in the `-wal` with the
+    /// pragma on). So this profile has no durable (`open_durable`) form; on a WAL database use
+    /// `execute_erased`, which checkpoints. **Not covered:** the rollback `-journal`, which holds
+    /// pre-images while a transaction runs and is removed (not zeroed) at its end, and anything a
+    /// file system, snapshot or backup keeps.
+    pub async fn open_secure(path: impl AsRef<Path>) -> Result<Self, RelError> {
+        owner_only_if_new(path.as_ref(), false)?;
+        let opts = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Delete)
+            .pragma("secure_delete", "ON")
+            .busy_timeout(Duration::from_secs(30));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(8)
+            .connect_with(opts)
+            .await
+            .map_err(classify)?;
+        let mut me = Self::from_pool(pool).await?;
+        me.secure_delete = true;
+        Ok(me)
+    }
+
+    /// Whether this backend was opened with [`open_secure`](Self::open_secure). A pool handed to
+    /// [`from_pool`](Self::from_pool) is never assumed to have the setting.
+    pub fn secure_delete(&self) -> bool {
+        self.secure_delete
+    }
+
     /// Wrap an existing pool. The pool must reach one database: an in-memory database is a
     /// separate database per connection, so give it `max_connections(1)`.
     pub async fn from_pool(pool: sqlx::SqlitePool) -> Result<Self, RelError> {
@@ -228,6 +267,7 @@ impl SqliteBackend {
             version,
             migrating: Default::default(),
             full_sync: false,
+            secure_delete: false,
         })
     }
 
