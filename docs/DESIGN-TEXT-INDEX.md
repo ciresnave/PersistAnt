@@ -1,7 +1,7 @@
 # Design: a text index (lexical search), ROADMAP row 39
 
-Status: **proposal, for the PM and SageAnt to answer; no code until it is agreed.** Written 2026-11-15 by the
-PersistAnt lane. Request: SageAnt (Knowledge Store), via the PM, 2026-11-14. Today SageAnt keeps its postings in
+Status: **layer-over-kv first, agreed by the PM 2026-11-15; no code until SageAnt answers section 7 questions 2 and 3.**
+Written 2026-11-15 by the PersistAnt lane. Request: SageAnt (Knowledge Store), via the PM, 2026-11-14. Today SageAnt keeps its postings in
 a `kv-postings` store through its own `KvTextIndex` over a kv backend; nothing in PersistAnt offers lexical search
 (the only mentions of full text are `tsvector` decoded loudly, `docs/DECODER-AUDIT.md`).
 
@@ -40,7 +40,7 @@ New layer `persistant_kv::text::TextIndex<'a, K>`, leaf `text.index`, over a bor
   of a document expire together).
 - **Queries.** `search(index, query, limit, after)`: every term must match (AND); a trailing `*` makes a term a
   prefix; a quoted phrase is **not** in v1. Results come from one snapshot (`ordered_scan_values`).
-- **Order.** v1 returns documents ordered by the sum of term frequencies, ties by `doc_id` ascending. **No BM25**:
+- **Order.** v1 returns documents ordered by the sum of term frequencies, ties by `doc_id` ascending. **No BM25 (a named later row, per the PM)**:
   it needs corpus statistics (document count, average length) that every write would update, a hot key that
   serialises all writers. If SageAnt measures that term-frequency ordering is not enough, BM25 with statistics
   kept per shard of the id space (approximate, stated as such) is the proposed next step.
@@ -86,9 +86,18 @@ multi-language analysis; an index over a blob store (refused, as `Indexed` is); 
    how are results ordered, and how big is the corpus: documents and distinct terms). If a v1 that matches your
    layout lets you delete your code, we should shape the keys to it before writing ours.
 3. **SageAnt:** is term-frequency ordering acceptable, or is BM25 a requirement for v1?
-4. **PM / CireSnave:** the tokeniser needs Unicode segmentation and normalisation crates (new dependencies, at
-   their latest versions, per the standing rule). Any objection to adding them to `persistant-kv`, or should the
-   tokeniser sit behind a feature so the kv crate stays lean for consumers that do not index text?
+4. ~~Dependencies~~ **Ruled by the PM 2026-11-15:** `unicode-segmentation` and `unicode-normalization` from
+   crates.io at their newest releases (never git or path), behind a cargo feature `text-index` of `persistant-kv`,
+   so `persistant-kv` without it pulls neither; SageAnt enables it. At writing (crates.io, 2026-11-15):
+
+   | Crate | Newest | Its MSRV (`rust_version`) | Licence |
+   |---|---|---|---|
+   | `unicode-segmentation` | 1.13.3 | 1.85.0 | MIT OR Apache-2.0 |
+   | `unicode-normalization` | 0.1.26 | 1.36 | (MIT OR Apache-2.0) AND Unicode-3.0 |
+
+   Both are below this workspace's 1.94, so neither raises it. `unicode-normalization` carries the Unicode-3.0
+   licence term, which `deny.toml` already allows (line 22, read at `origin/main`); the feature's own PR still runs
+   `cargo deny` with the feature on.
 
 ## 8. Order of work once agreed
 
