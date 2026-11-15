@@ -21,6 +21,7 @@ capability	kv.ordered_scan_values	kv-on-relational:postgres	0.18+16.15	dialect=p
 capability	kv.batch_atomic.optimistic_sequence	kv-on-relational:postgres	0.18+16.15	dialect=postgres	yes		arch=x86_64;contenders=8;os=linux;probe=kv::kv.batch_atomic.optimistic_sequence;rounds=10	
 capability	kv.batch_atomic.absent_race	kv-on-relational:postgres	0.18+16.15	dialect=postgres	yes		arch=x86_64;contenders=8;os=linux;probe=kv::kv.batch_atomic.absent_race;rounds=10	
 capability	kv.bounded_call	kv-on-relational:postgres	0.18+16.15	call_bound=unset;dialect=postgres	no	missing	arch=x86_64;os=linux;probe=kv::kv.bounded_call	no call timeout configured
+capability	text.index	kv-on-relational:postgres	0.18+16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=text::text.index;rounds=5;steps=30;writers=8	
 capability	kv.bounded_call	kv-on-relational:postgres	0.18+16.15	call_bound=set;dialect=postgres	yes		arch=x86_64;os=linux;probe=kv::kv.bounded_call	
 capability	rel.values	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.values	
 capability	rel.transaction	postgres	16.15	dialect=postgres	yes		arch=x86_64;os=linux;probe=rel::rel.transaction	

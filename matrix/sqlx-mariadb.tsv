@@ -21,6 +21,7 @@ capability	kv.ordered_scan_values	kv-on-relational:mariadb	0.18+11.4.13	dialect=
 capability	kv.batch_atomic.optimistic_sequence	kv-on-relational:mariadb	0.18+11.4.13	dialect=mariadb	yes		arch=x86_64;contenders=8;os=linux;probe=kv::kv.batch_atomic.optimistic_sequence;rounds=10	
 capability	kv.batch_atomic.absent_race	kv-on-relational:mariadb	0.18+11.4.13	dialect=mariadb	yes		arch=x86_64;contenders=8;os=linux;probe=kv::kv.batch_atomic.absent_race;rounds=10	
 capability	kv.bounded_call	kv-on-relational:mariadb	0.18+11.4.13	call_bound=unset;dialect=mariadb	no	missing	arch=x86_64;os=linux;probe=kv::kv.bounded_call	no call timeout configured
+capability	text.index	kv-on-relational:mariadb	0.18+11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=text::text.index;rounds=5;steps=30;writers=8	
 capability	kv.bounded_call	kv-on-relational:mariadb	0.18+11.4.13	call_bound=set;dialect=mariadb	yes		arch=x86_64;os=linux;probe=kv::kv.bounded_call	
 capability	rel.values	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.values	
 capability	rel.transaction	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.transaction	

@@ -10,8 +10,8 @@ fn the_recorded_mariadb_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        43,
-        "twenty-two kv/lock leaves (kv.bounded_call twice: unset and set) and nineteen relational leaves (thirteen contract, six migration) are certified, and kv.delete_erased once, off as missing"
+        44,
+        "twenty-two kv/lock leaves (kv.bounded_call twice: unset and set) and nineteen relational leaves (thirteen contract, six migration) are certified, and kv.delete_erased once, off as missing, and text.index once, on"
     );
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),

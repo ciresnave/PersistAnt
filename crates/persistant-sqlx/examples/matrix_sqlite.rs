@@ -29,6 +29,11 @@ async fn main() {
         .into_iter()
         .map(|c| c.row)
         .collect();
+    // `text.index`: the text index over this kv.
+    rows.push(
+        persistant_kv::text_conformance::certify(&kv, kv.backend(), kv.version(), &config, &env)
+            .await,
+    );
     // The relational kind's own leaves, on the same server.
     rows.extend(
         persistant_relational::conformance::certify(&rel_db, &config, &env)
@@ -59,6 +64,16 @@ async fn main() {
             .await
             .into_iter()
             .map(|c| c.row),
+    );
+    rows.push(
+        persistant_kv::text_conformance::certify(
+            &full,
+            full.backend(),
+            full.version(),
+            &config,
+            &env,
+        )
+        .await,
     );
     // The relational kind's leaves and the migration ledger on the durable profile too, so a
     // registry `rel.*` need finds rows for `sqlite-full` (it was listed for key-value only).
