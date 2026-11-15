@@ -164,6 +164,15 @@ impl<T: RelationalTx> RelationalTx for BoundedTx<T> {
         r
     }
 
+    async fn erase_on_commit(&mut self) -> Result<(), RelError> {
+        if self.poisoned {
+            return Err(self.refuse());
+        }
+        let r = within(self.bound, self.inner.erase_on_commit()).await;
+        self.poisoned |= matches!(r, Err(RelError::Timeout { .. }));
+        r
+    }
+
     async fn commit(self) -> Result<(), RelError> {
         if self.poisoned {
             return Err(self.refuse());

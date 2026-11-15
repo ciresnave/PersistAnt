@@ -362,6 +362,12 @@ impl KvBackend for MemoryKv {
     }
 
     async fn batch(&self, ops: &[BatchOp]) -> Result<bool, KvError> {
+        if ops
+            .iter()
+            .any(|o| matches!(o, BatchOp::DeleteErased { .. }))
+        {
+            return Err(KvError::Unsupported("batch with delete_erased".to_string()));
+        }
         let live_value = |map: &BTreeMap<String, Entry>, key: &str| {
             map.get(key).filter(|e| live(e)).map(|e| e.0.clone())
         };
@@ -384,6 +390,7 @@ impl KvBackend for MemoryKv {
                     BatchOp::Delete { key } => {
                         self.map().remove(&self.k(key));
                     }
+                    BatchOp::DeleteErased { .. } => unreachable!("refused above"),
                 }
                 yield_now().await;
             }
@@ -409,6 +416,7 @@ impl KvBackend for MemoryKv {
                     map.remove(&self.k(key));
                 }
                 BatchOp::Require { .. } => {}
+                BatchOp::DeleteErased { .. } => unreachable!("refused above"),
             }
         }
         Ok(true)

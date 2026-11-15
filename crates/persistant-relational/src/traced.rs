@@ -171,6 +171,16 @@ impl<T: RelationalTx> RelationalTx for TracedTx<T> {
         .await
     }
 
+    async fn erase_on_commit(&mut self) -> Result<(), RelError> {
+        span(
+            &self.backend,
+            "tx.erase_on_commit",
+            "rel.values",
+            self.inner.erase_on_commit(),
+        )
+        .await
+    }
+
     async fn commit(self) -> Result<(), RelError> {
         span(
             &self.backend,

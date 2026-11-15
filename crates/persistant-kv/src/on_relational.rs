@@ -247,6 +247,16 @@ impl<R: RelationalBackend> KvOnRelational<R> {
 
     async fn batch_once(&self, ops: &[BatchOp]) -> Result<bool, BatchFail> {
         let mut tx = self.db.begin(Isolation::ReadCommitted).await?;
+        // An erased delete in the batch makes the whole transaction an erasing one, or refuses the
+        // batch before anything has run (a backend that cannot says `Unsupported`).
+        if ops
+            .iter()
+            .any(|o| matches!(o, BatchOp::DeleteErased { .. }))
+            && let Err(e) = tx.erase_on_commit().await
+        {
+            let _ = tx.rollback().await;
+            return Err(e.into());
+        }
         // One batch at a time on a server with row locks. The preconditions below read rows that
         // may not exist, and a lock on a missing row (a gap lock on MySQL, an in-flight insert on
         // PostgreSQL) cannot exclude a second batch, so racing batches took locks in opposite orders
@@ -327,7 +337,7 @@ impl<R: RelationalBackend> KvOnRelational<R> {
                         return Ok(false);
                     }
                 }
-                BatchOp::Delete { key } => {
+                BatchOp::Delete { key } | BatchOp::DeleteErased { key } => {
                     self.tx_exec(
                         &mut tx,
                         "DELETE FROM persistant_kv WHERE k = $1",

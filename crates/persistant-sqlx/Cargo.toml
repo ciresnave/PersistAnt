@@ -131,3 +131,7 @@ required-features = ["sqlite"]
 [[test]]
 name = "kv_sqlite_delete_erased"
 required-features = ["sqlite"]
+
+[[test]]
+name = "sqlite_batch_erased_reader"
+required-features = ["sqlite"]
