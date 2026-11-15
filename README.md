@@ -168,6 +168,16 @@ Much of it is built since (key-value and relational kinds, SQLite, PostgreSQL, M
 - **An abandoned replace leaves its temporary file** in `atomic_write_dir` on `fs`; the old value is intact
   but the scratch directory should be swept at startup. **Durability across power loss is not claimed**:
   OpenDAL syncs the file, not the parent directory, before the rename.
+- **Atomic multi-key batches (`kv.batch_atomic`) are on SQLite, PostgreSQL, MySQL and MariaDB only.** A blob
+  store (`memory` or `fs` through `KvOnBlob`) has no multi-key atomicity, so `KvOnBlob` refuses them at open and
+  the matrix has no `kv.batch_atomic.*` rows for it; where an embedded backend must batch atomically, use SQLite.
+- **Erased delete (`blob.delete_erased`, `kv.delete_erased`) says "contents overwritten", not "gone from the
+  disk".** On `fs` the file is overwritten with zeros, synced, then unlinked; on SQLite `secure_delete` is turned on
+  for the statement and the write-ahead log is truncated (a value an earlier plain `put` overwrote may still sit in free
+  space inside a page). Journaling and copy-on-write file systems, SSD wear levelling, snapshots and backups can keep
+  copies. The memory service and PostgreSQL, MySQL and MariaDB record it off as missing: a deleted tuple stays until
+  vacuum or purge, and the log and backups keep it. Each recorded row was read back from the files with a canary and a
+  known-bad control.
 - **`memory` counts as atomic** because a value becomes visible in one map insert on close.
 
 ## The other kinds (opt-in features)
