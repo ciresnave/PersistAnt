@@ -48,6 +48,9 @@ capability	blob.file_mode	opendal-fs	0.59.5	atomic_write_dir=unset;file_mode=own
 capability	blob.file_mode	opendal-fs	0.59.5	atomic_write_dir=set;file_mode=owner_only	yes		arch=x86_64;os=linux;paths_read=13;probe=file_mode::blob.file_mode	
 capability	storage.no_plaintext_at_rest	opendal-fs	0.59.5	atomic_write_dir=unset	no	missing	arch=x86_64;controls=held;os=linux;paths_read=3;probe=plaintext::storage.no_plaintext_at_rest	canary found raw in 3 of 3 files: unset-root/a/appended, unset-root/c/created, unset-root/w/written
 capability	storage.no_plaintext_at_rest	opendal-fs	0.59.5	atomic_write_dir=set	no	missing	arch=x86_64;controls=held;os=linux;paths_read=5;probe=plaintext::storage.no_plaintext_at_rest	canary found raw in 5 of 5 files: set-root/a/appended, set-root/c/created, set-root/r/replaced, set-root/s/streamed, set-root/w/written
+capability	blob.delete_erased	opendal-memory	0.59.5		no	missing	arch=x86_64;controls=not-run;os=linux;probe=delete_erased::blob.delete_erased	blob does not support: delete_erased
+capability	blob.delete_erased	opendal-fs	0.59.5	atomic_write_dir=unset	yes		arch=x86_64;controls=held;os=linux;probe=delete_erased::blob.delete_erased	
+capability	blob.delete_erased	opendal-fs	0.59.5	atomic_write_dir=set	yes		arch=x86_64;controls=held;os=linux;probe=delete_erased::blob.delete_erased	
 capability	kv.get	kv-on-blob:opendal-memory	0.18+0.59.5	put_mode=atomic	yes		arch=x86_64;os=linux;probe=kv::kv.get	
 capability	kv.put	kv-on-blob:opendal-memory	0.18+0.59.5	put_mode=atomic	yes		arch=x86_64;os=linux;probe=kv::kv.put	
 capability	kv.delete	kv-on-blob:opendal-memory	0.18+0.59.5	put_mode=atomic	yes		arch=x86_64;os=linux;probe=kv::kv.delete	
@@ -136,3 +139,7 @@ capability	kv.ordered_scan_values	kv-on-blob:opendal-fs	0.18+0.59.5	atomic_write
 capability	kv.batch_atomic.optimistic_sequence	kv-on-blob:opendal-fs	0.18+0.59.5	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=8;os=linux;probe=kv::kv.batch_atomic.optimistic_sequence;rounds=10	batch
 capability	kv.batch_atomic.absent_race	kv-on-blob:opendal-fs	0.18+0.59.5	atomic_write_dir=set;put_mode=atomic	no	missing	arch=x86_64;contenders=8;os=linux;probe=kv::kv.batch_atomic.absent_race;rounds=10	batch
 capability	kv.bounded_call	kv-on-blob:opendal-fs	0.18+0.59.5	atomic_write_dir=set;call_bound=unset;put_mode=atomic	no	missing	arch=x86_64;os=linux;probe=kv::kv.bounded_call	no call timeout configured
+capability	kv.delete_erased	kv-on-blob:opendal-memory	0.18+0.59.5	put_mode=atomic	no	missing	arch=x86_64;controls=not-run;os=linux;probe=delete_erased::kv.delete_erased	kv does not support: delete_erased
+capability	kv.delete_erased	kv-on-blob:opendal-fs	0.18+0.59.5	atomic_write_dir=unset;put_mode=atomic	no	missing	arch=x86_64;controls=not-run;os=linux;probe=delete_erased::kv.delete_erased	needs kv.put, which this configuration lacks: kv backend does not support: replace_atomic without atomic_write_dir writes in place
+capability	kv.delete_erased	kv-on-blob:opendal-fs	0.18+0.59.5	atomic_write_dir=unset;put_mode=in_place	yes		arch=x86_64;controls=held;os=linux;probe=delete_erased::kv.delete_erased	
+capability	kv.delete_erased	kv-on-blob:opendal-fs	0.18+0.59.5	atomic_write_dir=set;put_mode=atomic	yes		arch=x86_64;controls=held;os=linux;probe=delete_erased::kv.delete_erased	

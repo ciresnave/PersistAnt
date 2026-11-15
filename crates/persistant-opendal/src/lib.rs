@@ -10,10 +10,15 @@
 //! is scanned and filtered, and the cost is a scan of that tree per page.
 
 pub mod crash;
+mod delete_erased;
 mod file_mode;
 mod plaintext;
 mod process_lock;
 
+pub use delete_erased::{
+    CANARY as ERASED_CANARY, ErasedTrial, certify_delete_erased, erased_row, hits as erased_hits,
+    link_all,
+};
 pub use file_mode::{certify_file_mode, owner_only_reading};
 pub use plaintext::{certify_no_plaintext_at_rest, find_canary};
 pub use process_lock::{
