@@ -972,6 +972,9 @@ impl KvBackend for AnyKv {
     async fn delete(&self, key: &str) -> Result<(), KvError> {
         each!(self, k => k.delete(key).await)
     }
+    async fn delete_erased(&self, key: &str) -> Result<(), KvError> {
+        each!(self, k => k.delete_erased(key).await)
+    }
     async fn put_if_absent(
         &self,
         key: &str,
@@ -1160,6 +1163,9 @@ impl RelationalBackend for AnyRel {
     async fn execute(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
         each_rel!(self, r => r.execute(sql, params).await)
     }
+    async fn execute_erased(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        each_rel!(self, r => r.execute_erased(sql, params).await)
+    }
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
         each_rel!(self, r => r.query(sql, params).await)
     }
@@ -1299,6 +1305,10 @@ impl BlobBackend for AnyBlob {
     async fn delete(&self, key: &str) -> Result<(), BlobError> {
         check(key)?;
         self.inner.delete(key).await
+    }
+    async fn delete_erased(&self, key: &str) -> Result<(), BlobError> {
+        check(key)?;
+        self.inner.delete_erased(key).await
     }
     async fn stat(&self, key: &str) -> Result<Option<Entry>, BlobError> {
         check(key)?;
@@ -1498,7 +1508,10 @@ pub async fn open_named_with(
         ));
     }
     if let Some(r) = &rel {
-        let dialect = r.backend().to_string();
+        // The `dialect` fact is the SQL dialect (`sqlite`), not the backend's name: `sqlite-full` is
+        // the same dialect as `sqlite`, and its recorded rows say `dialect=sqlite` (0.18.12 used the
+        // name, so every `rel.*` need on `sqlite-full` was refused `NoRow` at open).
+        let dialect = r.dialect().to_string();
         opened.push((
             Kind::Rel,
             Surface::new(

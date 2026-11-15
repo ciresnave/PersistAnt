@@ -102,6 +102,16 @@ impl<R: RelationalBackend> RelationalBackend for Traced<R> {
         .await
     }
 
+    async fn execute_erased(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        span(
+            self.inner.backend(),
+            "execute_erased",
+            "rel.values",
+            self.inner.execute_erased(sql, params),
+        )
+        .await
+    }
+
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
         span(
             self.inner.backend(),
