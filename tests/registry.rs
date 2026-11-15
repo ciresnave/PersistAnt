@@ -27,6 +27,8 @@ fn the_ids_a_program_stores_in_its_config_are_pinned() {
         "sqlite",
         #[cfg(feature = "registry-sqlite")]
         "sqlite-full",
+        #[cfg(feature = "registry-sqlite")]
+        "sqlite-secure",
         #[cfg(feature = "registry-postgres")]
         "postgres",
         #[cfg(feature = "registry-mysql")]
@@ -811,4 +813,70 @@ fn endpoint_fits_says_which_listings_an_endpoint_can_open() {
         .map(|l| l.id)
         .collect();
     assert_eq!(ids, ["memory"]);
+}
+
+/// `storage.secure_delete` is something a consumer can prefer: `sqlite-secure` has it, `sqlite`
+/// does not, and neither is excluded. The profile opens, and a plain overwrite through the handle
+/// leaves no old bytes in the file (the default profile is the control).
+#[cfg(feature = "registry-sqlite")]
+#[tokio::test]
+async fn sqlite_secure_is_preferable_and_zeroes_what_a_plain_overwrite_frees() {
+    const CANARY: &[u8] = b"CANARY-3c5f9a10-not-a-secret";
+    let needs = basic(Durability::Process).prefer(vec![id("storage.secure_delete")]);
+    let listed = registry::providers(&needs).unwrap();
+    let has = |name: &str| {
+        listed
+            .iter()
+            .find(|l| l.id == name)
+            .unwrap_or_else(|| panic!("no listing for {name}"))
+            .preferred[0]
+            .1
+    };
+    assert!(has("sqlite-secure"));
+    assert!(
+        !has("sqlite"),
+        "control: the default profile does not claim it"
+    );
+    assert!(!has("sqlite-full"));
+    assert_eq!(
+        listed[0].id, "sqlite-secure",
+        "the preference orders it first among those that fit"
+    );
+
+    let needs = &needs;
+    let leaves_canary = |name: &'static str| async move {
+        let dir = std::env::temp_dir().join(format!(
+            "persistant-reg-secure-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let h = registry::open_named(name, &Endpoint::path(dir.join("k.db")), needs)
+            .await
+            .unwrap();
+        for i in 0..20 {
+            h.kv()
+                .put(&format!("b/{i}"), vec![b'.'; 100], None)
+                .await
+                .unwrap();
+        }
+        h.kv().put("u/over", CANARY.to_vec(), None).await.unwrap();
+        h.kv().put("u/other", CANARY.to_vec(), None).await.unwrap();
+        h.kv().put("u/over", b"short".to_vec(), None).await.unwrap();
+        h.kv().delete("u/other").await.unwrap();
+        let found = std::fs::read_dir(&dir).unwrap().any(|e| {
+            std::fs::read(e.unwrap().path())
+                .unwrap()
+                .windows(CANARY.len())
+                .any(|w| w == CANARY)
+        });
+        drop(h);
+        let _ = std::fs::remove_dir_all(&dir);
+        found
+    };
+    assert!(
+        leaves_canary("sqlite").await,
+        "control: the default profile keeps the old bytes"
+    );
+    assert!(!leaves_canary("sqlite-secure").await);
 }
