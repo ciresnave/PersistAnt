@@ -76,6 +76,16 @@ pub enum BatchOp {
         /// The key.
         key: String,
     },
+    /// Remove `key` as [`KvBackend::delete_erased`] does, **inside the batch**: where the backend can,
+    /// the stored bytes are overwritten as part of the same atomic unit (SQLite: one transaction with
+    /// `secure_delete` on, the write-ahead log truncated after the commit). A backend that cannot
+    /// refuses the **whole batch** with [`KvError::Unsupported`] before anything is changed; it is never
+    /// treated as a plain [`BatchOp::Delete`]. Atomic for visibility; the log truncation after the
+    /// commit is a step of its own, reported as an error if it could not complete.
+    DeleteErased {
+        /// The key.
+        key: String,
+    },
     /// A precondition: the **live** value at `key` must equal `expected` (`None`: the key must be
     /// absent or expired) when the batch applies, or the whole batch is refused.
     Require {
@@ -99,6 +109,11 @@ impl BatchOp {
     /// A delete.
     pub fn delete(key: impl Into<String>) -> Self {
         BatchOp::Delete { key: key.into() }
+    }
+
+    /// An erased delete (see [`BatchOp::DeleteErased`]).
+    pub fn delete_erased(key: impl Into<String>) -> Self {
+        BatchOp::DeleteErased { key: key.into() }
     }
 
     /// A precondition that `key` currently holds `expected` (`None`: absent).

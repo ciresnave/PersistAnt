@@ -345,10 +345,6 @@ impl RelationalBackend for SqliteBackend {
                 .await
                 .map(|r| r.rows_affected())
                 .map_err(classify)?;
-            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-                .fetch_all(&mut *conn)
-                .await
-                .map_err(classify)?;
             Ok(n)
         }
         .await;
@@ -358,6 +354,8 @@ impl RelationalBackend for SqliteBackend {
             .map_err(classify);
         let n = run?;
         restore?;
+        drop(conn);
+        truncate_wal(&self.pool).await?;
         Ok(n)
     }
 
@@ -375,6 +373,8 @@ impl RelationalBackend for SqliteBackend {
                 .begin_with("BEGIN IMMEDIATE")
                 .await
                 .map_err(classify)?,
+            pool: self.pool.clone(),
+            erasing: None,
         })
     }
 }
@@ -383,6 +383,35 @@ impl RelationalBackend for SqliteBackend {
 #[derive(Debug)]
 pub struct SqliteTx {
     tx: sqlx::Transaction<'static, Sqlite>,
+    pool: sqlx::SqlitePool,
+    /// `Some(previous)`: [`erase_on_commit`](RelationalTx::erase_on_commit) turned `secure_delete`
+    /// on for this connection, which had `previous`.
+    erasing: Option<i64>,
+}
+
+/// Fold the write-ahead log into the database and truncate it, so the page images it held before
+/// a delete are gone. The pragma answers `(busy, log frames, checkpointed frames)`: `busy` set
+/// means a reader or writer kept it from finishing, which is an error here (the caller was
+/// promised erasure), after a few short retries.
+async fn truncate_wal(pool: &sqlx::SqlitePool) -> Result<(), RelError> {
+    use sqlx::Row as _;
+    let mut conn = pool.acquire().await.map_err(classify)?;
+    for attempt in 0..5 {
+        let row = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(classify)?;
+        let busy: i64 = row.try_get(0).map_err(classify)?;
+        if busy == 0 {
+            return Ok(());
+        }
+        if attempt < 4 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+    Err(RelError::Backend(
+        "the write-ahead log could not be truncated: a reader or writer held it".to_string(),
+    ))
 }
 
 impl RelationalTx for SqliteTx {
@@ -400,11 +429,45 @@ impl RelationalTx for SqliteTx {
         rows.iter().map(decode).collect()
     }
 
-    async fn commit(self) -> Result<(), RelError> {
-        self.tx.commit().await.map_err(classify)
+    /// `secure_delete` on for the rest of the transaction (put back at its end); the truncating
+    /// checkpoint runs after the commit.
+    async fn erase_on_commit(&mut self) -> Result<(), RelError> {
+        if self.erasing.is_some() {
+            return Ok(());
+        }
+        let before: i64 = sqlx::query_scalar("PRAGMA secure_delete")
+            .fetch_one(&mut *self.tx)
+            .await
+            .map_err(classify)?;
+        sqlx::query("PRAGMA secure_delete = ON")
+            .execute(&mut *self.tx)
+            .await
+            .map_err(classify)?;
+        self.erasing = Some(before);
+        Ok(())
     }
 
-    async fn rollback(self) -> Result<(), RelError> {
+    async fn commit(mut self) -> Result<(), RelError> {
+        let Some(before) = self.erasing else {
+            return self.tx.commit().await.map_err(classify);
+        };
+        // The statements have run with the pragma on; put the connection's setting back, commit,
+        // then truncate the log.
+        sqlx::query(AssertSqlSafe(format!("PRAGMA secure_delete = {before}")))
+            .execute(&mut *self.tx)
+            .await
+            .map_err(classify)?;
+        self.tx.commit().await.map_err(classify)?;
+        truncate_wal(&self.pool).await
+    }
+
+    async fn rollback(mut self) -> Result<(), RelError> {
+        if let Some(before) = self.erasing {
+            sqlx::query(AssertSqlSafe(format!("PRAGMA secure_delete = {before}")))
+                .execute(&mut *self.tx)
+                .await
+                .map_err(classify)?;
+        }
         self.tx.rollback().await.map_err(classify)
     }
 }

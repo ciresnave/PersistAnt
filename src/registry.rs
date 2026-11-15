@@ -1211,6 +1211,9 @@ impl RelationalTx for AnyTx<'_> {
     async fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
         each_tx!(self, t => t.query(sql, params).await)
     }
+    async fn erase_on_commit(&mut self) -> Result<(), RelError> {
+        each_tx!(self, t => t.erase_on_commit().await)
+    }
     async fn commit(self) -> Result<(), RelError> {
         each_tx!(self, t => t.commit().await)
     }
