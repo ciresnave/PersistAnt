@@ -972,6 +972,9 @@ impl KvBackend for AnyKv {
     async fn delete(&self, key: &str) -> Result<(), KvError> {
         each!(self, k => k.delete(key).await)
     }
+    async fn delete_erased(&self, key: &str) -> Result<(), KvError> {
+        each!(self, k => k.delete_erased(key).await)
+    }
     async fn put_if_absent(
         &self,
         key: &str,
@@ -1160,6 +1163,9 @@ impl RelationalBackend for AnyRel {
     async fn execute(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
         each_rel!(self, r => r.execute(sql, params).await)
     }
+    async fn execute_erased(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        each_rel!(self, r => r.execute_erased(sql, params).await)
+    }
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
         each_rel!(self, r => r.query(sql, params).await)
     }
@@ -1299,6 +1305,10 @@ impl BlobBackend for AnyBlob {
     async fn delete(&self, key: &str) -> Result<(), BlobError> {
         check(key)?;
         self.inner.delete(key).await
+    }
+    async fn delete_erased(&self, key: &str) -> Result<(), BlobError> {
+        check(key)?;
+        self.inner.delete_erased(key).await
     }
     async fn stat(&self, key: &str) -> Result<Option<Entry>, BlobError> {
         check(key)?;

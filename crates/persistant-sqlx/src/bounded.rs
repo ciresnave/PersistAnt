@@ -90,6 +90,10 @@ impl<B: RelationalBackend> RelationalBackend for Bounded<B> {
         within(self.bound, self.inner.execute(sql, params)).await
     }
 
+    async fn execute_erased(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        within(self.bound, self.inner.execute_erased(sql, params)).await
+    }
+
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
         within(self.bound, self.inner.query(sql, params)).await
     }
