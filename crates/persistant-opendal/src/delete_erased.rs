@@ -13,25 +13,13 @@
 
 use crate::{OpendalBlob, find_canary};
 use persistant_blob::{BlobBackend, BlobError};
-use persistant_core::{CapabilityId, Config, Controls, Reason, Row, Verdict};
+use persistant_core::erased::{ErasedTrial, erased_row};
+use persistant_core::{Config, Row};
 use std::io;
 use std::path::Path;
 
 /// The value written through the driver. Unlikely to occur by chance; not a secret.
 pub const CANARY: &[u8] = b"CANARY-4d7b20e9-not-a-secret";
-
-/// What one trial found.
-#[derive(Debug, Clone, Default)]
-pub struct ErasedTrial {
-    /// The backend said it cannot (`Unsupported`), with its words.
-    pub unsupported: Option<String>,
-    /// Before any delete, the second link showed the canary (the positive control).
-    pub positive: bool,
-    /// After a plain delete, the second link still showed the canary (the known-bad control).
-    pub control_kept: bool,
-    /// After the erased delete the key was gone and its second link showed no canary.
-    pub erased: bool,
-}
 
 /// Link every file under `from` into `to`, as `<prefix>-<n>`, returning how many.
 pub fn link_all(from: &Path, to: &Path, prefix: &str) -> io::Result<usize> {
@@ -62,67 +50,6 @@ pub fn hits(dir: &Path) -> io::Result<Vec<String>> {
         .into_iter()
         .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect())
-}
-
-/// One matrix row from a trial. `Exact` only with both controls; an `Unsupported` is `Missing`.
-pub fn erased_row(
-    id: &str,
-    backend: &str,
-    version: &str,
-    config: Config,
-    env: &Config,
-    test: &str,
-    t: &ErasedTrial,
-) -> Row {
-    let id = CapabilityId::new(id).expect("valid id");
-    let controls = Controls {
-        positive_passed: t.positive,
-        known_bad_failed: t.control_kept,
-    };
-    let verdict = if t.unsupported.is_some() {
-        Verdict::Missing
-    } else if t.erased {
-        Verdict::Exact
-    } else {
-        Verdict::Wrong
-    };
-    let metadata = env.clone().with("test", test).with(
-        "controls",
-        if t.unsupported.is_some() {
-            "not-run"
-        } else if controls.positive_passed && controls.known_bad_failed {
-            "held"
-        } else {
-            "failed"
-        },
-    );
-    match verdict.into_row(
-        id.clone(),
-        backend,
-        version,
-        config.clone(),
-        metadata.clone(),
-        controls,
-    ) {
-        Ok(mut row) => {
-            if let Some(m) = &t.unsupported {
-                row.note = m.clone();
-            }
-            row
-        }
-        Err(_) => Row {
-            subject_kind: "capability".to_string(),
-            subject: id,
-            backend: backend.to_string(),
-            version: version.to_string(),
-            config,
-            enabled: false,
-            reason: Some(Reason::Untested),
-            metadata,
-            note: format!("controls did not hold: {controls:?}"),
-            extra: Default::default(),
-        },
-    }
 }
 
 /// Run the blob trial on `b`, whose files (if any) are under `root`; links go under `work/alias`.

@@ -16,10 +16,10 @@ mod plaintext;
 mod process_lock;
 
 pub use delete_erased::{
-    CANARY as ERASED_CANARY, ErasedTrial, certify_delete_erased, erased_row, hits as erased_hits,
-    link_all,
+    CANARY as ERASED_CANARY, certify_delete_erased, hits as erased_hits, link_all,
 };
 pub use file_mode::{certify_file_mode, owner_only_reading};
+pub use persistant_core::erased::{ErasedTrial, erased_row};
 pub use plaintext::{certify_no_plaintext_at_rest, find_canary};
 pub use process_lock::{
     ProcessLock, certify as certify_process_lock, maybe_run_child as maybe_run_lock_child,

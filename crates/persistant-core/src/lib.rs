@@ -14,6 +14,7 @@ mod adapter;
 pub mod bench;
 pub mod choose;
 mod config;
+pub mod erased;
 mod id;
 mod matrix;
 pub mod owner_only;

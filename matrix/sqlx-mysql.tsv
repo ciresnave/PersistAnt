@@ -41,3 +41,4 @@ capability	rel.migrate.newer	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linu
 capability	rel.migrate.atomic	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.atomic	
 capability	rel.migrate.ddl_atomic	mysql	8.4.11	dialect=mysql	no	missing	arch=x86_64;os=linux;probe=rel::rel.migrate.ddl_atomic	database does not support: DDL commits implicitly: a failed migration cannot undo the tables it created
 capability	rel.migrate.concurrent	mysql	8.4.11	dialect=mysql	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.concurrent	
+capability	kv.delete_erased	kv-on-relational:mysql	0.18+8.4.11	dialect=mysql	no	missing	arch=x86_64;controls=not-run;os=linux;probe=delete_erased::kv.delete_erased	kv does not support: execute_erased
