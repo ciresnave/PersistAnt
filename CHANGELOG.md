@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.8 — `Endpoint::fits` is public
+
+`registry::Endpoint::fits(&self, &EndpointSpec) -> Result<bool, OpenError>` was private; a consumer choosing storage through `providers` could list each `Listing::endpoint` but not ask whether the endpoint it holds fits one (SageAnt's request). It is now public with the rules written down: `None`/`Path` match their spec; a URL (literal or read now from its environment variable or file) must carry a scheme the spec lists; an unreadable secret is an `Err` that never carries the URL. `open_named` already used it and is unchanged. Tested for each endpoint kind against each spec, a scheme-less URL, an unreadable variable (the error holds no password), and the `memory` listing through `providers`.
+
 ## 0.18.7 — `KvOnRelational::delete_erased` (row 38, slice 3b)
 
 `KvOnRelational` implements `KvBackend::delete_erased` through `RelationalBackend::execute_erased`: erased on SQLite (`secure_delete` plus a truncating WAL checkpoint, see 0.18.6), `Unsupported` on PostgreSQL and MySQL/MariaDB, which have no such statement (a deleted tuple stays until vacuum / purge, and WAL and backups keep it).

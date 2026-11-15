@@ -209,7 +209,14 @@ impl Endpoint {
         }
     }
 
-    fn fits(&self, spec: &EndpointSpec) -> Result<bool, OpenError> {
+    /// Whether this endpoint is the kind `spec` asks for: `None` for `EndpointSpec::None`, a path
+    /// for `Path`, and for `Url` a URL (literal, or read now from its environment variable, file or
+    /// literal) whose scheme is one the spec lists. A consumer that walks [`providers`] can pass
+    /// each [`Listing::endpoint`] to pick the backends it can open with the endpoint it has.
+    ///
+    /// For a `Secret` this resolves the URL now, so a failure to read it is an `Err` (which never
+    /// carries the URL); the text is not kept or printed. A URL with no scheme does not fit.
+    pub fn fits(&self, spec: &EndpointSpec) -> Result<bool, OpenError> {
         Ok(match (self, spec) {
             (Endpoint::None, EndpointSpec::None) => true,
             (Endpoint::Path(_), EndpointSpec::Path) => true,
