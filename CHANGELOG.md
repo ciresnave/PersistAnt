@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.6 — `RelationalBackend::execute_erased`, SQLite (row 38, slice 3a)
+
+New default method `RelationalBackend::execute_erased(sql, params)` (capability `relational.execute_erased`): run a deleting statement so the storage the old contents occupied is overwritten where the backend can. Default `Unsupported`, so PostgreSQL and MySQL are unchanged (a deleted tuple stays until vacuum / purge, and WAL and backups keep it: a limit, not a pass). `SqliteBackend` implements it on one connection: `PRAGMA secure_delete = ON`, the statement, `PRAGMA wal_checkpoint(TRUNCATE)`, then the earlier `secure_delete` setting is put back.
+
+Verified by scanning the raw database file, `-wal` and `-journal` for a canary after the delete, on `open` and `open_durable`: a plain delete leaves it in the files (the control), the erased delete does not. Two mutations each fail the test: `secure_delete` left off (canary in `db.sqlite`), and a `PASSIVE` instead of `TRUNCATE` checkpoint (canary in `db.sqlite-wal`). **Not covered:** a value overwritten earlier while `secure_delete` was off, a crashed write's rollback journal, and anything a file system or backup keeps. `KvOnRelational::delete_erased` follows once the kv slice (#241) is in.
+
 ## 0.18.5 — `KvBackend::delete_erased` (row 38, slice 2)
 
 New default method `KvBackend::delete_erased(key)` (capability `kv.delete_erased`): overwrite the bytes that stored the value, then remove the key. Default `Unsupported`, so no existing backend changes. `KvOnBlob` forwards to the blob's `delete_erased`, so it works over `OpendalBlob` on `fs` (zero-fill, sync, unlink) and is `Unsupported` over a blob that lacks it. `Instrumented`, `Traced` and the fault wrapper forward it. Same promise as the blob leaf: contents overwritten, not "gone from the disk".

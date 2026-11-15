@@ -45,6 +45,21 @@ pub trait RelationalBackend: Send + Sync {
         params: &[Value],
     ) -> impl Future<Output = Result<u64, RelError>> + Send;
 
+    /// As [`execute`](Self::execute), for a statement that deletes or overwrites rows, so that the
+    /// storage the old contents occupied is overwritten where this backend can do so
+    /// (`relational.execute_erased`). The promise is "the freed pages and the write-ahead log were
+    /// overwritten or truncated", not "gone from the disk": journaling and copy-on-write file
+    /// systems, snapshots and backups keep copies, and so does a server that vacuums later. A backend
+    /// that cannot say so returns [`RelError::Unsupported`]; the default does.
+    fn execute_erased(
+        &self,
+        sql: &str,
+        params: &[Value],
+    ) -> impl Future<Output = Result<u64, RelError>> + Send {
+        let _ = (sql, params);
+        async { Err(RelError::Unsupported("execute_erased".to_string())) }
+    }
+
     /// Run a statement and return its rows.
     fn query(
         &self,
