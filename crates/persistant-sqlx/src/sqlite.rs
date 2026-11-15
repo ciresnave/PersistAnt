@@ -282,6 +282,45 @@ impl RelationalBackend for SqliteBackend {
             .map_err(classify)
     }
 
+    /// Run the statement on one connection with `secure_delete` on (freed content is zeroed as the
+    /// statement frees it), then `wal_checkpoint(TRUNCATE)` so a WAL database's log, which holds
+    /// earlier page images, is folded in and emptied. The connection's earlier `secure_delete`
+    /// setting is put back. **Not covered:** a value an earlier statement overwrote while
+    /// `secure_delete` was off (its old bytes may sit in free space inside a page), the rollback
+    /// `-journal` of a crashed write, and everything a file system or backup keeps.
+    async fn execute_erased(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
+        let mut conn = self.pool.acquire().await.map_err(classify)?;
+        let before: i64 = sqlx::query_scalar("PRAGMA secure_delete")
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(classify)?;
+        sqlx::query("PRAGMA secure_delete = ON")
+            .execute(&mut *conn)
+            .await
+            .map_err(classify)?;
+        let run = async {
+            let q = bind(sqlx::query(AssertSqlSafe(sql.to_string())), params)?;
+            let n = q
+                .execute(&mut *conn)
+                .await
+                .map(|r| r.rows_affected())
+                .map_err(classify)?;
+            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                .fetch_all(&mut *conn)
+                .await
+                .map_err(classify)?;
+            Ok(n)
+        }
+        .await;
+        let restore = sqlx::query(AssertSqlSafe(format!("PRAGMA secure_delete = {before}")))
+            .execute(&mut *conn)
+            .await
+            .map_err(classify);
+        let n = run?;
+        restore?;
+        Ok(n)
+    }
+
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Row>, RelError> {
         let q = bind(sqlx::query(AssertSqlSafe(sql.to_string())), params)?;
         let rows = q.fetch_all(&self.pool).await.map_err(classify)?;
