@@ -41,3 +41,4 @@ capability	rel.migrate.newer	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os
 capability	rel.migrate.atomic	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.atomic	
 capability	rel.migrate.ddl_atomic	mariadb	11.4.13	dialect=mariadb	no	missing	arch=x86_64;os=linux;probe=rel::rel.migrate.ddl_atomic	database does not support: DDL commits implicitly: a failed migration cannot undo the tables it created
 capability	rel.migrate.concurrent	mariadb	11.4.13	dialect=mariadb	yes		arch=x86_64;os=linux;probe=rel::rel.migrate.concurrent	
+capability	kv.delete_erased	kv-on-relational:mariadb	0.18+11.4.13	dialect=mariadb	no	missing	arch=x86_64;controls=not-run;os=linux;probe=delete_erased::kv.delete_erased	kv does not support: execute_erased
