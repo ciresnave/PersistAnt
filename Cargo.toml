@@ -102,6 +102,10 @@ required-features = ["text-index"]
 name = "text_index_sqlite"
 required-features = ["text-index", "registry-sqlite"]
 
+[[test]]
+name = "batch_erased"
+required-features = ["registry-sqlite"]
+
 [[example]]
 name = "hello"
 required-features = ["registry"]

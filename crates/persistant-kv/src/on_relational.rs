@@ -252,11 +252,10 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         if ops
             .iter()
             .any(|o| matches!(o, BatchOp::DeleteErased { .. }))
+            && let Err(e) = tx.erase_on_commit().await
         {
-            if let Err(e) = tx.erase_on_commit().await {
-                let _ = tx.rollback().await;
-                return Err(e.into());
-            }
+            let _ = tx.rollback().await;
+            return Err(e.into());
         }
         // One batch at a time on a server with row locks. The preconditions below read rows that
         // may not exist, and a lock on a missing row (a gap lock on MySQL, an in-flight insert on

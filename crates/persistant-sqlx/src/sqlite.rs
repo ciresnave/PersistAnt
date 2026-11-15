@@ -396,22 +396,43 @@ pub struct SqliteTx {
 async fn truncate_wal(pool: &sqlx::SqlitePool) -> Result<(), RelError> {
     use sqlx::Row as _;
     let mut conn = pool.acquire().await.map_err(classify)?;
-    for attempt in 0..5 {
+    // A truncating checkpoint waits for readers through the busy handler, which here is the pool's
+    // (30 seconds): give it a short wait of its own, so a reader that will not let go is reported in
+    // about a second, and put the connection's setting back.
+    let before: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(classify)?;
+    sqlx::query("PRAGMA busy_timeout = 250")
+        .execute(&mut *conn)
+        .await
+        .map_err(classify)?;
+    let mut outcome = Err(RelError::Backend(
+        "the write-ahead log could not be truncated: a reader or writer held it".to_string(),
+    ));
+    for _ in 0..4 {
         let row = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
             .fetch_one(&mut *conn)
             .await
-            .map_err(classify)?;
-        let busy: i64 = row.try_get(0).map_err(classify)?;
-        if busy == 0 {
-            return Ok(());
-        }
-        if attempt < 4 {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            .map_err(classify);
+        let busy = row.and_then(|r| r.try_get::<i64, _>(0).map_err(classify));
+        match busy {
+            Ok(0) => {
+                outcome = Ok(());
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                outcome = Err(e);
+                break;
+            }
         }
     }
-    Err(RelError::Backend(
-        "the write-ahead log could not be truncated: a reader or writer held it".to_string(),
-    ))
+    sqlx::query(AssertSqlSafe(format!("PRAGMA busy_timeout = {before}")))
+        .execute(&mut *conn)
+        .await
+        .map_err(classify)?;
+    outcome
 }
 
 impl RelationalTx for SqliteTx {
