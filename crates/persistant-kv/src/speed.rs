@@ -201,7 +201,10 @@ pub async fn run_sized<K: KvBackend>(
 ///   environment so a figure taken on a busy machine says so.
 ///
 /// Only meaningful on a machine otherwise idle: it is a benchmark of the machine as much as the backend.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a benchmark entry point whose knobs (workload, bounds, concurrency, durations) are independent and read at the call site"
+)]
 pub async fn run_concurrent<K: KvBackend + 'static>(
     target: Arc<K>,
     config: &Config,
