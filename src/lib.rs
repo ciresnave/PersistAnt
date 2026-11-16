@@ -5,9 +5,13 @@
 
 pub mod blocking;
 mod error;
+#[cfg(feature = "kv")]
+mod kv_record;
 mod store;
 
 pub use error::{Error, Missing, Result};
+#[cfg(feature = "kv")]
+pub use kv_record::{RecordUpdateError, update_record};
 pub use store::{Config, Entry, Faults, Need, Needs, Page, Record, Replace, Store};
 
 // The other kinds of persistence, behind features that are off by default. Additive: nothing here

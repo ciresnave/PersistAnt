@@ -202,8 +202,7 @@ recorded test says so (`matrix/*.tsv`).
 
 ## Published versions
 
-crates.io lists 0.4.1, 0.4.4, 0.4.8 and 0.4.9 (API read 2026-10-13, none yanked); 0.4.5 to 0.4.7 are
-not published. Check the registry, not this line, before depending on one.
+Releases are on crates.io, and not every version number was published (0.4.5 to 0.4.7 were not). Check the registry, not this file, before depending on one.
 
 ## Licence
 

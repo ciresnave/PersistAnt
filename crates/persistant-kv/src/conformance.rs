@@ -60,6 +60,9 @@ pub enum Leaf {
     /// `kv.rate_window`: a sliding-window limit and a token bucket over `compare_and_swap`
     /// (`kv::rate::RateWindow`), by sampled concurrency
     RateWindow,
+    /// `kv.cas_record`: read-modify-write retried until it commits (`kv::cas::update`), by sampled
+    /// concurrency
+    CasRecord,
     /// `lock.lease`, by real time and sampled concurrency
     Lease,
     /// `kv.ttl_remaining`, in real time
@@ -87,7 +90,7 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 22] = [
+    pub const ALL: [Leaf; 23] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -101,6 +104,7 @@ impl Leaf {
         Leaf::Count,
         Leaf::Index,
         Leaf::RateWindow,
+        Leaf::CasRecord,
         Leaf::Lease,
         Leaf::TtlRemaining,
         Leaf::PurgeExpired,
@@ -128,6 +132,7 @@ impl Leaf {
             Leaf::Count => "kv.count",
             Leaf::Index => "kv.index",
             Leaf::RateWindow => "kv.rate_window",
+            Leaf::CasRecord => "kv.cas_record",
             Leaf::Lease => "lock.lease",
             Leaf::TtlRemaining => "kv.ttl_remaining",
             Leaf::PurgeExpired => "kv.purge_expired",
@@ -150,6 +155,7 @@ impl Leaf {
             Leaf::Count => "ttl_ms=100;sleep_ms=250",
             Leaf::Index => "contenders=8;rounds=10",
             Leaf::RateWindow => "contenders=16;rounds=10",
+            Leaf::CasRecord => "contenders=16;rounds=10",
             Leaf::PurgeExpired => "ttl_ms=100;sleep_ms=250",
             Leaf::BatchRollback => "contenders=16;rounds=20",
             Leaf::BatchConcurrentRead => "readers=4;batches=60",
@@ -182,6 +188,7 @@ impl Leaf {
             | Leaf::Take
             | Leaf::Index
             | Leaf::RateWindow
+            | Leaf::CasRecord
             | Leaf::BatchRollback
             | Leaf::BatchConcurrentRead
             | Leaf::OptimisticSequence
@@ -213,6 +220,11 @@ impl Leaf {
             Leaf::Count => &[Defect::CountIncludesExpired, Defect::CountIgnoresPrefix],
             Leaf::Index => &[Defect::BatchIgnoresRequire, Defect::BatchNotAtomic],
             Leaf::RateWindow => &[
+                Defect::CasIgnoresExpected,
+                Defect::CasNotAtomic,
+                Defect::PutIfAbsentNotExclusive,
+            ],
+            Leaf::CasRecord => &[
                 Defect::CasIgnoresExpected,
                 Defect::CasNotAtomic,
                 Defect::PutIfAbsentNotExclusive,
@@ -291,6 +303,7 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::Count => count(b, &base).await,
         Leaf::Index => index(b, &base).await,
         Leaf::RateWindow => rate_window(b, &base).await,
+        Leaf::CasRecord => cas_record(b, &base).await,
         Leaf::Lease => lease(b, &base).await,
         Leaf::TtlRemaining => ttl_remaining(b, &base).await,
         Leaf::PurgeExpired => purge_expired(b, &base).await,
@@ -841,6 +854,74 @@ async fn rate_window<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
                     if bucket { "bucket" } else { "window" }
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+async fn cas_record<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    use crate::cas::{UpdateError, update};
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 10;
+    fn count(v: Option<&[u8]>) -> u64 {
+        v.and_then(|b| std::str::from_utf8(b).ok())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
+    }
+    let bump = |v: Option<&[u8]>| Some((count(v) + 1).to_string().into_bytes());
+    fn lift(e: UpdateError) -> Failure {
+        match e {
+            UpdateError::Kv(k) => Failure::Backend(k),
+            UpdateError::Contended { attempts } => {
+                Failure::Wrong(format!("an update was contended after {attempts} attempts"))
+            }
+        }
+    }
+
+    // An absent key reaches the closure as None; the result is stored and returned.
+    let k = format!("{base}first");
+    let mut seen_absent = false;
+    let out = update(b, &k, None, |v| {
+        seen_absent = v.is_none();
+        Some(b"1".to_vec())
+    })
+    .await
+    .map_err(lift)?;
+    if !seen_absent || out.as_deref() != Some(b"1".as_slice()) {
+        return wrong("an update of an absent key did not see None and commit its value");
+    }
+    if b.get(&k).await?.as_deref() != Some(b"1".as_slice()) {
+        return wrong("an update of an absent key did not store its value");
+    }
+    // A present key reaches the closure with its value.
+    update(b, &k, None, bump).await.map_err(lift)?;
+    if b.get(&k).await?.as_deref() != Some(b"2".as_slice()) {
+        return wrong("an update of a present key did not see the stored value");
+    }
+    // A closure that declines writes nothing.
+    if update(b, &k, None, |_| None).await.map_err(lift)?.is_some()
+        || b.get(&k).await?.as_deref() != Some(b"2".as_slice())
+    {
+        return wrong("a declined update changed the key");
+    }
+
+    // Concurrency: many callers bump one counter; every bump lands exactly once.
+    for round in 0..ROUNDS {
+        let key = format!("{base}race{round}");
+        let key = key.as_str();
+        let tasks: Vec<Task<'_, Result<(), UpdateError>>> = (0..CONTENDERS)
+            .map(|_| -> Task<'_, _> {
+                Box::pin(async move { update(b, key, None, bump).await.map(|_| ()) })
+            })
+            .collect();
+        for r in join_all(tasks).await {
+            r.map_err(lift)?;
+        }
+        let got = count(b.get(key).await?.as_deref());
+        if got != CONTENDERS as u64 {
+            return wrong(format!(
+                "round {round}: {CONTENDERS} concurrent increments left {got}, want {CONTENDERS} (an update was lost)"
+            ));
         }
     }
     Ok(())
@@ -1920,6 +2001,7 @@ mod tests {
                     | Leaf::Count
                     | Leaf::Index
                     | Leaf::RateWindow
+                    | Leaf::CasRecord
                     | Leaf::Lease
                     | Leaf::PurgeExpired
                     | Leaf::BatchRollback

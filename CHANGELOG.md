@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.26 — Added: `persistant_kv::cas::update` and `persistant::update_record`, a retried compare-and-swap read-modify-write (leaf `kv.cas_record`)
+
+`cas::update(kv, key, ttl, f)` reads the live value, applies `f`, and commits with `compare_and_swap` (`put_if_absent` for an absent key), running `f` again after each lost race and returning `UpdateError::Contended` after 64. `persistant::update_record` is the typed form over a `Record` (same stored envelope as `Store`: kind, schema, upgrade). It is on exactly where `kv.compare_and_swap` is (SQLite, PostgreSQL, MySQL, MariaDB, the memory backend) and refused with `KvError::Unsupported` on a blob store, before anything is written. New matrix leaf `kv.cas_record` (23rd kv/lock leaf); the README no longer lists a stale set of published versions. Verified: 16 concurrent writers land exactly 16 updates on the memory backend and on SQLite through the conformance leaf; the `CasIgnoresExpected` and `CasNotAtomic` defects turn the leaf off; replacing the compare-and-swap with a plain put makes the leaf fail ("an update was lost"). Additive, no breaking change. ROADMAP row 41 step 1; step 2 (fencing token) follows.
+
 ## 0.18.25 — docs: patent sweep re-sweep 3 for the 0.18 line; a reason on each lint allow
 
 `docs/PATENT-SWEEP.md` now names the 0.18 line and records re-sweep 3 (ideas 30 to 33: erased delete in an atomic batch, the key-value text index, typed array parameters, template test databases): queries, six hits with their independent claims read (all outside as read), eight seen-not-read, no-patent-found notes, limits. The seven `allow(...)` attributes CodeRipper's GOV-010 flagged now carry a `reason`. No behaviour change.
