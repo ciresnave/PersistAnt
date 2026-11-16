@@ -34,6 +34,16 @@ async fn main() {
         persistant_kv::text_conformance::certify(&kv, kv.backend(), kv.version(), &config, &env)
             .await,
     );
+    // `text.index.erased`: a canary term's postings read back from the files after the removal.
+    rows.push(persistant_core::erased::erased_row(
+        "text.index.erased",
+        kv.backend(),
+        kv.version(),
+        config.clone(),
+        &env,
+        "text::text.index.erased",
+        &text_erase_trial(false).await,
+    ));
     // The relational kind's own leaves, on the same server.
     rows.extend(
         persistant_relational::conformance::certify(&rel_db, &config, &env)
@@ -75,6 +85,15 @@ async fn main() {
         )
         .await,
     );
+    rows.push(persistant_core::erased::erased_row(
+        "text.index.erased",
+        full.backend(),
+        full.version(),
+        config.clone(),
+        &env,
+        "text::text.index.erased",
+        &text_erase_trial(true).await,
+    ));
     // The relational kind's leaves and the migration ledger on the durable profile too, so a
     // registry `rel.*` need finds rows for `sqlite-full` (it was listed for key-value only).
     rows.extend(
@@ -282,4 +301,65 @@ fn holds_bytes(dir: &std::path::Path, needle: &[u8]) -> bool {
             .windows(needle.len())
             .any(|w| w == needle)
     })
+}
+
+const CANARY_TERM: &str = "zzcanaryterm0c8e5d11";
+
+/// Twenty filler documents so the canary's page holds other cells, then the document that carries the
+/// canary term.
+async fn fill_text(kv: &KvOnRelational<SqliteBackend>) {
+    use persistant_kv::text::TextIndex;
+    let ix = TextIndex::new(kv);
+    for i in 0..20 {
+        ix.put(
+            "i",
+            &format!("f{i:02}"),
+            &[("filler".to_string(), 1), (format!("word{i}"), 2)],
+        )
+        .await
+        .expect("put");
+    }
+    ix.put("i", "d1", &[(CANARY_TERM.to_string(), 3)])
+        .await
+        .expect("put");
+}
+
+/// A plain removal on one database (the control: its canary term stays in the files), an erased
+/// removal on another (it must not).
+async fn text_erase_trial(durable: bool) -> ErasedTrial {
+    use persistant_kv::text::TextIndex;
+    let (plain, plain_dir) = open_kv(durable, false, "tplain").await;
+    fill_text(&plain).await;
+    let mut t = ErasedTrial {
+        positive: holds_bytes(&plain_dir, CANARY_TERM.as_bytes()),
+        ..Default::default()
+    };
+    TextIndex::new(&plain)
+        .remove_many("i", &["d1"])
+        .await
+        .expect("remove");
+    t.control_kept = holds_bytes(&plain_dir, CANARY_TERM.as_bytes());
+    drop(plain);
+    let _ = std::fs::remove_dir_all(&plain_dir);
+
+    let (kv, dir) = open_kv(durable, false, "terased").await;
+    fill_text(&kv).await;
+    match TextIndex::new(&kv).remove_many_erased("i", &["d1"]).await {
+        Ok(n) => {
+            t.erased = n == 1
+                && TextIndex::new(&kv)
+                    .doc_len("i", "d1")
+                    .await
+                    .expect("doc_len")
+                    .is_none()
+                && !holds_bytes(&dir, CANARY_TERM.as_bytes());
+        }
+        Err(persistant_kv::KvError::Unsupported(m)) => {
+            t.unsupported = Some(format!("kv backend does not support: {m}"));
+        }
+        Err(e) => panic!("remove_many_erased: {e}"),
+    }
+    drop(kv);
+    let _ = std::fs::remove_dir_all(&dir);
+    t
 }

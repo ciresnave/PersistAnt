@@ -107,6 +107,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a text index over a key-value store keeps its postings, document lengths and corpus totals equal to what the documents put, replaced and removed say, after every operation and under concurrent writers, from one atomic batch per change; ranking is the consumer's",
     ),
     (
+        "text.index.erased",
+        "documents removed from a text index this way have had their terms, which are the keys of their postings, and their records overwritten in the same atomic batch that removed them, read back from the files; not a claim about copies a file system, snapshot or backup keeps, or about terms an earlier plain statement removed",
+    ),
+    (
         "kv.delete_erased",
         "a key removed this way has had the stored bytes of its value overwritten, or on a database the freed pages and the write-ahead log, before the key was removed, read back from the files; not a claim about copies a file system, snapshot or backup keeps",
     ),

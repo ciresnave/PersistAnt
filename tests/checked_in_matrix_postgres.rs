@@ -10,8 +10,8 @@ fn the_recorded_postgres_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        44,
-        "twenty-two kv/lock leaves (kv.bounded_call twice: unset and set) and nineteen relational leaves (thirteen contract, six migration) are certified, and kv.delete_erased once, off as missing, and text.index once, on"
+        45,
+        "twenty-two kv/lock leaves (kv.bounded_call twice: unset and set) and nineteen relational leaves (thirteen contract, six migration) are certified, and kv.delete_erased once, off as missing, and text.index once, on, and text.index.erased once, off as missing"
     );
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),
@@ -27,7 +27,7 @@ fn the_recorded_postgres_rows_are_all_on_and_read_by_the_gate() {
             continue;
         }
         // No erasing statement on this server: recorded off, missing, from the call itself.
-        if r.subject.as_str() == "kv.delete_erased" {
+        if matches!(r.subject.as_str(), "kv.delete_erased" | "text.index.erased") {
             assert!(!r.enabled, "{}", r.note);
             assert_eq!(r.reason, Some(persistant::capability::Reason::Missing));
             assert!(r.backend.starts_with("kv-on-relational:"), "{}", r.backend);

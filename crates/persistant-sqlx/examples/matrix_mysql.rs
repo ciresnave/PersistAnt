@@ -94,6 +94,26 @@ async fn main() {
         .execute("DROP DATABASE IF EXISTS persistant_mig_matrix", &[])
         .await
         .expect("drop scratch database");
+    // `text.index.erased`: no erased batch on this server, so no erased removal: off, missing, from the call.
+    {
+        let why =
+            persistant_kv::text_conformance::erased_unsupported(&kv, "persistant-conformance/")
+                .await
+                .expect("probe ran")
+                .expect("this server is expected to refuse an erased removal");
+        rows.push(persistant_core::erased::erased_row(
+            "text.index.erased",
+            persistant_kv::KvBackend::backend(&kv),
+            persistant_kv::KvBackend::version(&kv),
+            config.clone(),
+            &env,
+            "text::text.index.erased",
+            &persistant_core::erased::ErasedTrial {
+                unsupported: Some(why),
+                ..Default::default()
+            },
+        ));
+    }
     // `kv.delete_erased`: this server has no erasing statement (a deleted tuple stays until
     // vacuum or purge, and the log and backups keep it); the row is recorded from the call.
     let erased = match persistant_kv::KvBackend::delete_erased(&kv, "matrix-probe").await {

@@ -45,3 +45,31 @@ async fn a_blob_store_is_off_as_missing() {
     assert!(!row.enabled);
     assert_eq!(row.reason, Some(Reason::Missing), "{row:?}");
 }
+
+/// `erased_unsupported` (the matrix generators' probe): a kv that cannot erase inside a batch is
+/// reported with its words and nothing is left behind; a blob store, which cannot even `put`, too.
+#[tokio::test]
+async fn the_erased_probe_reports_unsupported_and_leaves_nothing() {
+    use persistant::kv::text::TextIndex;
+    use persistant::kv::text_conformance::erased_unsupported;
+    let kv = MemoryKv::new();
+    let why = erased_unsupported(&kv, "p/").await.unwrap();
+    assert!(
+        why.as_deref()
+            .is_some_and(|m| m.contains("does not support")),
+        "{why:?}"
+    );
+    let ix = TextIndex::new(&kv);
+    assert_eq!(ix.stats("p/erased-probe").await.unwrap().docs, 0);
+    assert!(
+        ix.docs("p/erased-probe", None, 10)
+            .await
+            .unwrap()
+            .ids
+            .is_empty()
+    );
+
+    let blob = KvOnBlob::new(persistant::blob::MemoryBlob::new());
+    let why = erased_unsupported(&blob, "p/").await.unwrap();
+    assert!(why.is_some(), "{why:?}");
+}

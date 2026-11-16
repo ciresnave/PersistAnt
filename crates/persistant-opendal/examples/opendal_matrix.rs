@@ -130,6 +130,28 @@ async fn run(env: Config, crash_rows: Vec<Row>, lock_row: Row) {
             persistant_kv::text_conformance::certify(kv, kv.backend(), kv.version(), &cfg, &env)
                 .await;
         rows.extend(clean([text], &tmp));
+        // `text.index.erased`: a blob store has no atomic batch, so no erased removal: off, missing.
+        let why =
+            persistant_kv::text_conformance::erased_unsupported(kv, "persistant-conformance/")
+                .await
+                .expect("probe ran")
+                .expect("a blob store is expected to refuse");
+        let trial = ErasedTrial {
+            unsupported: Some(why),
+            ..Default::default()
+        };
+        rows.extend(clean(
+            [persistant_opendal::erased_row(
+                "text.index.erased",
+                kv.backend(),
+                kv.version(),
+                cfg.clone(),
+                &env,
+                "text::text.index.erased",
+                &trial,
+            )],
+            &tmp,
+        ));
     }
 
     // `kv.delete_erased` over the same four configurations, each on a root of its own so the
