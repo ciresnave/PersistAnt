@@ -1,0 +1,3 @@
+kind: fix: `TextIndex::put` and `remove_many` no longer report `Corrupt` when a concurrent writer commits between their two reads
+---
+`put` read the totals record and then the document record without a snapshot, so a writer committing in between made the totals look lower than the document's length and `put` returned `Corrupt("the totals are below a document's length")` (`remove_many` had the same shape). The error is now raised only when the totals are unchanged on a re-read; otherwise the operation retries, and the batch's `require` ops still guard the write. Seen as `concurrent_writers_keep_the_totals_exact` failing on Windows CI runs (2026-11-15). Verified: the built test binary run 300 times fails 10/300 before the fix and 0/300 after.
