@@ -1,0 +1,5 @@
+kind: `KvHandle::text()`: the text index for blocking callers; `TextIndex::remove_prefix_erased`
+---
+- **Added (feature `text-index`):** `blocking::registry::KvHandle::text()` returns a `TextHandle` with `put`, `remove_many`, `remove_many_erased`, `remove_prefix_erased`, `postings`, `doc_len`, `stats`, `docs`, `docs_with_prefix` and `search`, each the blocking form of the `TextIndex` method (asked for by sageant, which is synchronous).
+- **Added:** `TextIndex::docs_with_prefix` (the document ids under an id prefix, a range scan) and `TextIndex::remove_prefix_erased` (every document under a prefix, in rounds of 100, one atomic erased batch per round; a crash or error between rounds leaves the earlier rounds removed and none half-removed, and a repeat carries on).
+- Tests: `tests/blocking_text.rs` on `sqlite-secure`: 250 versions under `a/` (more than two rounds), one under `ab/` and one under `b/`; the canary term is in none of the files after `remove_prefix_erased("a/")`, a plain `remove_many` is the control that leaves it, `ab/1` and `b/1` and the totals are intact, a repeat is 0.

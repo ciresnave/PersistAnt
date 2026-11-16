@@ -117,6 +117,10 @@ name = "registry_listed_opens"
 required-features = ["registry-sqlite"]
 
 [[test]]
+name = "blocking_text"
+required-features = ["text-index", "registry-sqlite"]
+
+[[test]]
 name = "text_erased"
 required-features = ["text-index", "registry-sqlite"]
 

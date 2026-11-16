@@ -145,6 +145,15 @@ impl KvHandle {
         self.handle().rel().map(|_| RelHandle { owner: self })
     }
 
+    /// The text index on this handle, blocking (feature `text-index`): see
+    /// [`crate::kv::text::TextIndex`]. It needs `kv.batch` and `kv.ordered_scan_values`; a backend
+    /// without them answers `Unsupported` from the first call. `remove_many_erased` also needs
+    /// `kv.delete_erased` inside a batch (`sqlite-secure`).
+    #[cfg(feature = "text-index")]
+    pub fn text(&self) -> TextHandle<'_> {
+        TextHandle { owner: self }
+    }
+
     /// See [`KvBackend::get`].
     pub fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
         let key = key.to_string();
@@ -265,6 +274,154 @@ impl KvHandle {
         let ops = ops.to_vec();
         self.call(|h| async move { h.kv().batch(&ops).await })
     }
+}
+
+/// The text index of an opened [`KvHandle`], blocking. Methods are those of
+/// [`crate::kv::text::TextIndex`].
+#[cfg(feature = "text-index")]
+#[derive(Debug)]
+pub struct TextHandle<'a> {
+    owner: &'a KvHandle,
+}
+
+#[cfg(feature = "text-index")]
+impl TextHandle<'_> {
+    /// See [`TextIndex::put`](crate::kv::text::TextIndex::put).
+    pub fn put(&self, index: &str, doc_id: &str, terms: &[(String, u32)]) -> Result<(), KvError> {
+        let (index, doc_id, terms) = (index.to_string(), doc_id.to_string(), terms.to_vec());
+        self.owner.call(|h| async move {
+            crate::kv::text::TextIndex::new(h.kv())
+                .put(&index, &doc_id, &terms)
+                .await
+        })
+    }
+
+    /// See [`TextIndex::remove_many`](crate::kv::text::TextIndex::remove_many).
+    pub fn remove_many(&self, index: &str, doc_ids: &[&str]) -> Result<usize, KvError> {
+        let (index, ids) = (index.to_string(), own(doc_ids));
+        self.owner.call(|h| async move {
+            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+            crate::kv::text::TextIndex::new(h.kv())
+                .remove_many(&index, &ids)
+                .await
+        })
+    }
+
+    /// See [`TextIndex::remove_many_erased`](crate::kv::text::TextIndex::remove_many_erased).
+    pub fn remove_many_erased(&self, index: &str, doc_ids: &[&str]) -> Result<usize, KvError> {
+        let (index, ids) = (index.to_string(), own(doc_ids));
+        self.owner.call(|h| async move {
+            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+            crate::kv::text::TextIndex::new(h.kv())
+                .remove_many_erased(&index, &ids)
+                .await
+        })
+    }
+
+    /// See [`TextIndex::remove_prefix_erased`](crate::kv::text::TextIndex::remove_prefix_erased):
+    /// one erased batch per round of 100 documents, so a crash or error between rounds leaves a
+    /// partial removal (earlier rounds gone, never a half-removed document); run it again.
+    pub fn remove_prefix_erased(&self, index: &str, id_prefix: &str) -> Result<usize, KvError> {
+        let (index, prefix) = (index.to_string(), id_prefix.to_string());
+        self.owner.call(|h| async move {
+            crate::kv::text::TextIndex::new(h.kv())
+                .remove_prefix_erased(&index, &prefix)
+                .await
+        })
+    }
+
+    /// See [`TextIndex::postings`](crate::kv::text::TextIndex::postings).
+    pub fn postings(
+        &self,
+        index: &str,
+        term: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::kv::text::PostingPage, KvError> {
+        let (index, term, after) = (
+            index.to_string(),
+            term.to_string(),
+            after.map(str::to_string),
+        );
+        self.owner.call(|h| async move {
+            crate::kv::text::TextIndex::new(h.kv())
+                .postings(&index, &term, after.as_deref(), limit)
+                .await
+        })
+    }
+
+    /// See [`TextIndex::doc_len`](crate::kv::text::TextIndex::doc_len).
+    pub fn doc_len(&self, index: &str, doc_id: &str) -> Result<Option<u32>, KvError> {
+        let (index, doc_id) = (index.to_string(), doc_id.to_string());
+        self.owner.call(|h| async move {
+            crate::kv::text::TextIndex::new(h.kv())
+                .doc_len(&index, &doc_id)
+                .await
+        })
+    }
+
+    /// See [`TextIndex::stats`](crate::kv::text::TextIndex::stats).
+    pub fn stats(&self, index: &str) -> Result<crate::kv::text::Stats, KvError> {
+        let index = index.to_string();
+        self.owner
+            .call(|h| async move { crate::kv::text::TextIndex::new(h.kv()).stats(&index).await })
+    }
+
+    /// See [`TextIndex::docs`](crate::kv::text::TextIndex::docs).
+    pub fn docs(
+        &self,
+        index: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::kv::text::DocPage, KvError> {
+        let (index, after) = (index.to_string(), after.map(str::to_string));
+        self.owner.call(|h| async move {
+            crate::kv::text::TextIndex::new(h.kv())
+                .docs(&index, after.as_deref(), limit)
+                .await
+        })
+    }
+
+    /// See [`TextIndex::docs_with_prefix`](crate::kv::text::TextIndex::docs_with_prefix).
+    pub fn docs_with_prefix(
+        &self,
+        index: &str,
+        id_prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::kv::text::DocPage, KvError> {
+        let (index, prefix, after) = (
+            index.to_string(),
+            id_prefix.to_string(),
+            after.map(str::to_string),
+        );
+        self.owner.call(|h| async move {
+            crate::kv::text::TextIndex::new(h.kv())
+                .docs_with_prefix(&index, &prefix, after.as_deref(), limit)
+                .await
+        })
+    }
+
+    /// See [`TextIndex::search`](crate::kv::text::TextIndex::search).
+    pub fn search(
+        &self,
+        index: &str,
+        terms: &[String],
+        mode: crate::kv::text::Match,
+        limit: usize,
+    ) -> Result<Vec<crate::kv::text::Hit>, KvError> {
+        let (index, terms) = (index.to_string(), terms.to_vec());
+        self.owner.call(|h| async move {
+            crate::kv::text::TextIndex::new(h.kv())
+                .search(&index, &terms, mode, limit)
+                .await
+        })
+    }
+}
+
+#[cfg(feature = "text-index")]
+fn own(ids: &[&str]) -> Vec<String> {
+    ids.iter().map(|s| (*s).to_string()).collect()
 }
 
 impl Drop for KvHandle {

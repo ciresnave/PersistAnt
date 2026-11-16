@@ -489,6 +489,73 @@ impl<'a, K: KvBackend> TextIndex<'a, K> {
         Ok(DocPage { ids, next })
     }
 
+    /// Up to `limit` document ids of `index` that start with `id_prefix`, ascending and strictly
+    /// after `after` (which must itself start with the prefix): the range scan under a prefix such
+    /// as `"<id>/"`, without paging past the other documents. An empty prefix is [`docs`](Self::docs).
+    pub async fn docs_with_prefix(
+        &self,
+        index: &str,
+        id_prefix: &str,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<DocPage, KvError> {
+        check_name("the index name", index)?;
+        if id_prefix.contains(SEP) {
+            return Err(invalid("a document id prefix", "must not contain U+001F"));
+        }
+        let strip_to = doc_prefix(index);
+        let prefix = format!("{strip_to}{id_prefix}");
+        let after_key = after.map(|d| format!("{strip_to}{d}"));
+        let page = self
+            .kv
+            .ordered_scan(&prefix, after_key.as_deref(), limit)
+            .await?;
+        let strip = |k: &str| -> Result<String, KvError> {
+            k.strip_prefix(&strip_to)
+                .map(str::to_string)
+                .ok_or_else(|| corrupt("a document key outside its prefix"))
+        };
+        let ids = page
+            .keys
+            .iter()
+            .map(|k| strip(k))
+            .collect::<Result<Vec<_>, _>>()?;
+        let next = page.next.as_deref().map(strip).transpose()?;
+        Ok(DocPage { ids, next })
+    }
+
+    /// Remove, as [`remove_many_erased`](Self::remove_many_erased) does, every document of `index`
+    /// whose id starts with `id_prefix` (an empty prefix removes the whole index); the result is how
+    /// many were removed.
+    ///
+    /// It works in rounds of up to 100 documents, **one atomic erased batch per round**: a round
+    /// either removes all of its documents with their postings or none. **A crash, or an error,
+    /// between rounds leaves the earlier rounds removed and the rest present** (a partial removal,
+    /// never a half-removed document); run it again with the same prefix and it carries on, which is
+    /// also what truncates the log after an error. Documents written under the prefix while it runs
+    /// may or may not be removed. The caveats of `remove_many_erased` apply to each round.
+    pub async fn remove_prefix_erased(
+        &self,
+        index: &str,
+        id_prefix: &str,
+    ) -> Result<usize, KvError> {
+        const ROUND: usize = 100;
+        let mut total = 0;
+        loop {
+            let page = self.docs_with_prefix(index, id_prefix, None, ROUND).await?;
+            if page.ids.is_empty() {
+                if total == 0 {
+                    // Nothing there: still run the erased step, so a repeat after a log that could
+                    // not be truncated truncates it.
+                    self.remove_inner(index, &[], true).await?;
+                }
+                return Ok(total);
+            }
+            let ids: Vec<&str> = page.ids.iter().map(String::as_str).collect();
+            total += self.remove_inner(index, &ids, true).await?;
+        }
+    }
+
     /// Documents matching `terms` ([`Match::Any`] or [`Match::All`]), best first: by the sum of
     /// their term frequencies over the matched terms, ties by `doc_id` ascending, at most `limit`.
     /// A convenience, not a ranking: it does not use document length or term rarity (read
