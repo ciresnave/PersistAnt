@@ -139,3 +139,7 @@ required-features = ["sqlite"]
 [[test]]
 name = "sqlx_bridge_void"
 required-features = ["bridge"]
+
+[[test]]
+name = "sqlite_text_erased_retry"
+required-features = ["sqlite"]

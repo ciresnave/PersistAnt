@@ -10,6 +10,9 @@
 //! [`TextIndex::docs`] (every document id). [`TextIndex::search`] is a convenience: any or all of
 //! some terms, ordered by the sum of term frequencies, ties by `doc_id` ascending. No BM25.
 //!
+//! [`TextIndex::remove_many_erased`] removes documents with their postings erased in the same batch
+//! (`BatchOp::DeleteErased`; SQLite).
+//!
 //! Every change is **one [`KvBackend::batch`]** with a [`BatchOp::Require`] on the corpus totals
 //! and on the document's own record, so a crash or a concurrent change never leaves postings
 //! without their record, or totals that disagree with the documents. A lost race retries, at most
@@ -306,6 +309,43 @@ impl<'a, K: KvBackend> TextIndex<'a, K> {
     /// of the corpus totals, in one batch. Absent documents are ignored; the result is how many
     /// were removed.
     pub async fn remove_many(&self, index: &str, doc_ids: &[&str]) -> Result<usize, KvError> {
+        self.remove_inner(index, doc_ids, false).await
+    }
+
+    /// As [`remove_many`](Self::remove_many), and the postings (they hold the documents' terms) and
+    /// the document records are removed with [`BatchOp::DeleteErased`] in the **same atomic batch**:
+    /// where the backend can (SQLite), the stored bytes are overwritten as part of it and the
+    /// write-ahead log is truncated after the commit. A backend that cannot returns
+    /// [`KvError::Unsupported`] before anything changes (`kv.delete_erased` inside a batch is
+    /// required); the corpus totals are counts, not content, and are written plainly.
+    ///
+    /// **If it returns an error after the batch committed** (the log could not be truncated because a
+    /// reader held it), the documents are gone from the index but their terms may still be in the log:
+    /// call it again with the same ids. Documents already removed are ignored, and a repeat call
+    /// still runs an erased step, which is what truncates the log. **Not covered:** a posting or
+    /// record an earlier plain `put` replaced or a plain removal deleted (see `kv.delete_erased` and
+    /// the `sqlite-secure` profile), and copies a file system, snapshot or backup keeps.
+    pub async fn remove_many_erased(
+        &self,
+        index: &str,
+        doc_ids: &[&str],
+    ) -> Result<usize, KvError> {
+        self.remove_inner(index, doc_ids, true).await
+    }
+
+    async fn remove_inner(
+        &self,
+        index: &str,
+        doc_ids: &[&str],
+        erased: bool,
+    ) -> Result<usize, KvError> {
+        let delete = |key: String| {
+            if erased {
+                BatchOp::delete_erased(key)
+            } else {
+                BatchOp::delete(key)
+            }
+        };
         check_name("the index name", index)?;
         let wanted: BTreeSet<&str> = doc_ids.iter().copied().collect();
         for id in &wanted {
@@ -324,13 +364,26 @@ impl<'a, K: KvBackend> TextIndex<'a, K> {
                 let Some(bytes) = td_old else { continue };
                 let (len, terms) = decode_doc(&bytes)?;
                 for t in terms.keys() {
-                    ops.push(BatchOp::delete(posting_key(index, t, id)));
+                    ops.push(delete(posting_key(index, t, id)));
                 }
-                ops.push(BatchOp::delete(td_key));
+                ops.push(delete(td_key));
                 removed += 1;
                 freed += u64::from(len);
             }
             if removed == 0 {
+                if erased {
+                    // Nothing to remove, but a repeat after a log that could not be truncated must
+                    // still run an erased step: a batch with an erased delete of a key that is not
+                    // there (the index's marker name, never written) does that and changes nothing.
+                    let marker = format!("tm{SEP}{index}");
+                    let _ = self
+                        .kv
+                        .batch(&[
+                            BatchOp::require(tt_key.clone(), tt_old.clone()),
+                            BatchOp::delete_erased(marker),
+                        ])
+                        .await?;
+                }
                 return Ok(0);
             }
             let docs = totals
@@ -353,7 +406,7 @@ impl<'a, K: KvBackend> TextIndex<'a, K> {
             tokio::task::yield_now().await;
         }
         Err(KvError::Backend(format!(
-            "text index: remove_many lost the race {MAX_TRIES} times"
+            "text index: remove lost the race {MAX_TRIES} times"
         )))
     }
 
