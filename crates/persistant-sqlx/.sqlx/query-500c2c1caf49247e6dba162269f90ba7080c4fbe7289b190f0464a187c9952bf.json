@@ -1,0 +1,1 @@
+{"db_name":"PostgreSQL","query":"SELECT persistant_void_fn($1)","describe":{"columns":[{"ordinal":0,"name":"persistant_void_fn","type_info":"Void"}],"parameters":{"Left":["Int8"]},"nullable":[null]},"hash":"500c2c1caf49247e6dba162269f90ba7080c4fbe7289b190f0464a187c9952bf"}

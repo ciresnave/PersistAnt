@@ -135,3 +135,7 @@ required-features = ["sqlite"]
 [[test]]
 name = "sqlite_batch_erased_reader"
 required-features = ["sqlite"]
+
+[[test]]
+name = "sqlx_bridge_void"
+required-features = ["bridge"]
