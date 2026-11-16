@@ -10,8 +10,8 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        93,
-        "twenty-two kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and nineteen relational leaves (thirteen contract, six migration) on each of them are certified, and storage.secure_delete once on the opt-in secure profile, and text.index once on each of them, and kv.delete_erased and text.index.erased once on each of them (off, wrong: stale in-page fragments of earlier writes stay) and once on the opt-in secure profile (on)"
+        95,
+        "twenty-three kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and nineteen relational leaves (thirteen contract, six migration) on each of them are certified, and storage.secure_delete once on the opt-in secure profile, and text.index once on each of them, and kv.delete_erased and text.index.erased once on each of them (off, wrong: stale in-page fragments of earlier writes stay) and once on the opt-in secure profile (on)"
     );
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),

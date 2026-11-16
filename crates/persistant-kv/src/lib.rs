@@ -32,6 +32,7 @@
 //! or `batch_atomic` on a blob store without compare-and-delete; see its docs.
 
 mod backend;
+pub mod cas;
 pub mod choose;
 pub mod conformance;
 pub mod contract;

@@ -147,6 +147,10 @@ pub const SEED: &[(&str, &str)] = &[
         "a sliding-window limit and a token bucket, kept in one key and updated by compare-and-swap, allow exactly their limit of requests when any number race for the last slots, a refused request records nothing, and a slot frees on schedule",
     ),
     (
+        "kv.cas_record",
+        "a read-modify-write on one key, retried on compare-and-swap until it commits, lands every update exactly once when any number race, passes an absent key as none, writes nothing when the closure declines, and is refused rather than approximated where compare-and-swap is not on",
+    ),
+    (
         "kv.take",
         "get-and-delete returns the value to exactly one of any number of concurrent callers",
     ),
