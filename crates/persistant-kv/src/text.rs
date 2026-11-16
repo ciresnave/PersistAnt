@@ -272,11 +272,17 @@ impl<'a, K: KvBackend> TextIndex<'a, K> {
             } else {
                 totals.docs + 1
             };
-            let total_len = totals
-                .total_len
-                .checked_sub(u64::from(old_len))
-                .ok_or_else(|| corrupt("the totals are below a document's length"))?
-                + u64::from(new_len);
+            let Some(kept) = totals.total_len.checked_sub(u64::from(old_len)) else {
+                // The totals and the document were read at different moments: a writer that
+                // committed between the two reads makes them disagree. Only totals that are
+                // still the same on a re-read are corrupt; otherwise try again.
+                if self.kv.get(&tt_key).await? == tt_old {
+                    return Err(corrupt("the totals are below a document's length"));
+                }
+                tokio::task::yield_now().await;
+                continue;
+            };
+            let total_len = kept + u64::from(new_len);
             let mut ops = vec![
                 BatchOp::require(tt_key.clone(), tt_old.clone()),
                 BatchOp::require(td_key.clone(), td_old.clone()),
@@ -388,14 +394,17 @@ impl<'a, K: KvBackend> TextIndex<'a, K> {
                 }
                 return Ok(0);
             }
-            let docs = totals
-                .docs
-                .checked_sub(removed)
-                .ok_or_else(|| corrupt("the totals count fewer documents than were removed"))?;
-            let total_len = totals
-                .total_len
-                .checked_sub(freed)
-                .ok_or_else(|| corrupt("the totals are below the removed lengths"))?;
+            let (Some(docs), Some(total_len)) = (
+                totals.docs.checked_sub(removed),
+                totals.total_len.checked_sub(freed),
+            ) else {
+                // Read at different moments (see `put`): corrupt only if the totals did not move.
+                if self.kv.get(&tt_key).await? == tt_old {
+                    return Err(corrupt("the totals are below the removed documents"));
+                }
+                tokio::task::yield_now().await;
+                continue;
+            };
             // An index with no documents holds no keys at all.
             ops.push(if docs == 0 {
                 BatchOp::delete(tt_key.clone())
