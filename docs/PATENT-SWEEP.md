@@ -1,4 +1,4 @@
-# Patent sweep: PersistAnt 0.11.x @ 6574b85 (first pass) plus second pass @ 8d122f3
+# Patent sweep: PersistAnt 0.18.x (re-sweep 3 @ 2867c7b, 0.18.22), 0.11.x first pass @ 6574b85, second pass @ 8d122f3
 
 Date: 2026-10-25; Run by: PersistAnt lane, Sonnet 5.5 (three Sonnet subagents ran the searches, the lane wrote this record); Method: AI-assisted search and read; **NOT legal advice; NOT a freedom-to-operate opinion.**
 
@@ -220,6 +220,31 @@ Run by the PersistAnt lane on the PM's [TASK] (2026-11-10, "patent re-sweep of b
 **Seen as search hits, not read, no verdict:** US10002083 (same OPSWAT family as idea 29), US8458801 (secure boot, writes a pattern and compares a bus capture), US7181641 (disk-driver verification with a seeded pseudo-random pattern).
 
 **Condition (new, standing):** idea 29 must keep deciding by a byte scan for a known canary. Never decide "encrypted or not" by reading the same data through two paths and comparing (the OPSWAT family's operative step).
+
+## Re-sweep 3 (2026-11-16, main 2867c7b, 0.18.22): ideas 30-33
+
+Run by the PersistAnt lane on the PM's [TASK] (2026-11-16, WSP-013 refresh). One Sonnet subagent ran the web searches (Google Patents through a site-restricted web search, one to three queries per idea) and read independent claims with `C:\Projects\tools\patent-claims.py`. Not legal advice; status is Google Patents' own field. This covers the version line **0.18.x** (0.17.x ideas 32 and 33 included); the ideas of 0.16.17 and later that are bug fixes or doc-only are not swept.
+
+**Ideas added since the 0.16.16 sweep (0.17.0 to 0.18.22):**
+30. `BatchOp::DeleteErased` (0.18.16, with `delete_erased` 0.18.4 to 0.18.7 and the `sqlite-secure` profile 0.18.12): an atomic key-value batch of puts, deletes and require-old-value checks in which some deletes are erased (stored bytes overwritten in the same transaction) and the write-ahead log is truncated after the commit, with a typed error if a reader holds the log and a safe repeat.
+31. `TextIndex` (0.18.13 to 0.18.23): a full-text index on a plain key-value store: posting keys (index, term, document) holding term frequencies, a per-document record of its terms, one corpus-totals record (documents, total length) written in the same atomic batch with compare-and-swap retry; removal deletes postings and adjusts the totals in one batch; an erased removal.
+32. `Value::Array` and `sqlx_query!` array parameters (0.17.14, 0.18.2): a typed array (uuid, bool, integer, float, text) bound as one parameter for `= ANY($1)`, with the element type described so a NULL first value does not break a later value on the same connection.
+33. `TestDb::template`, `create_from`, `Cleanup::Defer`, `TestDb::sweep` (0.17.15, 0.18.3): a test database created from a template, per-test drop skippable, a later sweep dropping old test databases in one pass.
+
+**Result: no hit reads closely; nothing arguable above low.**
+
+| Idea | Patent | Owner | Status (Google) | Independent claims read | Operative limitation we do not do | Verdict |
+|---|---|---|---|---|---|---|
+| 30 | US8352448B2 | IBM | expired | 1, 5, 9 | a two-phase preparation transaction allocating a new storage location and marking the original logically deleted with the data untouched | outside as read |
+| 30 | US9892276B2 | IBM | expired | 1 only (claim 7 onward not read) | policy event, deletion of a decryption key, deletion of log entries holding a copy, a user-attested witness signature | outside as read (rests on claim 1) |
+| 30 | US8694796B2 | SAP SE | active | 1, 11, 12 | encrypted data and converter pages with initialisation vectors derived from a parent page's physical page number | outside as read |
+| 31 | US9514211B2 | Microsoft | active | 1, 13, 20 | blind updates "without accessing the logical page via a read operation", a page stub delta record installed in a mapping table (Bw-tree internals); we read, then write with compare-and-swap checks | outside as read |
+| 31 | US10474650B1 | Google | active | 1 and 9 (output cut at 3,500 characters; any further independent claims not seen) | posting lists with uniformly provisioned open positions, insertion at the nearest open position | outside as read |
+| 31 | US9245003B2 | EMC | active | 1, 7, 13 | a blacklist bitmap of documents, a split into smaller indexes, queries run on both | outside as read |
+
+**No patent found** for idea 30's combination (a batch of put, delete and require checks with an in-transaction overwrite and a post-commit log truncation), for idea 31's posting-key layout with a totals record updated by compare-and-swap in one batch, for idea 32's typed array bound as one parameter with a declared element type (both queries returned only driver documentation and bug threads; no claims read, no verdict), or for idea 33's template-and-sweep helper (prior art seen is not patent literature: gocept.testdb, a blog post cloning a migrated template per test). That is not proof of absence.
+
+**Seen as search hits, not read, no verdict:** US12541499, US10169606B2 (same family as US9892276B2), US9501506, US8738631, US9600578, US8566324, US8250075, EP3539021B1.
 
 ## Needs review (to the PM)
 No confirmed overlap. The five hits first flagged were read in full with `tools/patent-claims.py` (US11507592B2, US10360233B2, US11036756B2, US11550556B1, US7987166B2) and are outside as read (not a clearance; the earlier word `clear` is withdrawn); `US7349926` could not be fetched (404) and stays unread. One active publication is **arguable, medium** on the words of its published claim 1, US20140280259A1 (run-time translation of a foreign-dialect query; see the 0.12.x verdicts below and the correction at the top), and is flagged to CireSnave by the PM, who records his decision. US9177017B2 (do not encode SQL as a type state machine) is a design-around condition on future work.

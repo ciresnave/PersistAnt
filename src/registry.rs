@@ -162,7 +162,10 @@ fn redact_url(url: &str) -> String {
     out
 }
 
-#[allow(deprecated)]
+#[allow(
+    deprecated,
+    reason = "`Endpoint::Url` is deprecated (0.17.0); the registry still accepts it until it is removed"
+)]
 impl fmt::Debug for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -177,7 +180,10 @@ impl fmt::Debug for Endpoint {
     }
 }
 
-#[allow(deprecated)]
+#[allow(
+    deprecated,
+    reason = "`Endpoint::Url` is deprecated (0.17.0); the registry still accepts it until it is removed"
+)]
 impl Endpoint {
     /// A filesystem endpoint.
     pub fn path(p: impl AsRef<Path>) -> Self {
@@ -1560,7 +1566,10 @@ fn open_blob(id: &str, endpoint: &Endpoint) -> Result<AnyBlob, OpenError> {
 
 /// Open the relational database of provider `id`, plain or through `Bounded`. The tables of the
 /// key-value store were created first (by [`open_kv`]), so a bound never covers setup.
-#[allow(deprecated)]
+#[allow(
+    deprecated,
+    reason = "`Endpoint::Url` is deprecated (0.17.0); the registry still accepts it until it is removed"
+)]
 async fn open_rel(
     id: &str,
     endpoint: &Endpoint,
@@ -1617,7 +1626,10 @@ async fn open_rel(
 /// through `Bounded`; the tables are created first through an unbounded connection, because the DDL
 /// of a first open can outlast any bound short enough to be useful and what is bounded is the
 /// program's calls, not setup.
-#[allow(deprecated)]
+#[allow(
+    deprecated,
+    reason = "`Endpoint::Url` is deprecated (0.17.0); the registry still accepts it until it is removed"
+)]
 async fn open_kv(
     id: &str,
     endpoint: &Endpoint,

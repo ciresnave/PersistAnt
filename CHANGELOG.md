@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.25 — docs: patent sweep re-sweep 3 for the 0.18 line; a reason on each lint allow
+
+`docs/PATENT-SWEEP.md` now names the 0.18 line and records re-sweep 3 (ideas 30 to 33: erased delete in an atomic batch, the key-value text index, typed array parameters, template test databases): queries, six hits with their independent claims read (all outside as read), eight seen-not-read, no-patent-found notes, limits. The seven `allow(...)` attributes CodeRipper's GOV-010 flagged now carry a `reason`. No behaviour change.
+
 ## 0.18.24 — CI: portfolio workflow moves to CodeRipper 0.47.5
 
 The `portfolio` job's workflow pin moves from coderipper 0.43.49 to 0.47.5 (`c72a6e03`), and the `ci-security` rule id in `.coderipper.toml` becomes `SUP-017` (migrate-rule-ids.py). No code change.
