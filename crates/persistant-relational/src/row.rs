@@ -31,6 +31,8 @@ pub enum FieldKind {
     Text,
     /// `Vec<u8>`.
     Bytes,
+    /// `()`: a `void` column (PostgreSQL), which has no value to read.
+    Unit,
 }
 
 impl FieldKind {
@@ -115,6 +117,19 @@ impl FromValue for bool {
             Value::Int(0) => Ok(false),
             Value::Int(1) => Ok(true),
             other => Err(wrong("a boolean (or 0 or 1)", other)),
+        }
+    }
+}
+
+/// A `void` column (PostgreSQL: a function declared `RETURNS void`) has no value: the driver carries
+/// it as [`Value::Null`] and it reads as `()`. A column typed `Option<()>` (sqlx cannot say a void
+/// column is non-null, so `sqlx_query!` types it so) reads as `None`.
+impl FromValue for () {
+    const KIND: FieldKind = FieldKind::Unit;
+    fn from_value(v: &Value) -> Result<Self, String> {
+        match v {
+            Value::Null => Ok(()),
+            other => Err(wrong("a void column (NULL)", other)),
         }
     }
 }

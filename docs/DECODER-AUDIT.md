@@ -50,6 +50,7 @@ column's scale (`-0.50`, never a float); dates and times ISO 8601 (`2026-10-17`,
 | `YEAR` | n/a | `Int` | `Int` | n/a |
 | `text`, `varchar`, `char(n)`, `name` | `Text` (`char(n)` padded, as the server returns it) | `Text` | `Text` | `Text` |
 | `bytea` / `BLOB` / `BINARY` | `Bytes` | `Bytes` | `Bytes` | `Bytes` |
+| `void` (a function that `RETURNS void`) | **Null** (a unit has no value; `FromValue for ()` reads it, `Option<()>` reads `None`) | n/a | n/a | n/a |
 | `text[]`, `varchar[]`, `name[]`, `char(n)[]` | **Text**, JSON array text (`["a","b"]`, `NULL` element as `null`); `FromValue for Vec<String>` reads it (0.16.15) | n/a | n/a | n/a |
 | `interval`, `timetz`, other arrays (`int4[]`, `uuid[]`), `macaddr`, `money`, `oid`, `xml`, `bit`, `point`, ranges, `tsvector`, enum types, `record` | **loud**, naming the type | | | |
 | `BIT`, `GEOMETRY` | | **loud** | **loud** | |
