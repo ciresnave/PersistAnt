@@ -20,11 +20,17 @@ unisql = "0.27.10"
 tokio = { version = "1.53.2", features = ["rt", "sync"] }
 # `Traced`, behind the `tracing` feature.
 tracing = { version = "0.1.44", optional = true }
+# `text-index-tokenizer` (crates.io newest at writing: 1.13.3 and 0.1.26).
+unicode-segmentation = { version = "1.13.3", optional = true }
+unicode-normalization = { version = "0.1.26", optional = true }
 
 [features]
 tracing = ["dep:tracing"]
 # `text::TextIndex`: a text index over any kv backend with `batch` and `ordered_scan_values`. No new dependency.
 text-index = []
+# `text_tokenizer::tokenize`: Unicode word boundaries (UAX #29) after NFKC normalisation, lower-cased. Pulls
+# `unicode-segmentation` (MSRV 1.85.0) and `unicode-normalization` (MSRV 1.36); both are below this crate's 1.94.
+text-index-tokenizer = ["text-index", "dep:unicode-segmentation", "dep:unicode-normalization"]
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["rt", "macros"] }

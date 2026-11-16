@@ -2,17 +2,17 @@
 members = [".", "crates/persistant-core", "crates/persistant-blob", "crates/persistant-opendal", "crates/persistant-kv", "crates/persistant-relational", "crates/persistant-sqlx", "crates/persistant-migrate", "crates/persistant-macros"]
 
 [workspace.package]
-version = "0.18.17"
+version = "0.18.18"
 
 [workspace.dependencies]
-persistant-core = { version = "0.18.17", path = "crates/persistant-core" }
-persistant-blob = { version = "0.18.17", path = "crates/persistant-blob" }
-persistant-kv = { version = "0.18.17", path = "crates/persistant-kv" }
-persistant-opendal = { version = "0.18.17", path = "crates/persistant-opendal" }
-persistant-relational = { version = "0.18.17", path = "crates/persistant-relational" }
-persistant-sqlx = { version = "0.18.17", path = "crates/persistant-sqlx" }
-persistant-migrate = { version = "0.18.17", path = "crates/persistant-migrate" }
-persistant-macros = { version = "0.18.17", path = "crates/persistant-macros" }
+persistant-core = { version = "0.18.18", path = "crates/persistant-core" }
+persistant-blob = { version = "0.18.18", path = "crates/persistant-blob" }
+persistant-kv = { version = "0.18.18", path = "crates/persistant-kv" }
+persistant-opendal = { version = "0.18.18", path = "crates/persistant-opendal" }
+persistant-relational = { version = "0.18.18", path = "crates/persistant-relational" }
+persistant-sqlx = { version = "0.18.18", path = "crates/persistant-sqlx" }
+persistant-migrate = { version = "0.18.18", path = "crates/persistant-migrate" }
+persistant-macros = { version = "0.18.18", path = "crates/persistant-macros" }
 
 [package]
 name = "persistant"
@@ -71,6 +71,8 @@ kv = ["dep:persistant-kv", "blob", "relational", "core"]
 kv-tracing = ["kv", "persistant-kv/tracing"]
 # `persistant::kv::text::TextIndex`: a text index over any kv backend with atomic batches (docs/DESIGN-TEXT-INDEX.md).
 text-index = ["kv", "persistant-kv/text-index"]
+# `persistant::kv::text_tokenizer::tokenize`: text to `(term, frequency)` for `TextIndex::put` (adds `unicode-segmentation` and `unicode-normalization`).
+text-index-tokenizer = ["text-index", "persistant-kv/text-index-tokenizer"]
 opendal-driver = ["dep:persistant-opendal", "blob"]
 sqlx-driver = ["dep:persistant-sqlx", "relational"]
 # `persistant::registry`: needs in, sorted backends out, `open_named` by the id kept in config. `registry`
@@ -113,6 +115,10 @@ required-features = ["registry-sqlite"]
 [[test]]
 name = "registry_listed_opens"
 required-features = ["registry-sqlite"]
+
+[[test]]
+name = "text_tokenizer"
+required-features = ["text-index-tokenizer"]
 
 [[example]]
 name = "hello"

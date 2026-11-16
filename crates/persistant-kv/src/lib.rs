@@ -50,6 +50,8 @@ pub mod stats;
 pub mod text;
 #[cfg(feature = "text-index")]
 pub mod text_conformance;
+#[cfg(feature = "text-index-tokenizer")]
+pub mod text_tokenizer;
 #[cfg(feature = "tracing")]
 mod traced;
 mod translate;
