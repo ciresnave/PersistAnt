@@ -100,7 +100,7 @@ as part of a posting key), so there is nothing else to erase. **What it does not
 operating-system and engine caveats of `kv.delete_erased` (journals, snapshots, backups, wear levelling); (b) on
 SQLite, **a posting or record that was removed or overwritten earlier by a plain batch** (a re-index that dropped
 a term, a replaced document record) leaves its old bytes in the database's free space unless `secure_delete` was on
-at that moment; this is the open case of row 38. **SageAnt does not need an erased replace** (a version's text is immutable, so a
+at that moment; this is the open case of row 38. **(b2) Measured, 2026-11-15 (a SageAnt finding):** even for postings the erased batch removes, on `sqlite` and `sqlite-full` stale in-page fragments of the same terms from earlier writes (page splits, rebalancing, made while `secure_delete` was off) can stay in the file once there are many documents (30 in the trial); only the `sqlite-secure` profile leaves none. The matrix therefore records `text.index.erased` off (wrong) on `sqlite` and `sqlite-full` and on on `sqlite-secure`. **SageAnt does not need an erased replace** (a version's text is immutable, so a
 re-index rewrites the same terms and drops none; whole-document erased removal is the only forget), so v1 has none.
 The closure for every other case is an opt-in `SqliteBackend` profile with `secure_delete` on for every connection,
 a row-38 follow-up declared as a capability (section 8, item 4) that SageAnt names as a **preference** in its storage
@@ -126,8 +126,8 @@ sequence of puts, replaces and removals (the oracle is a plain map in the test, 
 new term set); (d) `remove_many` leaves no key for the document under any prefix; (e) concurrent puts of different
 documents keep `stats` exact, and concurrent puts of the same `doc_id` leave the postings of exactly one text (sampled
 concurrency, trials in the row); (f) where `kv.delete_erased` is declared, leaf `text.index.erased`: after
-`remove_erased` a canary term is in none of the backend's files (the raw-file read-back of `kv.delete_erased`, with
-plain `remove_many` as the known-bad control), a crash injected between steps 1 and 2 is finished by a second call
+`remove_erased` of thirty documents their marker terms are in none of the backend's files (read back on the secure profile; the plain and durable profiles fail it, see (b2)); the raw-file read-back is the one of `kv.delete_erased`, with
+plain `remove_many` as the known-bad control; a crash injected between steps 1 and 2 is finished by a second call
 and `stats` is subtracted once. Each defect is mutation-checked (drop the old-posting cleanup, skip the tombstone,
 skip the totals Require: the tests fail).
 

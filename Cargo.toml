@@ -121,6 +121,10 @@ name = "text_erased"
 required-features = ["text-index", "registry-sqlite"]
 
 [[test]]
+name = "text_erased_many"
+required-features = ["text-index", "registry-sqlite"]
+
+[[test]]
 name = "text_tokenizer"
 required-features = ["text-index-tokenizer"]
 

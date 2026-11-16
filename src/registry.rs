@@ -509,6 +509,7 @@ fn specs() -> Vec<Spec> {
             notes: &[
                 "Survives the process exiting or crashing. SQLite's `synchronous` setting is not asserted here, so after a power cut the most recent writes may be lost.",
                 "Pick `sqlite-full` instead if the data must survive a power cut.",
+                "`kv.delete_erased` and the text index's erased removal are recorded off here: stale in-page fragments of earlier writes (page splits, made while `secure_delete` was off) stay in the file once there are many records. Pick `sqlite-secure` to forget data.",
             ],
         });
         v.push(Spec {
@@ -522,6 +523,7 @@ fn specs() -> Vec<Spec> {
             notes: &[
                 "Same storage as `sqlite`, opened with journal_mode=WAL and synchronous=FULL set explicitly: each acknowledged write is flushed before it returns. Slower writes than `sqlite`.",
                 "Verified by powering off a Hyper-V guest after acknowledged writes (nothing lost); NOT verified for host power loss, NTFS or the disk's own cache.",
+                "`kv.delete_erased` and the text index's erased removal are recorded off here, as on `sqlite`: stale in-page fragments of earlier writes stay in the file. Pick `sqlite-secure` to forget data.",
             ],
         });
     }

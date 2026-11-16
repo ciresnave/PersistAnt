@@ -324,7 +324,9 @@ impl<'a, K: KvBackend> TextIndex<'a, K> {
     /// call it again with the same ids. Documents already removed are ignored, and a repeat call
     /// still runs an erased step, which is what truncates the log. **Not covered:** a posting or
     /// record an earlier plain `put` replaced or a plain removal deleted (see `kv.delete_erased` and
-    /// the `sqlite-secure` profile), and copies a file system, snapshot or backup keeps.
+    /// the `sqlite-secure` profile), stale in-page fragments of earlier writes (on `sqlite` and
+    /// `sqlite-full`, with many documents, some of a forgotten term can stay in the file; only
+    /// `sqlite-secure` leaves none), and copies a file system, snapshot or backup keeps.
     pub async fn remove_many_erased(
         &self,
         index: &str,
