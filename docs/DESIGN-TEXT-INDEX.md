@@ -75,6 +75,14 @@ namespace.
 
 ### Forget (erased removal), exactly what it does and does not do
 
+**Built (step 4), simpler than the sequence below:** `BatchOp::DeleteErased` (0.18.16 and later, row 38) lets
+`TextIndex::remove_many_erased` remove the documents, erase their postings and records, and adjust the totals in
+**one atomic batch** on SQLite, so no tombstone and no journal is needed: the keys are gone together or not at all,
+and the log is truncated after the commit. If that truncation cannot complete (a reader holds the log) the call returns
+an error after the commit, and calling it again with the same ids runs an erased step that finishes it. Backends that
+cannot erase inside a batch refuse the whole call. The text below is the earlier design for a backend with only a
+per-key `delete_erased` and no erased batch; there is no such backend with a batch today.
+
 `remove_erased(index, &[doc_id])`, only where the backend declares `kv.delete_erased`:
 
 1. One batch: `Require` the document record and that no tombstone exists, write a tombstone `tm` key (no content),
