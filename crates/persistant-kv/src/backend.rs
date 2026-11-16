@@ -200,6 +200,10 @@ pub trait KvBackend: Send + Sync {
     /// Remove `key` after overwriting the bytes that stored its value (`kv.delete_erased`). The
     /// promise is "the stored bytes were overwritten before the key was removed", not "gone from
     /// the disk": journals, copy-on-write, wear levelling, snapshots and backups can keep copies.
+    /// **SQLite:** this does not reach stale in-page fragments of earlier writes (page splits and
+    /// rebalancing while `secure_delete` was off); after many records some of a forgotten value can stay
+    /// in the file. Only the `sqlite-secure` profile (`secure_delete` on for every connection) leaves
+    /// none, which is why the matrix records `kv.delete_erased` off there on `sqlite` and `sqlite-full`.
     /// Removing an absent key is `Ok`. A backend that cannot overwrite in place returns
     /// [`KvError::Unsupported`]; the default does.
     fn delete_erased(&self, key: &str) -> impl Future<Output = Result<(), KvError>> + Send {

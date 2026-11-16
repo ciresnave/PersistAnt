@@ -174,7 +174,7 @@ Much of it is built since (key-value and relational kinds, SQLite, PostgreSQL, M
 - **Erased delete (`blob.delete_erased`, `kv.delete_erased`) says "contents overwritten", not "gone from the
   disk".** On `fs` the file is overwritten with zeros, synced, then unlinked; on SQLite `secure_delete` is turned on
   for the statement and the write-ahead log is truncated (a value an earlier plain `put` overwrote may still sit in free
-  space inside a page). Journaling and copy-on-write file systems, SSD wear levelling, snapshots and backups can keep
+  space inside a page). **Measured limit (30 records of ~700 bytes, raw-file read-back):** after erased deletes of all of them, `sqlite` and `sqlite-full` still hold some of the forgotten text, stale in-page fragments of earlier writes (left by page splits and rebalancing while `secure_delete` was off) stay in the file; only `sqlite-secure` (`secure_delete` on for every connection) holds none, so the matrix records `kv.delete_erased` and `text.index.erased` off (wrong) on the first two and on on the secure profile. Journaling and copy-on-write file systems, SSD wear levelling, snapshots and backups can keep
   copies. The memory service and PostgreSQL, MySQL and MariaDB record it off as missing: a deleted tuple stays until
   vacuum or purge, and the log and backups keep it. Each recorded row was read back from the files with a canary and a
   known-bad control. For a value an earlier plain `put` or `delete` left behind on SQLite, open the registry id

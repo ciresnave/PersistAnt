@@ -10,8 +10,8 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
         .expect("the checked-in matrix parses");
     assert_eq!(
         m.rows().len(),
-        89,
-        "twenty-two kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and nineteen relational leaves (thirteen contract, six migration) on each of them are certified, and kv.delete_erased once on each of them, and storage.secure_delete once on the opt-in secure profile, and text.index once on each of them"
+        93,
+        "twenty-two kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and nineteen relational leaves (thirteen contract, six migration) on each of them are certified, and storage.secure_delete once on the opt-in secure profile, and text.index once on each of them, and kv.delete_erased and text.index.erased once on each of them (off, wrong: stale in-page fragments of earlier writes stay) and once on the opt-in secure profile (on)"
     );
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),
@@ -22,6 +22,21 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
                 r.enabled,
                 r.config.get("call_bound") == Some("set"),
                 "{}",
+                r.note
+            );
+            continue;
+        }
+        // `kv.delete_erased` and `text.index.erased` are recorded off (wrong) on the plain and the
+        // durable profile, where stale in-page fragments of earlier writes survive the erase, and on
+        // the secure profile, where `secure_delete` is on for every connection.
+        if matches!(r.subject.as_str(), "kv.delete_erased" | "text.index.erased") {
+            assert_eq!(
+                r.enabled,
+                r.config.get("secure_delete") == Some("on"),
+                "{} on {} {:?}: {}",
+                r.subject,
+                r.backend,
+                r.config,
                 r.note
             );
             continue;

@@ -354,6 +354,33 @@ pub async fn run<K: KvBackend>(kv: &K, base: &str) -> Result<(), Failure> {
     concurrent_same_document(kv, base).await
 }
 
+/// Whether `TextIndex::remove_many_erased` runs on `kv` at all, for a matrix generator that then
+/// either reads the files back (SQLite) or records the leaf off: `Ok(None)` if it ran; `Ok(Some(why))`
+/// if the backend said `Unsupported` (the note for the row); `Err` for any other failure. Leaves nothing
+/// behind under indexes named from `base`.
+pub async fn erased_unsupported<K: KvBackend>(
+    kv: &K,
+    base: &str,
+) -> Result<Option<String>, KvError> {
+    let ix = TextIndex::new(kv);
+    let name = format!("{base}erased-probe");
+    match ix.put(&name, "d", &[("probe".to_string(), 1)]).await {
+        Ok(()) => {}
+        Err(KvError::Unsupported(m)) => {
+            return Ok(Some(format!("kv backend does not support: {m}")));
+        }
+        Err(e) => return Err(e),
+    }
+    match ix.remove_many_erased(&name, &["d"]).await {
+        Ok(_) => Ok(None),
+        Err(KvError::Unsupported(m)) => {
+            ix.remove_many(&name, &["d"]).await?;
+            Ok(Some(format!("kv backend does not support: {m}")))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// The reference backends that must fail the test: a batch that ignores its `Require`, and a batch
 /// that is not applied as a unit.
 const DEFECTS: [Defect; 2] = [Defect::BatchIgnoresRequire, Defect::BatchNotAtomic];
