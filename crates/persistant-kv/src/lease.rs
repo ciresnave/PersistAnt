@@ -225,3 +225,38 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod mixed_version_tests {
+    use super::*;
+
+    /// The pre-fencing `Lease` was exactly these primitive calls on the owner's bytes; this runs them
+    /// against a value this version wrote, to see what an old holder or contender does with it.
+    #[tokio::test]
+    async fn a_pre_fencing_caller_facing_a_new_value_refuses_and_does_not_take_over() {
+        let kv = crate::MemoryKv::new();
+        let long = Duration::from_secs(60);
+        let new = Lease::acquire(&kv, "k", "A", long).await.unwrap().unwrap();
+        let stored = kv.get("k").await.unwrap().unwrap();
+        assert_ne!(stored, b"A", "the new value carries a token");
+        // Old acquire: put_if_absent of the owner's bytes. Refused: the new holder keeps the key.
+        assert!(
+            !kv.put_if_absent("k", b"B".to_vec(), Some(long))
+                .await
+                .unwrap()
+        );
+        // Old renew by the same owner name: compare_and_swap expecting the bare owner. Refused.
+        assert!(
+            !kv.compare_and_swap("k", b"A", b"A".to_vec(), Some(long))
+                .await
+                .unwrap()
+        );
+        // Old release: compare_and_delete expecting the bare owner. Refused; the lease stays.
+        assert!(!kv.compare_and_delete("k", b"A").await.unwrap());
+        assert_eq!(kv.get("k").await.unwrap().unwrap(), stored);
+        assert!(
+            new.renew(long).await.unwrap(),
+            "the new holder is untouched"
+        );
+    }
+}
