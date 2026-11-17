@@ -283,6 +283,10 @@ pub const SEED: &[(&str, &str)] = &[
         "the number of live keys under a prefix is returned",
     ),
     (
+        "lock.fencing",
+        "each later holder of one lease key gets a token strictly greater than every earlier holder, including one that lapsed and one that lost a race, so a resource that refuses a lower token than it has seen refuses a stale holder",
+    ),
+    (
         "lock.lease",
         "an exclusive lease has an owner token and an expiry and is safely reclaimed after it",
     ),

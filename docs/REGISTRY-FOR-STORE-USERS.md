@@ -57,8 +57,7 @@ And three things a program may use *beside* the `Store` API (the old `Store` has
 * **Relational** (`rel.*`): `Handle::rel()` (0.11.15) gives statements and transactions on `sqlite`, `postgres`, `mysql` and
   `mariadb`, in the dialect it reports. The blocking `KvHandle::rel()` has `execute`, `query` and `transaction(isolation,
   statements)`, which runs a list of statements in one transaction and rolls all back if one fails.
-* **Locks** (`lock.process`, `lock.lease`): not offered by the registry. `lock.process` has its own row from 0.9.27 and
-  is used directly through `persistant_opendal::ProcessLock`.
+* **Locks.** `lock.lease` and `lock.fencing` are listed and gated like `kv.*` ids (on `sqlite`, `sqlite-full`, `sqlite-secure`, `postgres`, `mysql` and `mariadb`; `memory` and `fs` are refused by name). The opened handle has no lease method: take one with `persistant::kv::Lease::acquire(handle.kv(), key, owner, ttl)`, and `lease.token()` is the fencing token (`tests/registry_lease.rs`). `lock.process` is not offered by the registry; it has its own row from 0.9.27 and is used directly through `persistant_opendal::ProcessLock`.
 * **A synchronous call** is served from 0.9.32 by `persistant::blocking::registry`: the same `providers`, and `open_named`
   returns a `KvHandle` with blocking `get`, `put`, `delete`, `put_if_absent`, `prefix_list`, `take`, `count` and the rest. It
   uses the worker of `blocking::Store` (one thread, a private single-threaded runtime), so it is safe from plain code, from many

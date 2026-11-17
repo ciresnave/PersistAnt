@@ -45,7 +45,7 @@ fn merged(blob: &Config, kv: &Config) -> Config {
 }
 
 /// The leaves a blob store cannot give at all (no compare-and-delete).
-const NEEDS_CAD: [&str; 15] = [
+const NEEDS_CAD: [&str; 16] = [
     "kv.compare_and_swap",
     "kv.compare_and_delete",
     "kv.take",
@@ -58,6 +58,8 @@ const NEEDS_CAD: [&str; 15] = [
     // The typed read-modify-write needs `compare_and_swap`.
     "kv.cas_record",
     "lock.lease",
+    // The fencing token needs `compare_and_swap` and `compare_and_delete`.
+    "lock.fencing",
     "kv.purge_expired",
     // No multi-key transaction and no consistent snapshot on a blob store.
     "kv.batch_atomic.rollback",

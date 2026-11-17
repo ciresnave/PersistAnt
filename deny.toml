@@ -8,6 +8,9 @@ ignore = [
     # libsqlite3-sys 0.37 via sqlx-sqlite 0.9. Dated ignore, expires 2026-12-09 (PM 2026-11-09): remove when
     # sqlx releases the fix (transact-rs/sqlx#4502, merged, unreleased) and persistant-sqlx is bumped.
     { id = "RUSTSEC-2026-0459", reason = "awaiting sqlx#4502 release; expires 2026-12-09" },
+    # chrono 0.4.45 via persistant-relational (feature `chrono`) and sqlx-core 0.9.0. Dated ignore, expires 2026-12-17 (PM ruling 2026-11-17):
+    # remove when ROADMAP row 42 (move persistant-relational off chrono) is done and sqlx no longer pulls it, or renew with a reason.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained notice, no known vulnerability; reached through persistant-relational and sqlx-core 0.9.0; no safe upgrade; removal blocked on sqlx; expires 2026-12-17" },
 ]
 
 [licenses]

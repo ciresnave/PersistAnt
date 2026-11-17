@@ -142,6 +142,7 @@ async fn the_concurrency_leaves_are_exact_on_every_run() {
         Leaf::Index,
         Leaf::RateWindow,
         Leaf::CasRecord,
+        Leaf::LockFencing,
         Leaf::BatchRollback,
         Leaf::BatchConcurrentRead,
         Leaf::OptimisticSequence,
