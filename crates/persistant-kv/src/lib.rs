@@ -61,7 +61,7 @@ pub use backend::{
     BatchOp, BoundedProbe, KeyPage, KvBackend, KvError, ValuePage, count_prefix_paged,
 };
 pub use fault::Faulty;
-pub use lease::Lease;
+pub use lease::{Holder, Lease};
 pub use memory::{Defect, MemoryKv};
 pub use on_blob::KvOnBlob;
 pub use on_relational::KvOnRelational;

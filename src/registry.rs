@@ -44,8 +44,9 @@
 //! they name a `rel.*` id). A provider is **listed** on `kv.*`,
 //! `blob.*` and `rel.*` capabilities alike: it has one matrix surface per kind it serves (`fs` the
 //! blob store under its key-value store, `sqlite` the relational database), the gate needs every id
-//! on one of them, and the durability shown is the weakest of the kinds the need names. A need for
-//! `lock.*` ids is reported unmet: `lock.*` is not offered.
+//! on one of them, and the durability shown is the weakest of the kinds the need names. `lock.lease` and `lock.fencing` are
+//! gated like `kv.*` ids (the handle serves them through [`Handle::kv`]; see `persistant::kv::Lease`); `lock.process` is
+//! not offered.
 
 use std::fmt;
 use std::future::Future;

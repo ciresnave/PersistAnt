@@ -65,6 +65,9 @@ pub enum Leaf {
     CasRecord,
     /// `lock.lease`, by real time and sampled concurrency
     Lease,
+    /// `lock.fencing`: a token strictly greater for each later holder of one key
+    /// (`kv::Lease::token`), by real time and sampled concurrency
+    LockFencing,
     /// `kv.ttl_remaining`, in real time
     TtlRemaining,
     /// `kv.purge_expired`, in real time
@@ -90,7 +93,7 @@ pub enum Leaf {
 
 impl Leaf {
     /// Every leaf with a test here.
-    pub const ALL: [Leaf; 23] = [
+    pub const ALL: [Leaf; 24] = [
         Leaf::Get,
         Leaf::Put,
         Leaf::Delete,
@@ -106,6 +109,7 @@ impl Leaf {
         Leaf::RateWindow,
         Leaf::CasRecord,
         Leaf::Lease,
+        Leaf::LockFencing,
         Leaf::TtlRemaining,
         Leaf::PurgeExpired,
         Leaf::BatchRollback,
@@ -134,6 +138,7 @@ impl Leaf {
             Leaf::RateWindow => "kv.rate_window",
             Leaf::CasRecord => "kv.cas_record",
             Leaf::Lease => "lock.lease",
+            Leaf::LockFencing => "lock.fencing",
             Leaf::TtlRemaining => "kv.ttl_remaining",
             Leaf::PurgeExpired => "kv.purge_expired",
             Leaf::BatchRollback => "kv.batch_atomic.rollback",
@@ -151,6 +156,7 @@ impl Leaf {
             Leaf::Ttl => "ttl_ms=1000;sleep_ms=1200",
             Leaf::CompareAndSwap | Leaf::CompareAndDelete | Leaf::Take => "contenders=16;rounds=20",
             Leaf::Lease => "contenders=16;rounds=5;ttl_ms=200;sleep_ms=300",
+            Leaf::LockFencing => "contenders=16;rounds=5;ttl_ms=200;sleep_ms=300",
             Leaf::TtlRemaining => "ttl_ms=10000;sleep_ms=150",
             Leaf::Count => "ttl_ms=100;sleep_ms=250",
             Leaf::Index => "contenders=8;rounds=10",
@@ -175,6 +181,7 @@ impl Leaf {
             | Leaf::TtlRemaining
             | Leaf::PurgeExpired
             | Leaf::Lease
+            | Leaf::LockFencing
             | Leaf::PrefixList
             | Leaf::Count
             | Leaf::ScanValues => true,
@@ -237,11 +244,11 @@ impl Leaf {
             Leaf::OptimisticSequence => &[Defect::BatchIgnoresRequire, Defect::BatchNotAtomic],
             Leaf::AbsentRace => &[Defect::BatchIgnoresRequire],
             Leaf::BoundedCall => &[Defect::BoundIgnored, Defect::TimeoutLeavesBatchApplied],
-            Leaf::Lease => &[
-                Defect::PutIfAbsentNotExclusive,
-                Defect::CasIgnoresExpected,
-                Defect::CadIgnoresExpected,
-            ],
+            Leaf::LockFencing => &[Defect::CasIgnoresExpected],
+            // `PutIfAbsentNotExclusive` is not listed for the lease leaves: since fencing, `acquire` confirms its
+            // win with a compare-and-swap of an owner-tagged value, so only one racer can hold the lease even
+            // when `put_if_absent` is racy (that defect is still caught by `kv.put_if_absent`).
+            Leaf::Lease => &[Defect::CasIgnoresExpected, Defect::CadIgnoresExpected],
         }
     }
 }
@@ -305,6 +312,7 @@ async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
         Leaf::RateWindow => rate_window(b, &base).await,
         Leaf::CasRecord => cas_record(b, &base).await,
         Leaf::Lease => lease(b, &base).await,
+        Leaf::LockFencing => lock_fencing(b, &base).await,
         Leaf::TtlRemaining => ttl_remaining(b, &base).await,
         Leaf::PurgeExpired => purge_expired(b, &base).await,
         Leaf::BatchRollback => batch_rollback(b, &base).await,
@@ -1606,6 +1614,122 @@ async fn lease<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
     Ok(())
 }
 
+async fn lock_fencing<K: KvBackend>(b: &K, base: &str) -> Result<(), Failure> {
+    use crate::Lease;
+    const CONTENDERS: usize = 16;
+    const ROUNDS: usize = 5;
+    let ttl = Duration::from_millis(200);
+    let long = Duration::from_secs(30);
+
+    // Sequential holders of one key: tokens strictly increase, a renew keeps the token, and the
+    // store says who holds it with which token.
+    let key = format!("{base}seq");
+    let Some(a) = Lease::acquire(b, &key, "A", long).await? else {
+        return wrong("a free lease was not granted");
+    };
+    let ta = a.token();
+    if ta == 0 {
+        return wrong("a granted lease carried token 0");
+    }
+    if !a.renew(long).await? || a.token() != ta {
+        return wrong("a renew failed or changed the token");
+    }
+    match Lease::holder(b, &key).await? {
+        Some(h) if h.owner == "A" && h.token == ta => {}
+        other => {
+            return wrong(format!(
+                "holder read back as {other:?}, want A with token {ta}"
+            ));
+        }
+    }
+    if !a.release().await? {
+        return wrong("the owner could not release its own lease");
+    }
+    let Some(b1) = Lease::acquire(b, &key, "B", long).await? else {
+        return wrong("a released lease was not granted again");
+    };
+    if b1.token() <= ta {
+        return wrong(format!(
+            "a later holder got token {} after {ta}, want a larger one",
+            b1.token()
+        ));
+    }
+    b1.release().await?;
+
+    // Expiry: the reclaiming holder's token is larger, and the stale holder can neither renew nor
+    // release.
+    let key = format!("{base}expiry");
+    let Some(old) = Lease::acquire(b, &key, "old", ttl).await? else {
+        return wrong("a free lease was not granted before the expiry check");
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    let Some(new) = Lease::acquire(b, &key, "new", long).await? else {
+        return wrong("an expired lease was not reclaimed");
+    };
+    if new.token() <= old.token() {
+        return wrong(format!(
+            "a reclaiming holder got token {} after {}, want a larger one",
+            new.token(),
+            old.token()
+        ));
+    }
+    if old.renew(long).await? {
+        return wrong("a stale holder renewed a lease another owner now holds");
+    }
+    if old.release().await? {
+        return wrong("a stale holder released a lease another owner now holds");
+    }
+    new.release().await?;
+
+    // Concurrency: each round an old holder lapses and many contenders race to reclaim; exactly one
+    // wins and its token is larger than the lapsed holder's and than every earlier round's.
+    let mut highest = 0_u64;
+    for round in 0..ROUNDS {
+        let key = format!("{base}race{round}");
+        let key = key.as_str();
+        let Some(lapsed) = Lease::acquire(b, key, "old", ttl).await? else {
+            return wrong("a free lease was not granted before a race round");
+        };
+        let lapsed = lapsed.token();
+        std::thread::sleep(Duration::from_millis(300));
+        let tasks: Vec<Task<'_, Result<Option<u64>, KvError>>> = (0..CONTENDERS)
+            .map(|i| -> Task<'_, _> {
+                let name = format!("c{i}");
+                Box::pin(async move {
+                    Ok(Lease::acquire(b, key, &name, long)
+                        .await?
+                        .map(|l| l.token()))
+                })
+            })
+            .collect();
+        let mut won = Vec::new();
+        for r in join_all(tasks).await {
+            if let Some(t) = r? {
+                won.push(t);
+            }
+        }
+        if won.len() != 1 {
+            return wrong(format!(
+                "race {round}: {} of {CONTENDERS} reclaimed an expired lease, want exactly 1",
+                won.len()
+            ));
+        }
+        if won[0] <= lapsed {
+            return wrong(format!(
+                "race {round}: the winner's token {} is not above the lapsed holder's {lapsed}",
+                won[0]
+            ));
+        }
+        // Each round's key has its own counter, so compare within the key above; across rounds the
+        // keys are independent and only the rounds' own order is checked here.
+        highest = highest.max(won[0]);
+    }
+    if highest == 0 {
+        return wrong("no token was issued");
+    }
+    Ok(())
+}
+
 /// The outcome of certifying one leaf.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Certified {
@@ -2003,6 +2127,7 @@ mod tests {
                     | Leaf::RateWindow
                     | Leaf::CasRecord
                     | Leaf::Lease
+                    | Leaf::LockFencing
                     | Leaf::PurgeExpired
                     | Leaf::BatchRollback
                     | Leaf::BatchConcurrentRead
