@@ -295,20 +295,7 @@ pub async fn run_leaf_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failur
 }
 
 async fn run_once<K: KvBackend>(leaf: Leaf, b: &K) -> Result<(), Failure> {
-    // The lease leaves leave 30 s leases behind (the winners of a race), and the cleanup below is
-    // best-effort: a cleanup that fails (a busy database on a slow runner) would make every later
-    // run of the same leaf fail with "a free lease was not granted". Their keys are unique per
-    // run instead, so a leftover cannot poison the next run. (Windows CI, 2026-11-19: 4/5 and 1/5.)
-    let base = if matches!(leaf, Leaf::Lease | Leaf::LockFencing) {
-        static RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let t = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        format!("persistant-conformance/{}/r{t:x}-{n}/", leaf.id())
-    } else {
-        format!("persistant-conformance/{}/", leaf.id())
-    };
+    let base = format!("persistant-conformance/{}/", leaf.id());
     let result = match leaf {
         Leaf::Get => get(b, &base).await,
         Leaf::Put => put(b, &base).await,
