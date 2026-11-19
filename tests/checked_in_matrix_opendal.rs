@@ -114,3 +114,25 @@ fn the_gate_reads_the_process_lock_row() {
         Lookup::On
     );
 }
+
+/// The key is the version of the library that RAN (`opendal::raw::VERSION`, the resolved one), not
+/// the floor in `Cargo.toml` (`0.59.4` while the lock resolves `0.59.5`): the rows record the
+/// behaviour of the library that was exercised. So a lock that resolves another opendal gets a
+/// refusal naming it, until rows for it are recorded.
+#[test]
+fn opendal_rows_are_keyed_by_the_version_that_ran() {
+    let m = matrix();
+    let ran = OpendalBlob::memory().unwrap().version().to_string();
+    let blob_rows: Vec<_> = m
+        .rows()
+        .iter()
+        .filter(|r| r.backend == "opendal-fs" || r.backend == "opendal-memory")
+        .collect();
+    assert!(!blob_rows.is_empty());
+    assert!(
+        blob_rows.iter().any(|r| r.version == ran),
+        "no opendal row for {ran}, the version that ran"
+    );
+    // Control: a version that did not run is not found.
+    assert!(blob_rows.iter().all(|r| r.version != "0.0.1"));
+}
