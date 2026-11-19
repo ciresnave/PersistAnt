@@ -1,3 +1,0 @@
-kind: SQLite certified on Windows and macOS (matrix rows per operating system)
----
-`matrix/sqlx-sqlite.tsv` carried `os=linux` rows only, so a consumer reading the matrix on Windows or macOS got `unverified(no row)` for the SQLite key-value leaves. CI now runs the SQLite tests and the matrix generator on `windows-latest` and `macos-latest` (job `sqlite-os`), and a row is recorded for an operating system only from a green run of that test on it; each job diffs the rows of its own OS. A leaf that fails on an OS gets no row for it. The `matrix_sqlite` generator ran its certification on the main thread and overflowed a Windows stack; it now runs on a thread with a 64 MB stack. No library code changes.

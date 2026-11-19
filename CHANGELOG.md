@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.28 — SQLite certified on Windows and macOS (matrix rows per operating system)
+
+`matrix/sqlx-sqlite.tsv` carried `os=linux` rows only, so a consumer reading the matrix on Windows or macOS got `unverified(no row)` for the SQLite key-value leaves. CI now runs the SQLite tests and the matrix generator on `windows-latest` and `macos-latest` (job `sqlite-os`), and a row is recorded for an operating system only from a green run of that test on it; each job diffs the rows of its own OS. A leaf that fails on an OS gets no row for it. The `matrix_sqlite` generator ran its certification on the main thread and overflowed a Windows stack; it now runs on a thread with a 64 MB stack. No library code changes.
+
 ## 0.18.27 — Added: `Lease::token()`, a fencing token strictly greater for each later holder of a key (leaf `lock.fencing`), and `Lease::holder`
 
 **Compatibility note (not an API break; additive API):** the stored lease value changes from `owner` to `owner`, `\0#`, token. A mixed-version fleet fails safe, not silently: a pre-fencing holder or contender that meets a value with a token is refused by every call (its `put_if_absent` finds the key taken, its `compare_and_swap` renew and `compare_and_delete` release expect the bare owner and return `false`), so it neither takes the key over nor renews or releases it, and the new holder is untouched. A pre-fencing holder renewing means "I must stop acting as the holder", so an old holder that meets a new value stops. The reverse also fails safe: this version reads an old value as token 0 and takes the key over only after it expires. Upgrade every holder of a key together; code that reads the raw key and compares it to the owner name will see the suffix (use `Lease::holder`). Verified by emulating the old calls against a new value (`mixed_version_tests`), not by running an old binary: UNVERIFIED against a real old build.
