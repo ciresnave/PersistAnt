@@ -14,8 +14,24 @@ use persistant_kv::{KvBackend, KvOnRelational};
 use persistant_sqlx::{Bounded, SqliteBackend};
 use std::time::Duration;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
+/// The certification futures are large; a Windows main thread has a 1 MB stack, which they overflow.
+/// Run on a thread with room, so the same generator runs on every CI operating system.
+fn main() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(run());
+        })
+        .expect("spawn")
+        .join()
+        .expect("generator thread");
+}
+
+async fn run() {
     let path = std::env::temp_dir().join(format!("persistant-matrix-{}.db", std::process::id()));
     let db = SqliteBackend::open(&path).await.expect("open");
     let rel_db = db.clone();
