@@ -19,6 +19,18 @@ fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
         2 * 291,
         "no other SQLite version is recorded"
     );
+    // Each operating system recorded its own share of every version: a file whose rows were all
+    // attributed to one OS would pass the totals above.
+    for v in ["3.51.3", "3.54.1"] {
+        for os in ["linux", "windows", "macos"] {
+            let n = m
+                .rows()
+                .iter()
+                .filter(|r| r.version.ends_with(v) && r.metadata.get("os") == Some(os))
+                .count();
+            assert_eq!(n, 97, "rows recorded for SQLite {v} on {os}");
+        }
+    }
     // Composition of one version's 291 rows: per SQLite version, three operating systems (linux, windows, macos) each recording: twenty-four kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and nineteen relational leaves (thirteen contract, six migration) on each of them are certified, and storage.secure_delete once on the opt-in secure profile, and text.index once on each of them, and kv.delete_erased and text.index.erased once on each of them (off, wrong: stale in-page fragments of earlier writes stay) and once on the opt-in secure profile (on)
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),

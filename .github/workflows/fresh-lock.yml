@@ -27,6 +27,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
 
+# Two runs (a schedule and a dispatch) must not both open the tracking issue.
+concurrency:
+  group: fresh-lock
+  cancel-in-progress: false
+
 jobs:
   certify:
     name: Fresh lock on ${{ matrix.os }}
@@ -37,6 +42,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # A fresh lock runs build scripts of whatever `cargo update` resolved; they must not find
+          # the checkout token in .git/config.
+          persist-credentials: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -85,6 +94,10 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # A fresh lock runs build scripts of whatever `cargo update` resolved; they must not find
+          # the checkout token in .git/config.
+          persist-credentials: false
 
       - name: Collect the rows of the three operating systems that are not recorded yet
         shell: bash
@@ -93,13 +106,15 @@ jobs:
         run: |
           mkdir -p fresh out
           : > out/new-rows.tsv
+          : > out/missing.txt
           for os in Linux Windows macOS; do
-            gh run download "${{ github.run_id }}" -n "fresh-lock-sqlx-sqlite-$os" -D "fresh/$os" || echo "no artifact for $os"
+            # A failed download is not "no new rows": it is written down and fails this job below.
+            gh run download "${{ github.run_id }}" -n "fresh-lock-sqlx-sqlite-$os" -D "fresh/$os" || echo "$os" >> out/missing.txt
             f="fresh/$os/sqlx-sqlite.tsv"
             [ -f "$f" ] || continue
             tail -n +2 "$f" | grep -vxFf matrix/sqlx-sqlite.tsv >> out/new-rows.tsv || true
           done
-          echo "new rows: $(wc -l < out/new-rows.tsv)"
+          echo "new rows: $(wc -l < out/new-rows.tsv); no artifact for: $(tr '\n' ' ' < out/missing.txt)"
 
       - name: Upload the new rows
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -114,8 +129,17 @@ jobs:
           CERTIFY: ${{ needs.certify.result }}
         run: |
           n=$(wc -l < out/new-rows.tsv)
-          if [ "$n" -eq 0 ] && [ "$CERTIFY" = success ]; then echo "nothing to record"; exit 0; fi
+          missing=$(tr '\n' ' ' < out/missing.txt)
           title="Fresh lock: SQLite rows to record"
-          body="Run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}: certify=$CERTIFY, $n new rows (artifact fresh-lock-new-rows). Append them to matrix/sqlx-sqlite.tsv on a branch, update the per-version counts in tests/checked_in_matrix_sqlite.rs, add a changelog fragment, open a pull request. Until then a consumer on a fresh lockfile is refused at open_named. — lane: persistant"
-          num=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')
+          # `// empty`: with no match `.[0].number` is JSON null, which jq prints as the text "null".
+          num=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ "$n" -eq 0 ] && [ "$CERTIFY" = success ] && [ -z "$missing" ]; then
+            echo "nothing to record"
+            # The rows are recorded and every job passed: the issue says so and closes.
+            if [ -n "$num" ]; then gh issue close "$num" --comment "Run ${{ github.run_id }}: certify passed on all three operating systems and every row is recorded. — lane: persistant"; fi
+            exit 0
+          fi
+          body="Run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}: certify=$CERTIFY, $n new rows (artifact fresh-lock-new-rows), no artifact downloaded for: ${missing:-none}. Append them to matrix/sqlx-sqlite.tsv on a branch, update the per-version counts in tests/checked_in_matrix_sqlite.rs, add a changelog fragment, open a pull request. Until then a consumer on a fresh lockfile is refused at open_named. — lane: persistant"
           if [ -n "$num" ]; then gh issue comment "$num" --body "$body"; else gh issue create --title "$title" --body "$body"; fi
+          # An artifact that could not be downloaded is a failure of this job, not a quiet "no rows".
+          [ -z "$missing" ] || { echo "::error::no artifact downloaded for: $missing"; exit 1; }
