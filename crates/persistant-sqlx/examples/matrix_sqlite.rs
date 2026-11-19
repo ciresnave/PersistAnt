@@ -2,7 +2,11 @@
 //! Certify `KvOnRelational` and the relational kind over a real SQLite file (the plain and the durable
 //! profile) and print the matrix file on stdout.
 //!
-//! `cargo run -q -p persistant-sqlx --features sqlite --example matrix_sqlite > matrix/sqlx-sqlite.tsv`
+//! `cargo run -q -p persistant-sqlx --features sqlite --example matrix_sqlite > generated/sqlx-sqlite.tsv`
+//!
+//! The output holds only the rows of the host operating system (`os=<host>`). `matrix/sqlx-sqlite.tsv`
+//! carries the rows of every OS, so never redirect onto it: replace only the `os=<host>` lines there
+//! (CI diffs each job against its own OS rows).
 //!
 //! CI regenerates this and fails if it differs from the checked-in `matrix/sqlx-sqlite.tsv`. Rows
 //! are keyed by the SQLite library's version, so a bump of the bundled library is a visible change.
@@ -208,6 +212,8 @@ async fn run() {
         let _ = std::fs::remove_dir_all(&dir);
     }
     print!("{}", Matrix::from_rows(rows).to_tsv());
+    // Windows refuses to delete a database file that a pool still holds open: close every handle first.
+    drop((kv, rel_db, full, full_rel));
     for base in [&path, &full_path] {
         for ext in ["", "-wal", "-shm"] {
             let mut p = base.as_os_str().to_owned();
