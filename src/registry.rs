@@ -1540,7 +1540,8 @@ pub async fn open_named_with(
         declared,
         p.endpoint().clone(),
     );
-    provider::providers(std::slice::from_ref(&actual), needs, m).map_err(OpenError::Unmet)?;
+    provider::providers(std::slice::from_ref(&actual), needs, m)
+        .map_err(|u| OpenError::Unmet(explain_unmet(u, spec.id, kv.backend(), kv.version(), m)))?;
     Ok(Handle {
         id: spec.id,
         kv,
@@ -1720,5 +1721,118 @@ async fn open_kv(
             let _ = bound;
             Err(OpenError::Open(format!("no opener for `{id}`")))
         }
+    }
+}
+
+/// Say what an unmet second gate looked up. The rows are matched on what was actually opened (its
+/// backend and version, read at run time), so a backend or library that moved off the recorded
+/// rows reads as `unverified(no row)` for every need. Each provider's name now carries the version
+/// opened and, when no recorded row has that exact version, `no row for X; nearest recorded Y`.
+/// The outcome is unchanged: still [`OpenError::Unmet`], still refused.
+fn explain_unmet(mut u: Unmet, spec_id: &str, backend: &str, version: &str, m: &Matrix) -> Unmet {
+    let recorded: Vec<&str> = m
+        .rows()
+        .iter()
+        .filter(|r| r.backend == backend)
+        .map(|r| r.version.as_str())
+        .collect();
+    let note = if recorded.contains(&version) {
+        String::new()
+    } else {
+        match nearest_recorded(&recorded, version) {
+            Some(near) => format!("; no row for {version}; nearest recorded {near}"),
+            None => format!("; no row for {version}; none recorded"),
+        }
+    };
+    for p in &mut u.providers {
+        p.provider = format!("{spec_id} (opened {backend} {version}{note})");
+    }
+    u
+}
+
+/// The version's digit runs, as numbers: `0.18+3.54.1` is `[0, 18, 3, 54, 1]`.
+fn version_key(v: &str) -> Vec<u64> {
+    v.split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse().unwrap_or(u64::MAX))
+        .collect()
+}
+
+/// Of the recorded versions, the newest that is not newer than `opened`; if all are newer, the
+/// oldest of them. `None` when nothing is recorded.
+fn nearest_recorded(recorded: &[&str], opened: &str) -> Option<String> {
+    let want = version_key(opened);
+    let mut sorted: Vec<&str> = recorded.to_vec();
+    sorted.sort_by_key(|v| version_key(v));
+    sorted.dedup();
+    sorted
+        .iter()
+        .rev()
+        .find(|v| version_key(v) <= want)
+        .or_else(|| sorted.first())
+        .map(|v| (*v).to_string())
+}
+
+#[cfg(all(test, feature = "registry-sqlite"))]
+mod version_key_tests {
+    use super::*;
+
+    /// A newer bundled SQLite than any recorded row (auditant, 2026-11-19: libsqlite3-sys 0.40.0
+    /// is 3.54.1, the rows say 3.51.3): refused, and the message says why and what is recorded.
+    #[test]
+    fn a_newer_version_than_any_row_is_refused_and_named() {
+        let m = Matrix::parse(include_str!("../matrix/sqlx-sqlite.tsv")).unwrap();
+        let backend = "kv-on-relational:sqlite";
+        let need = ProviderNeeds::new(
+            vec![CapabilityId::new("kv.get").unwrap()],
+            Durability::Volatile,
+        );
+        let facts = Config::new().with("dialect", "sqlite");
+        let recorded_version = m
+            .rows()
+            .iter()
+            .find(|r| r.backend == backend)
+            .unwrap()
+            .version
+            .clone();
+        let try_version = |v: &str| {
+            let p = Provider::new(
+                "sqlite",
+                vec![Surface::new(backend, v, facts.clone())],
+                None,
+                EndpointSpec::None,
+            );
+            provider::providers(std::slice::from_ref(&p), &need, &m)
+                .map(|_| ())
+                .map_err(|u| explain_unmet(u, "sqlite", backend, v, &m).to_string())
+        };
+        // Control: the recorded version is accepted.
+        assert_eq!(try_version(&recorded_version), Ok(()));
+        // The known-bad case: a newer one.
+        let text = try_version("0.18+3.54.1").unwrap_err();
+        assert!(
+            text.contains("no row for 0.18+3.54.1; nearest recorded 0.18+3.51.3"),
+            "{text}"
+        );
+        assert!(text.contains("kv.get unverified"), "{text}");
+    }
+
+    #[test]
+    fn nearest_recorded_picks_the_newest_not_newer_else_the_oldest() {
+        let r = ["0.18+3.51.3", "0.18+3.54.1", "0.18+3.9.0"];
+        assert_eq!(
+            nearest_recorded(&r, "0.18+3.52.0").as_deref(),
+            Some("0.18+3.51.3")
+        );
+        assert_eq!(
+            nearest_recorded(&r, "0.18+3.60.0").as_deref(),
+            Some("0.18+3.54.1")
+        );
+        assert_eq!(
+            nearest_recorded(&r, "0.18+3.1.0").as_deref(),
+            Some("0.18+3.9.0"),
+            "all newer: the oldest"
+        );
+        assert_eq!(nearest_recorded(&[], "1"), None);
     }
 }
