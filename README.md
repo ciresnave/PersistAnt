@@ -181,6 +181,14 @@ Much of it is built since (key-value and relational kinds, SQLite, PostgreSQL, M
   `sqlite-secure` (`SqliteBackend::open_secure`: `secure_delete` on for every connection, rollback journal): a plain
   overwrite or delete then leaves no old bytes in the file (`storage.secure_delete`, read back from the files). It is not
   WAL (`secure_delete` does not reach a WAL file's earlier page images), so `sqlite-full` does not claim it.
+- **A backend version nobody recorded is refused, not guessed at.** `open_named` matches the recorded rows on the
+  version the opened backend reports at run time: the bundled SQLite of the resolved `libsqlite3-sys`, the resolved
+  OpenDAL, the server's own version for PostgreSQL, MySQL and MariaDB. A newer one is refused at open with
+  `unverified(no row)` for the needs and a message naming what was opened and the nearest recorded version, until rows
+  for it are recorded. A scheduled job re-resolves the lockfile weekly and records the SQLite rows on Linux, Windows and
+  macOS, so the rows follow the bundled SQLite; between a new SQLite landing and the release that carries its rows, a
+  consumer on a fresh lockfile is refused (pin `libsqlite3-sys` to a recorded version meanwhile). Server and OpenDAL
+  versions are recorded as tested (`matrix/`), not as ranges.
 - **`memory` counts as atomic** because a value becomes visible in one map insert on close.
 
 ## The other kinds (opt-in features)
