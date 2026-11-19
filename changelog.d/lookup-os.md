@@ -1,0 +1,3 @@
+kind: `Matrix::lookup` honours `os` (row 44)
+---
+A row's `os` metadata key (set on the `sqlx-sqlite`, `sqlx-mysql` and `opendal` matrices) is now part of the match: when the `actual` `Config` names an `os`, only rows recorded on that OS, or naming none, match, so an `off` row recorded on windows no longer turns the leaf off on linux, and a `yes` recorded on linux no longer answers for windows. With no `os` in `actual` every row matches, as before; the signature is unchanged and no checked-in matrix changes its answer. Verified by a test written first and seen red (one leaf `yes` on linux and `no` on windows answers On for `os=linux`, Off for `os=windows`).
