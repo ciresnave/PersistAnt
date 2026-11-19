@@ -2,7 +2,11 @@
 //! Certify `KvOnRelational` and the relational kind over a real SQLite file (the plain and the durable
 //! profile) and print the matrix file on stdout.
 //!
-//! `cargo run -q -p persistant-sqlx --features sqlite --example matrix_sqlite > matrix/sqlx-sqlite.tsv`
+//! `cargo run -q -p persistant-sqlx --features sqlite --example matrix_sqlite > generated/sqlx-sqlite.tsv`
+//!
+//! The output holds only the rows of the host operating system (`os=<host>`). `matrix/sqlx-sqlite.tsv`
+//! carries the rows of every OS, so never redirect onto it: replace only the `os=<host>` lines there
+//! (CI diffs each job against its own OS rows).
 //!
 //! CI regenerates this and fails if it differs from the checked-in `matrix/sqlx-sqlite.tsv`. Rows
 //! are keyed by the SQLite library's version, so a bump of the bundled library is a visible change.
@@ -14,8 +18,24 @@ use persistant_kv::{KvBackend, KvOnRelational};
 use persistant_sqlx::{Bounded, SqliteBackend};
 use std::time::Duration;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
+/// The certification futures are large; a Windows main thread has a 1 MB stack, which they overflow.
+/// Run on a thread with room, so the same generator runs on every CI operating system.
+fn main() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime")
+                .block_on(run());
+        })
+        .expect("spawn")
+        .join()
+        .expect("generator thread");
+}
+
+async fn run() {
     let path = std::env::temp_dir().join(format!("persistant-matrix-{}.db", std::process::id()));
     let db = SqliteBackend::open(&path).await.expect("open");
     let rel_db = db.clone();
@@ -192,6 +212,8 @@ async fn main() {
         let _ = std::fs::remove_dir_all(&dir);
     }
     print!("{}", Matrix::from_rows(rows).to_tsv());
+    // Windows refuses to delete a database file that a pool still holds open: close every handle first.
+    drop((kv, rel_db, full, full_rel));
     for base in [&path, &full_path] {
         for ext in ["", "-wal", "-shm"] {
             let mut p = base.as_os_str().to_owned();
