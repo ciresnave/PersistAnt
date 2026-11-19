@@ -8,11 +8,18 @@ use persistant::capability::{Config, Lookup, Matrix};
 fn the_recorded_sqlite_rows_are_all_on_and_read_by_the_gate() {
     let m = Matrix::parse(include_str!("../matrix/sqlx-sqlite.tsv"))
         .expect("the checked-in matrix parses");
+    // Rows are recorded per bundled SQLite version and the older ones stay (a lockfile that still
+    // resolves 3.51.3 is served); every version carries the same set.
+    for v in ["3.51.3", "3.54.1"] {
+        let n = m.rows().iter().filter(|r| r.version.ends_with(v)).count();
+        assert_eq!(n, 291, "rows recorded for SQLite {v}");
+    }
     assert_eq!(
         m.rows().len(),
-        291,
-        "three operating systems (linux, windows, macos) each recording: twenty-four kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and nineteen relational leaves (thirteen contract, six migration) on each of them are certified, and storage.secure_delete once on the opt-in secure profile, and text.index once on each of them, and kv.delete_erased and text.index.erased once on each of them (off, wrong: stale in-page fragments of earlier writes stay) and once on the opt-in secure profile (on)"
+        2 * 291,
+        "no other SQLite version is recorded"
     );
+    // Composition of one version's 291 rows: per SQLite version, three operating systems (linux, windows, macos) each recording: twenty-four kv/lock leaves on each of sqlite and sqlite-full (plus kv.bounded_call set on each), and nineteen relational leaves (thirteen contract, six migration) on each of them are certified, and storage.secure_delete once on the opt-in secure profile, and text.index once on each of them, and kv.delete_erased and text.index.erased once on each of them (off, wrong: stale in-page fragments of earlier writes stay) and once on the opt-in secure profile (on)
     for r in m.rows() {
         // kv.bounded_call is recorded per call bound: off with none configured (`call_bound=unset`),
         // on when the backend was certified through `Bounded` (`call_bound=set`).
