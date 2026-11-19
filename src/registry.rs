@@ -1809,9 +1809,20 @@ mod version_key_tests {
         // Control: the recorded version is accepted.
         assert_eq!(try_version(&recorded_version), Ok(()));
         // The known-bad case: a newer one.
-        let text = try_version("0.18+3.54.1").unwrap_err();
+        // Newer than any recorded row, whatever has been recorded since: the nearest is the newest.
+        let newest = m
+            .rows()
+            .iter()
+            .filter(|r| r.backend == backend)
+            .map(|r| r.version.as_str())
+            .max_by_key(|v| version_key(v))
+            .unwrap()
+            .to_string();
+        let text = try_version("0.18+3.999.0").unwrap_err();
         assert!(
-            text.contains("no row for 0.18+3.54.1; nearest recorded 0.18+3.51.3"),
+            text.contains(&format!(
+                "no row for 0.18+3.999.0; nearest recorded {newest}"
+            )),
             "{text}"
         );
         assert!(text.contains("kv.get unverified"), "{text}");
