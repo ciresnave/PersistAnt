@@ -94,6 +94,9 @@ pub struct Lease<'a, K> {
     token: u64,
 }
 
+/// How long a claim in [`Lease::acquire`] is held while the fencing token is taken.
+const CLAIM_FLOOR: Duration = Duration::from_secs(10);
+
 impl<'a, K: KvBackend> Lease<'a, K> {
     /// Try to take the lease on `key` for `owner` for `ttl`. `Ok(None)`: another owner holds it.
     pub async fn acquire(
@@ -102,9 +105,23 @@ impl<'a, K: KvBackend> Lease<'a, K> {
         owner: &str,
         ttl: Duration,
     ) -> Result<Option<Lease<'a, K>>, KvError> {
+        // A lease that lapses the moment it is granted is not granted.
+        if ttl.is_zero() {
+            return Ok(None);
+        }
         // Won with token 0; nobody else can take the key until it expires, so only this holder
-        // takes a number from the counter now.
-        if !kv.put_if_absent(key, encode(owner, 0), Some(ttl)).await? {
+        // takes a number from the counter now. The claim is held for `CLAIM_FLOOR`, whatever
+        // `ttl` is: the counter update that follows can take longer than a short `ttl` on a slow
+        // machine (Windows CI, 2026-11-19), and a claim that lapsed before the token was written
+        // refused a key nobody held. The lease gets its real `ttl` from the write of the token
+        // below, so a granted lease still lapses `ttl` after the grant. A caller that dies between
+        // the claim and that write leaves the key held for the floor, for any `ttl`. A counter
+        // update that takes longer than the floor itself still ends in `Ok(None)`: refused, never
+        // two holders.
+        if !kv
+            .put_if_absent(key, encode(owner, 0), Some(CLAIM_FLOOR))
+            .await?
+        {
             return Ok(None);
         }
         let bytes = cas::update(kv, &counter_key(key), None, |v| {
@@ -258,5 +275,152 @@ mod mixed_version_tests {
             new.renew(long).await.unwrap(),
             "the new holder is untouched"
         );
+    }
+}
+
+#[cfg(test)]
+mod slow_acquire_tests {
+    use super::*;
+    use crate::MemoryKv;
+
+    /// A backend whose `get` takes longer than a short lease's time to live: a stalled runner.
+    struct SlowGet(MemoryKv);
+
+    impl KvBackend for SlowGet {
+        fn backend(&self) -> &str {
+            self.0.backend()
+        }
+        fn version(&self) -> &str {
+            self.0.version()
+        }
+        async fn get(&self, key: &str) -> Result<Option<Vec<u8>>, KvError> {
+            std::thread::sleep(Duration::from_millis(80));
+            self.0.get(key).await
+        }
+        async fn put(&self, key: &str, v: Vec<u8>, ttl: Option<Duration>) -> Result<(), KvError> {
+            self.0.put(key, v, ttl).await
+        }
+        async fn delete(&self, key: &str) -> Result<(), KvError> {
+            self.0.delete(key).await
+        }
+        async fn put_if_absent(
+            &self,
+            key: &str,
+            v: Vec<u8>,
+            ttl: Option<Duration>,
+        ) -> Result<bool, KvError> {
+            self.0.put_if_absent(key, v, ttl).await
+        }
+        async fn compare_and_swap(
+            &self,
+            key: &str,
+            expected: &[u8],
+            new: Vec<u8>,
+            ttl: Option<Duration>,
+        ) -> Result<bool, KvError> {
+            self.0.compare_and_swap(key, expected, new, ttl).await
+        }
+        async fn compare_and_delete(&self, key: &str, expected: &[u8]) -> Result<bool, KvError> {
+            self.0.compare_and_delete(key, expected).await
+        }
+    }
+
+    /// The cost of the claim floor, named: a caller that dies after the claim and before the token
+    /// is written leaves the key held for the floor (10 s), not for its own short `ttl`. Nobody
+    /// else is granted it meanwhile, and it holds token 0 (no number was taken for it).
+    #[tokio::test]
+    async fn a_caller_that_dies_between_claim_and_token_write_holds_the_key_for_the_floor() {
+        use crate::Faulty;
+        let kv = Faulty::new(MemoryKv::new()).fail_nth(
+            Some("compare_and_swap"),
+            1,
+            KvError::Backend("the caller died here".to_string()),
+        );
+        let short = Duration::from_millis(30);
+        // The write of the token is the only compare-and-swap of a first acquire: it fails.
+        assert!(Lease::acquire(&kv, "k", "A", short).await.is_err());
+        // The claim is still there, with no token, and outlives the lease's own short ttl ...
+        let held = Lease::holder(&kv, "k").await.unwrap().expect("claim held");
+        assert_eq!((held.owner.as_str(), held.token), ("A", 0));
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(Lease::holder(&kv, "k").await.unwrap().is_some());
+        let left = kv.ttl_remaining("k").await.unwrap().expect("a ttl");
+        assert!(
+            left > Duration::from_secs(5),
+            "held for the floor, not for ttl: {left:?}"
+        );
+        assert!(
+            left <= CLAIM_FLOOR,
+            "and for no longer than the floor: {left:?}"
+        );
+        // ... and nobody else is granted it meanwhile.
+        assert!(
+            Lease::acquire(&kv, "k", "B", short)
+                .await
+                .unwrap()
+                .is_none(),
+            "a claimed key is not granted to a second owner"
+        );
+    }
+
+    /// A lease that lapses the moment it is granted is not granted (review of #267: with the claim
+    /// held for the floor, a zero `ttl` would have returned a lease for a key nobody holds).
+    #[tokio::test]
+    async fn a_zero_ttl_is_never_granted() {
+        let kv = MemoryKv::new();
+        assert!(
+            Lease::acquire(&kv, "k", "A", Duration::ZERO)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            Lease::holder(&kv, "k").await.unwrap(),
+            None,
+            "and nothing is left held"
+        );
+    }
+
+    /// The most a dead caller can hold the key is the floor, whatever `ttl` it asked for.
+    #[tokio::test]
+    async fn a_dying_caller_with_a_long_ttl_still_holds_the_key_only_for_the_floor() {
+        use crate::Faulty;
+        let kv = Faulty::new(MemoryKv::new()).fail_nth(
+            Some("compare_and_swap"),
+            1,
+            KvError::Backend("the caller died here".to_string()),
+        );
+        assert!(
+            Lease::acquire(&kv, "k", "A", Duration::from_secs(3600))
+                .await
+                .is_err()
+        );
+        let left = kv.ttl_remaining("k").await.unwrap().expect("a ttl");
+        assert!(
+            left <= CLAIM_FLOOR,
+            "held for {left:?}, more than the floor"
+        );
+    }
+
+    /// Windows CI, 2026-11-19: `lock.fencing` failed "a free lease was not granted" on a key nobody
+    /// held. The claim carried the lease's own short time to live, the fencing-counter update that
+    /// follows took longer than that on a slow machine, the claim lapsed, and the final write of the
+    /// token found nothing to swap. A free key is granted whatever the speed of the machine.
+    #[tokio::test]
+    async fn a_free_lease_is_granted_even_when_the_counter_update_outlasts_its_ttl() {
+        let kv = SlowGet(MemoryKv::new());
+        let short = Duration::from_millis(30);
+        let lease = Lease::acquire(&kv, "k", "A", short).await.unwrap();
+        assert!(lease.is_some(), "a free key must be granted");
+        // The lease it got still expires on its own short ttl, from the moment it was granted.
+        let held = Lease::holder(&kv.0, "k").await.unwrap();
+        assert_eq!(held.map(|h| h.token), Some(1));
+        std::thread::sleep(Duration::from_millis(120));
+        assert_eq!(Lease::holder(&kv.0, "k").await.unwrap(), None);
+        // Control: a held key is still refused.
+        let long = Duration::from_secs(30);
+        let a = Lease::acquire(&kv, "j", "A", long).await.unwrap();
+        assert!(a.is_some());
+        assert!(Lease::acquire(&kv, "j", "B", long).await.unwrap().is_none());
     }
 }
