@@ -204,7 +204,9 @@ jobs:
       # only the rows of its own operating system.
       - name: Compare with the checked-in file
         run: |
-          { head -n 1 matrix/sqlx-sqlite.tsv; grep -F 'os=linux' matrix/sqlx-sqlite.tsv; } > generated/checked-in-linux.tsv
+          # Rows are recorded per bundled SQLite version (older ones stay: a lockfile that still
+          # resolves them is served); compare only the rows of the version this run built.
+          { head -n 1 matrix/sqlx-sqlite.tsv; grep -F 'os=linux' matrix/sqlx-sqlite.tsv | awk -F'\t' 'NR==FNR{v[$4]=1;next} ($4 in v)' <(tail -n +2 generated/sqlx-sqlite.tsv) -; } > generated/checked-in-linux.tsv
           diff -u generated/checked-in-linux.tsv generated/sqlx-sqlite.tsv
 
       # Stage 3 (speed) is data, not a gate: it is recorded with this runner's environment and the
@@ -264,7 +266,7 @@ jobs:
         shell: bash
         run: |
           os=$(echo "${{ runner.os }}" | tr 'A-Z' 'a-z')
-          { head -n 1 matrix/sqlx-sqlite.tsv; grep -F "os=$os" matrix/sqlx-sqlite.tsv; } > generated/checked-in.tsv
+          { head -n 1 matrix/sqlx-sqlite.tsv; grep -F "os=$os" matrix/sqlx-sqlite.tsv | awk -F'\t' 'NR==FNR{v[$4]=1;next} ($4 in v)' <(tail -n +2 generated/sqlx-sqlite.tsv) -; } > generated/checked-in.tsv
           diff -u generated/checked-in.tsv generated/sqlx-sqlite.tsv
 
   mariadb:
