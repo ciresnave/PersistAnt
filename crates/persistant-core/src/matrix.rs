@@ -100,7 +100,9 @@ impl Matrix {
     /// The gate's lookup, answered by `capant::resolve` over [`Matrix::to_capant`]. Rows match on
     /// `subject`, `backend` and `version` exactly, and on `config` when every fact the row names is
     /// also in `actual`. **Off wins**: one matching `no` makes the answer off even if another
-    /// matching row says yes. A `yes` is [`Lookup::On`] only when `capant` calls it `Yes`: a `yes`
+    /// matching row says yes. A row's `os` metadata key is where it was recorded: when `actual`
+    /// names an `os`, only rows recorded on that OS (or naming none) match; with no `os` in
+    /// `actual` every row matches. A `yes` is [`Lookup::On`] only when `capant` calls it `Yes`: a `yes`
     /// with no probe id, from another environment or past its age is [`Lookup::NoRow`] (claims must
     /// be earned), the same answer selection through `capant::evaluate` gives.
     pub fn lookup(
@@ -110,7 +112,23 @@ impl Matrix {
         version: &str,
         actual: &Config,
     ) -> Lookup {
-        let view = self.view.get_or_init(|| self.to_capant());
+        // A row's `os` metadata says where it was recorded. When `actual` names an `os`, only rows
+        // recorded on it, or on no named OS, take part; otherwise every row does.
+        let scoped;
+        let view = match actual.get("os") {
+            Some(os) => {
+                scoped = crate::adapter::view(
+                    &self
+                        .rows
+                        .iter()
+                        .filter(|r| r.metadata.get("os").is_none_or(|o| o == os))
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                );
+                &scoped
+            }
+            None => self.view.get_or_init(|| self.to_capant()),
+        };
         let provider = capant_provider("lookup", backend, version, actual);
         let id = capant::CapabilityId::new(subject.as_str())
             .expect("this crate's id grammar is inside capant's");
@@ -225,6 +243,35 @@ construct\tcast.to_uuid\tmysql\t8.4.11\t\tno\tmissing\ttest=c::d\t\tpostgres
         let k = id("k");
         assert!(m.enabled(&k, "b", "1", &Config::new()));
         assert!(!m.enabled(&k, "b", "1", &Config::new().with("x", "1")));
+    }
+
+    #[test]
+    fn os_in_actual_selects_the_rows_recorded_on_that_os() {
+        let text = "subject_kind\tsubject\tbackend\tversion\tconfig\tenabled\treason\tmetadata\tnote\n\
+                    capability\tk\tb\t1\t\tyes\t\tos=linux;probe=a::k\t\n\
+                    capability\tk\tb\t1\t\tno\twrong\tos=windows;probe=a::k\t\n\
+                    capability\tj\tb\t1\t\tyes\t\tos=linux;probe=a::j\t\n\
+                    capability\tu\tb\t1\t\tyes\t\tprobe=a::u\t\n\
+                    capability\tu\tb\t1\t\tno\twrong\tos=windows;probe=a::u\t\n";
+        let m = Matrix::parse(text).unwrap();
+        let k = id("k");
+        let linux = Config::new().with("os", "linux");
+        let windows = Config::new().with("os", "windows");
+        assert_eq!(m.lookup(&k, "b", "1", &linux), Lookup::On);
+        assert_eq!(m.lookup(&k, "b", "1", &windows), Lookup::Off(Reason::Wrong));
+        // A row recorded only on linux says nothing about windows.
+        assert_eq!(m.lookup(&id("j"), "b", "1", &windows), Lookup::NoRow);
+        // A row with no `os` holds on every OS; a windows `no` still turns it off on windows only.
+        assert_eq!(m.lookup(&id("u"), "b", "1", &linux), Lookup::On);
+        assert_eq!(
+            m.lookup(&id("u"), "b", "1", &windows),
+            Lookup::Off(Reason::Wrong)
+        );
+        // No `os` asked for: every row counts, as before (off wins).
+        assert_eq!(
+            m.lookup(&k, "b", "1", &Config::new()),
+            Lookup::Off(Reason::Wrong)
+        );
     }
 
     #[test]

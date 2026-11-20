@@ -42,6 +42,13 @@ pub fn derive_from_row(input: proc_macro::TokenStream) -> proc_macro::TokenStrea
 
 /// `sqlx_query!`: sqlx's argument shape, run through UniSQL and PersistAnt (`docs/DESIGN-SQLX-BRIDGE.md`).
 /// Result types come from sqlx's offline data (`.sqlx`).
+///
+/// Notes that apply to all three `sqlx_query*!` macros:
+///
+/// - An array argument is passed by reference, as with sqlx: `&Vec<T>` or `&[T]`, not an owned `Vec<T>`.
+/// - The macros only read existing `.sqlx` data; they never create it. A new statement needs its
+///   entry emitted first, by a plain `sqlx::query!` compile (with `DATABASE_URL` set, or
+///   `cargo sqlx prepare`), before `sqlx_query!` can build against it.
 #[proc_macro]
 pub fn sqlx_query(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     sqlx_bridge::expand(sqlx_bridge::Form::Record, input.into()).into()

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.31 — `Matrix::lookup` honours `os` (row 44)
+
+A row's `os` metadata key (set on the `sqlx-sqlite`, `sqlx-mysql` and `opendal` matrices) is now part of the match: when the `actual` `Config` names an `os`, only rows recorded on that OS, or naming none, match, so an `off` row recorded on windows no longer turns the leaf off on linux, and a `yes` recorded on linux no longer answers for windows. With no `os` in `actual` every row matches, as before; the signature is unchanged and no checked-in matrix changes its answer. Verified by a test written first and seen red (one leaf `yes` on linux and `no` on windows answers On for `os=linux`, Off for `os=windows`).
+
+Also: `tests/registry_password_leak.rs` (row 24) asserts a canary password never appears in an `open_named` error (`Display`, `Debug`, every `source()`) for the postgres, mysql and mariadb ids through `Endpoint::Url`, `Secret::literal` and `url_env`, mutation-checked; the sqlx `sqlx_query!` rustdoc gains notes on reference arguments and `.sqlx` data.
+
 ## 0.18.30 — HOTFIX: `Lease::acquire` holds its claim for at least 10 s (BEHAVIOUR CHANGE); main was red on Windows
 
 **BEHAVIOUR CHANGE in a locking primitive.** `Lease::acquire` claimed a key with the lease's own `ttl`, then took the fencing token from a counter and wrote it with a compare-and-swap. When the counter update outlasted a short `ttl` (a slow machine), the claim had lapsed, the swap found nothing and a key nobody held was refused. The claim is now held for at least 10 s and the real `ttl` is set by the write of the token, so a granted lease still lapses `ttl` after the grant. **Consequence: a caller that dies between the claim and the token write holds the key for 10 s whatever `ttl` it asked for (before: its `ttl`);** a zero `ttl` is refused at once (`Ok(None)`), and a counter update that outlasts the 10 s itself still ends in `Ok(None)`, never in two holders; nobody else is granted it meanwhile, and it holds token 0.
