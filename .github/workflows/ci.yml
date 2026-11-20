@@ -424,7 +424,11 @@ jobs:
       # The checked-in file is a record of what this code certified on Linux. A backend or crate
       # version bump changes it, and that change belongs in the same review.
       - name: Compare with the checked-in file
-        run: diff -u matrix/opendal.tsv generated/opendal.tsv
+        run: |
+          # Rows are recorded per OpenDAL version (older ones stay: a lockfile that still resolves
+          # them is served); compare only the rows of the version this run built.
+          { head -n 1 matrix/opendal.tsv; awk -F'	' 'NR==FNR{v[$4]=1;next} ($4 in v)' <(tail -n +2 generated/opendal.tsv) <(tail -n +2 matrix/opendal.tsv); } > generated/checked-in-opendal.tsv
+          diff -u generated/checked-in-opendal.tsv generated/opendal.tsv
 
       # Stage 3 (speed): data with its environment, not a gate. See the SQLite job.
       - name: Time the key-value workloads
