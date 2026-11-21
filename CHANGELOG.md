@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.32 — OpenDAL rows are recorded per version, and the fresh-lock job collects them
+
+`matrix/opendal.tsv` is now compared per OpenDAL version in CI (the rows of the version a run built, as for SQLite), so a newer OpenDAL adds rows without rewriting older ones, and a lockfile that still resolves an older recorded OpenDAL stays served. The weekly `fresh-lock` job also generates the OpenDAL rows against a re-resolved lock, fails when no row names the OpenDAL it built, and puts the new rows in its issue ("Fresh lock: rows to record"). `tests/checked_in_matrix_opendal.rs` counts rows per OpenDAL version (159 for 0.59.5 plus the one process-lock row). Verified: the per-version filter against a file with extra older-version rows (the unfiltered diff shows them, the filtered one does not).
+
 ## 0.18.31 — `Matrix::lookup` honours `os` (row 44)
 
 A row's `os` metadata key (set on the `sqlx-sqlite`, `sqlx-mysql` and `opendal` matrices) is now part of the match: when the `actual` `Config` names an `os`, only rows recorded on that OS, or naming none, match, so an `off` row recorded on windows no longer turns the leaf off on linux, and a `yes` recorded on linux no longer answers for windows. With no `os` in `actual` every row matches, as before; the signature is unchanged and no checked-in matrix changes its answer. Verified by a test written first and seen red (one leaf `yes` on linux and `no` on windows answers On for `os=linux`, Off for `os=windows`).
