@@ -564,7 +564,7 @@ fn specs() -> Vec<Spec> {
         },
         notes: &[
             "Opens from a connection URL (`postgres://...`); pass it as a secret (environment variable or file) so it is never printed.",
-            "Offered only on the server versions the recorded matrix covers; any other server version is refused at open with the unmet ids.",
+            "Offered on the server versions the recorded matrix covers, and on a newer patch of one (the series, `major`, is the first number: 16.16 after 16.15), which opens as `unverified patch of verified <version>` (`Handle::version_notes`). A new major or an older patch is refused at open with the unmet ids and the nearest recorded version.",
             "A full disk fails loud (a write returns an error and every acknowledged key is kept).",
         ],
     });
@@ -582,7 +582,7 @@ fn specs() -> Vec<Spec> {
             },
             notes: &[
                 "Opens from a connection URL (`mysql://...`); pass it as a secret. A MariaDB server behind this id is refused: use `mariadb`.",
-                "Offered only on the server versions the recorded matrix covers.",
+                "Offered on the server versions the recorded matrix covers, and on a newer patch of one (the series is `major.minor`: 8.4.12 after 8.4.11), which opens as `unverified patch of verified <version>` (`Handle::version_notes`). A new minor or major or an older patch is refused at open with the nearest recorded version.",
                 "CAVEAT: a full disk makes MySQL STALL, not fail: the call gets no answer and no error. Give every call your own timeout (the backend reports `call_bound`).",
             ],
         });
@@ -598,7 +598,7 @@ fn specs() -> Vec<Spec> {
             },
             notes: &[
                 "Opens from a connection URL (`mysql://...` or `mariadb://...`); pass it as a secret. A MySQL server behind this id is refused: use `mysql`.",
-                "Offered only on the server versions the recorded matrix covers.",
+                "Offered on the server versions the recorded matrix covers, and on a newer patch of one (the series is `major.minor`: 8.4.12 after 8.4.11), which opens as `unverified patch of verified <version>` (`Handle::version_notes`). A new minor or major or an older patch is refused at open with the nearest recorded version.",
                 "No durability class is declared for MariaDB (no power-loss run exists for it), so a need above Volatile does not list it.",
             ],
         });
@@ -1244,6 +1244,7 @@ pub struct Handle {
     kv: AnyKv,
     blob: Option<AnyBlob>,
     rel: Option<AnyRel>,
+    version_notes: Vec<String>,
 }
 
 /// The key prefixes the key-value store keeps its own files under on the `fs` provider (`kvx/` the
@@ -1386,6 +1387,14 @@ impl Handle {
     /// The id it was opened under.
     pub fn id(&self) -> &'static str {
         self.id
+    }
+
+    /// Where the server this handle opened is a newer **patch** of a recorded version, one line per
+    /// surface: `postgres 16.16: unverified patch of verified 16.15`. Empty when every surface is
+    /// exactly a recorded version. The rows that gated the open are the recorded version's; nothing
+    /// was measured on the patch (what a patch is, per server family, is in `accepted_patch_of`).
+    pub fn version_notes(&self) -> &[String] {
+        &self.version_notes
     }
 
     /// The key-value store.
@@ -1537,6 +1546,27 @@ pub async fn open_named_with(
         .iter()
         .map(|(k, sf)| (*k, sf.backend.clone(), sf.version.clone()))
         .collect();
+    // A server that is a newer patch of a recorded version is matched against that version's rows
+    // (and says so); anything else keeps the version it reported and is refused below.
+    let mut version_notes = Vec::new();
+    for (_, surface) in &mut opened {
+        let recorded: Vec<&str> = m
+            .rows()
+            .iter()
+            .filter(|r| r.backend == surface.backend)
+            .map(|r| r.version.as_str())
+            .collect();
+        if recorded.contains(&surface.version.as_str()) {
+            continue;
+        }
+        if let Some(base) = accepted_patch_of(&surface.backend, &surface.version, &recorded) {
+            version_notes.push(format!(
+                "{} {}: unverified patch of verified {base}",
+                surface.backend, surface.version
+            ));
+            surface.version = base;
+        }
+    }
     let declared = weakest_declared(&opened);
     let actual = Provider::new(
         spec.id,
@@ -1551,7 +1581,44 @@ pub async fn open_named_with(
         kv,
         blob,
         rel,
+        version_notes,
     })
+}
+
+/// The recorded version that `opened` is a newer **patch** of, if it is one (`None`: refuse).
+///
+/// What a patch is depends on the server family, by the number of leading components that name the
+/// release series: **PostgreSQL** (10 and later) numbers `major.patch`, so `16.16` is a patch of
+/// `16.15` (series `16`); **MySQL and MariaDB** number `major.minor.patch`, so `8.4.12` is a patch
+/// of `8.4.11` (series `8.4`). The driver prefix before a `+` (`0.18+16.15`) must be identical.
+/// Accepted: same series, a patch **higher** than a recorded one (the newest such recorded version
+/// is the base). Refused: a new series (minor or major up), a patch lower than every recorded one
+/// in its series, an equal one (exact matches never get here), and any other backend or a version
+/// that is not plain dotted numbers (`17beta1`).
+fn accepted_patch_of(backend: &str, opened: &str, recorded: &[&str]) -> Option<String> {
+    let family = backend.rsplit(':').next().unwrap_or(backend);
+    let series = match family {
+        "postgres" => 1,
+        "mysql" | "mariadb" => 2,
+        _ => return None,
+    };
+    let split = |v: &str| -> Option<(String, Vec<u64>)> {
+        let (prefix, server) = v.rsplit_once('+').unwrap_or(("", v));
+        let nums = server
+            .split('.')
+            .map(|p| p.parse::<u64>().ok())
+            .collect::<Option<Vec<_>>>()?;
+        (nums.len() == series + 1).then(|| (prefix.to_string(), nums))
+    };
+    let (prefix, want) = split(opened)?;
+    recorded
+        .iter()
+        .filter_map(|r| split(r).map(|(p, n)| (*r, p, n)))
+        .filter(|(_, p, n)| {
+            *p == prefix && n[..series] == want[..series] && n[series] < want[series]
+        })
+        .max_by_key(|(_, _, n)| n[series])
+        .map(|(r, _, _)| r.to_string())
 }
 
 /// Open the blob store of provider `id`: the same directory the key-value store sits on for `fs`, a
@@ -1868,5 +1935,125 @@ mod version_key_tests {
             "all newer: the oldest"
         );
         assert_eq!(nearest_recorded(&[], "1"), None);
+    }
+}
+
+#[cfg(test)]
+mod server_patch_tests {
+    use super::*;
+
+    fn recorded(tsv: &str, backend: &str) -> Vec<String> {
+        let m = Matrix::parse(tsv).unwrap();
+        let mut v: Vec<String> = m
+            .rows()
+            .iter()
+            .filter(|r| r.backend == backend)
+            .map(|r| r.version.clone())
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    fn check(backend: &str, tsv: &str, opened: &str) -> Option<String> {
+        let rec = recorded(tsv, backend);
+        let refs: Vec<&str> = rec.iter().map(String::as_str).collect();
+        assert!(!refs.is_empty(), "no rows for {backend}");
+        accepted_patch_of(backend, opened, &refs)
+    }
+
+    const PG: &str = include_str!("../matrix/sqlx-postgres.tsv");
+    const MY: &str = include_str!("../matrix/sqlx-mysql.tsv");
+    const MA: &str = include_str!("../matrix/sqlx-mariadb.tsv");
+
+    #[test]
+    fn postgres_patch_up_is_accepted_everything_else_refused() {
+        let b = "kv-on-relational:postgres";
+        let base = recorded(PG, b).pop().unwrap(); // 0.18+16.15 at the time of writing
+        let (pre, ver) = base.rsplit_once('+').unwrap();
+        let (major, patch) = ver.split_once('.').unwrap();
+        let (major, patch): (u64, u64) = (major.parse().unwrap(), patch.parse().unwrap());
+        // Boundary: patch up.
+        assert_eq!(
+            check(b, PG, &format!("{pre}+{major}.{}", patch + 1)),
+            Some(base.clone())
+        );
+        // Boundary: minor up (PostgreSQL's next series is the next major).
+        assert_eq!(check(b, PG, &format!("{pre}+{}.0", major + 1)), None);
+        assert_eq!(check(b, PG, &format!("{pre}+{}.{patch}", major + 1)), None);
+        // Boundary: major down.
+        assert_eq!(check(b, PG, &format!("{pre}+{}.{patch}", major - 1)), None);
+        // Boundary: patch down (older than any recorded patch of the series).
+        if patch > 0 {
+            assert_eq!(check(b, PG, &format!("{pre}+{major}.{}", patch - 1)), None);
+        }
+        // Control: the recorded version itself is not "a patch of" itself (exact match is handled
+        // before this is asked).
+        assert_eq!(check(b, PG, &base_server(&base, pre)), None);
+        // A different driver prefix never matches.
+        assert_eq!(check(b, PG, &format!("9.9+{major}.{}", patch + 1)), None);
+    }
+
+    fn base_server(base: &str, pre: &str) -> String {
+        format!("{pre}+{}", base.rsplit_once('+').unwrap().1)
+    }
+
+    #[test]
+    fn mysql_and_mariadb_patch_up_minor_up_major_up_patch_down() {
+        for (b, tsv) in [
+            ("kv-on-relational:mysql", MY),
+            ("kv-on-relational:mariadb", MA),
+        ] {
+            let base = recorded(tsv, b).pop().unwrap();
+            let (pre, ver) = base.rsplit_once('+').unwrap();
+            let n: Vec<u64> = ver.split('.').map(|p| p.parse().unwrap()).collect();
+            let v = |a: u64, b: u64, c: u64| format!("{pre}+{a}.{b}.{c}");
+            assert_eq!(
+                check(b, tsv, &v(n[0], n[1], n[2] + 1)),
+                Some(base.clone()),
+                "{b}"
+            );
+            assert_eq!(check(b, tsv, &v(n[0], n[1] + 1, 0)), None, "{b} minor up");
+            assert_eq!(
+                check(b, tsv, &v(n[0], n[1] + 1, n[2] + 1)),
+                None,
+                "{b} minor up, patch up"
+            );
+            assert_eq!(check(b, tsv, &v(n[0] + 1, 0, 0)), None, "{b} major up");
+            if n[2] > 0 {
+                assert_eq!(
+                    check(b, tsv, &v(n[0], n[1], n[2] - 1)),
+                    None,
+                    "{b} patch down"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_newest_recorded_patch_not_newer_is_the_base() {
+        let r = ["0.18+8.4.9", "0.18+8.4.11", "0.18+8.0.40"];
+        let f = |o| accepted_patch_of("mysql", o, &r);
+        assert_eq!(f("0.18+8.4.10").as_deref(), Some("0.18+8.4.9"));
+        assert_eq!(f("0.18+8.4.12").as_deref(), Some("0.18+8.4.11"));
+        assert_eq!(f("0.18+8.4.8"), None);
+        assert_eq!(f("0.18+8.0.41").as_deref(), Some("0.18+8.0.40"));
+    }
+
+    #[test]
+    fn other_backends_and_odd_versions_are_refused() {
+        let r = ["0.18+3.51.3"];
+        assert_eq!(
+            accepted_patch_of("kv-on-relational:sqlite", "0.18+3.51.4", &r),
+            None
+        );
+        assert_eq!(accepted_patch_of("postgres", "17beta1", &["16.15"]), None);
+        // A three-part Postgres version has no series meaning here.
+        assert_eq!(accepted_patch_of("postgres", "16.16.1", &["16.15"]), None);
+        // The relational backend's bare version (no `+`) works the same way.
+        assert_eq!(
+            accepted_patch_of("postgres", "16.16", &["16.15"]).as_deref(),
+            Some("16.15")
+        );
     }
 }
