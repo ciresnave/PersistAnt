@@ -136,3 +136,35 @@ fn opendal_rows_are_keyed_by_the_version_that_ran() {
     // Control: a version that did not run is not found.
     assert!(blob_rows.iter().all(|r| r.version != "0.0.1"));
 }
+
+/// Rows are recorded per OpenDAL version and older ones stay (a lockfile that still resolves them is
+/// served), so every recorded version carries the same set of rows. A file with a half-recorded
+/// version would pass the checks above and refuse part of a consumer's needs.
+#[test]
+fn every_recorded_opendal_version_carries_the_same_rows() {
+    let m = matrix();
+    // A kv-on-blob row's version is `<persistant-kv>+<opendal>`; the process-lock row names the std
+    // call it exercises (`File::try_lock`) and is not tied to an OpenDAL version.
+    let mut by_version: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut shared = 0;
+    for r in m.rows() {
+        if r.version == "File::try_lock" {
+            shared += 1;
+            continue;
+        }
+        let v = r.version.rsplit('+').next().unwrap();
+        *by_version.entry(v).or_default() += 1;
+    }
+    assert_eq!(shared, 1, "the process-lock row");
+    let per_version = [
+        ("0.59.5", 159usize), // the first recorded version; add each new one here
+    ];
+    for (v, n) in per_version {
+        assert_eq!(by_version.get(v), Some(&n), "rows recorded for OpenDAL {v}");
+    }
+    assert_eq!(
+        by_version.len(),
+        per_version.len(),
+        "no other OpenDAL version is recorded: {by_version:?}"
+    );
+}

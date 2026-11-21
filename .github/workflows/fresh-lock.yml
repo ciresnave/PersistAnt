@@ -64,6 +64,19 @@ jobs:
           mkdir -p generated
           cargo run -q -p persistant-sqlx --features sqlite --example matrix_sqlite > generated/sqlx-sqlite.tsv
 
+      # OpenDAL's rows are recorded on Linux only (the matrix file says so in each row's metadata).
+      - name: Generate the OpenDAL rows (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: cargo run -q -p persistant-opendal --example opendal_matrix > generated/opendal.tsv
+
+      - name: Upload the OpenDAL rows
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fresh-lock-opendal
+          path: generated/opendal.tsv
+
       - name: Upload what was generated
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -82,6 +95,14 @@ jobs:
           ver=$(awk -F'\t' 'NR==2{print $4}' generated/sqlx-sqlite.tsv)
           echo "built: $ver"
           grep -qF "$ver" matrix/sqlx-sqlite.tsv || { echo "::error::no row in matrix/sqlx-sqlite.tsv for $ver"; exit 1; }
+
+      - name: The checked-in rows name the OpenDAL this lock builds
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ver=$(awk -F'	' 'NR==2{print $4}' generated/opendal.tsv)
+          echo "built: $ver"
+          awk -F'	' -v v="$ver" 'NR>1 && $4==v {found=1} END{exit !found}' matrix/opendal.tsv || { echo "::error::no row in matrix/opendal.tsv for OpenDAL $ver"; exit 1; }
 
   report:
     name: Collect new rows, open or update an issue
@@ -114,13 +135,21 @@ jobs:
             [ -f "$f" ] || continue
             tail -n +2 "$f" | grep -vxFf matrix/sqlx-sqlite.tsv >> out/new-rows.tsv || true
           done
+          # OpenDAL (Linux only): its rows go to their own file, and a failed download is written down too.
+          : > out/new-rows-opendal.tsv
+          gh run download "${{ github.run_id }}" -n fresh-lock-opendal -D fresh/opendal || echo "opendal" >> out/missing.txt
+          if [ -f fresh/opendal/opendal.tsv ]; then
+            tail -n +2 fresh/opendal/opendal.tsv | grep -vxFf matrix/opendal.tsv >> out/new-rows-opendal.tsv || true
+          fi
           echo "new rows: $(wc -l < out/new-rows.tsv); no artifact for: $(tr '\n' ' ' < out/missing.txt)"
 
       - name: Upload the new rows
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fresh-lock-new-rows
-          path: out/new-rows.tsv
+          path: |
+            out/new-rows.tsv
+            out/new-rows-opendal.tsv
 
       - name: Open or update the issue
         shell: bash
@@ -129,17 +158,18 @@ jobs:
           CERTIFY: ${{ needs.certify.result }}
         run: |
           n=$(wc -l < out/new-rows.tsv)
+          nd=$(wc -l < out/new-rows-opendal.tsv)
           missing=$(tr '\n' ' ' < out/missing.txt)
-          title="Fresh lock: SQLite rows to record"
+          title="Fresh lock: rows to record"
           # `// empty`: with no match `.[0].number` is JSON null, which jq prints as the text "null".
           num=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
-          if [ "$n" -eq 0 ] && [ "$CERTIFY" = success ] && [ -z "$missing" ]; then
+          if [ "$n" -eq 0 ] && [ "$nd" -eq 0 ] && [ "$CERTIFY" = success ] && [ -z "$missing" ]; then
             echo "nothing to record"
             # The rows are recorded and every job passed: the issue says so and closes.
             if [ -n "$num" ]; then gh issue close "$num" --comment "Run ${{ github.run_id }}: certify passed on all three operating systems and every row is recorded. — lane: persistant"; fi
             exit 0
           fi
-          body="Run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}: certify=$CERTIFY, $n new rows (artifact fresh-lock-new-rows), no artifact downloaded for: ${missing:-none}. Append them to matrix/sqlx-sqlite.tsv on a branch, update the per-version counts in tests/checked_in_matrix_sqlite.rs, add a changelog fragment, open a pull request. Until then a consumer on a fresh lockfile is refused at open_named. — lane: persistant"
+          body="Run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}: certify=$CERTIFY, $n new SQLite rows (out/new-rows.tsv) and $nd new OpenDAL rows (out/new-rows-opendal.tsv) in artifact fresh-lock-new-rows, no artifact downloaded for: ${missing:-none}. Append them to matrix/sqlx-sqlite.tsv and matrix/opendal.tsv on a branch, update the per-version counts in tests/checked_in_matrix_sqlite.rs and tests/checked_in_matrix_opendal.rs, add a changelog fragment, open a pull request. Until then a consumer on a fresh lockfile is refused at open_named. — lane: persistant"
           if [ -n "$num" ]; then gh issue comment "$num" --body "$body"; else gh issue create --title "$title" --body "$body"; fi
           # An artifact that could not be downloaded is a failure of this job, not a quiet "no rows".
           [ -z "$missing" ] || { echo "::error::no artifact downloaded for: $missing"; exit 1; }
