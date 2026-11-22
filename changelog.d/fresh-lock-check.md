@@ -1,0 +1,3 @@
+kind: Published versions resolve to a recorded OpenDAL; the OpenDAL key is the version that ran
+---
+Checked on 2026-11-22 against the crates.io tarballs: a fresh `cargo update` of a project depending on `persistant =0.18.28` and on `=0.18.30` (feature `registry`) resolves `opendal 0.59.5`, which `matrix/opendal.tsv` records, so both open without a refusal. `0.18.27` was never published (crates.io lists 0.18.30, 0.18.28, 0.18.23, ...), so there is nothing to check for it. The OpenDAL matrix key is the runtime `opendal::raw::VERSION` (the library that ran, `0.59.5`), not the `0.59.4` floor in `Cargo.toml`: the rows record the behaviour of the library that was exercised. `opendal_rows_are_keyed_by_the_version_that_ran` pins this with a known-bad control. No code change.
