@@ -202,7 +202,7 @@ request grows by accident, and every request is a design review. Instead:
 - **Relational ids follow the SQL standard's feature codes**, so "what does this database give" is
   answerable from a published list. PostgreSQL documents its conformance by those codes (its appendix
   states it supports "at least 170 of 177 mandatory Core features"); that list is approximate and only
-  its introduction was read here, so SQLite's and MySQL's would be separate surveys (§10).
+  its introduction was read here. **Surveyed 2026-11-22 (ROADMAP row 13): neither SQLite nor MySQL publishes a per-code list**, so for them "what does this database give" is not answerable from a published feature-code list; see §10.
 - **Blob and KV ids follow OpenDAL's capability fields** (about 100) plus what the consumers in §1 do
   that those fields do not name (create-exclusive *with* content visible, file mode).
 - **Untested is off**, so a wide list is safe: an id with no passing test claims nothing. The table
@@ -688,6 +688,7 @@ Each will go to the PM as its own `[ASK]`, one at a time, with options and a rec
 - Whether Redis `KEYS`-free ordered scan is achievable on the Redis backend: assumed no (§2.2).
 - Whether a live open-time probe that creates `TEMP` objects is acceptable and permitted for every
   deployment role (§2.3, D3): not established.
+- **SQLite and MySQL feature-code coverage (surveyed 2026-11-22, row 13, by reading the pages named; not by testing):** neither publishes a per-feature-code (E011, F031, T211) conformance list. **SQLite:** `omitted.html` ("last updated on 2022-04-18") lists four omissions, with no codes: complete `ALTER TABLE` (only `RENAME TABLE`, `ADD COLUMN`, `RENAME COLUMN`, `DROP COLUMN`), complete triggers (no `FOR EACH STATEMENT`), writing to views, `GRANT`/`REVOKE`; it says "it is much easier to list those that it does not". `quirks.html` lists behaviours that differ from other engines (flexible typing, foreign keys off by default, `PRIMARY KEY` may hold NULL, non-aggregate columns outside `GROUP BY`, `1='1'` false), with no codes and no percentage. **MySQL 8.4:** section 1.7 "MySQL Standards Compliance" is qualitative (a goal of compliance; names SQL-92 to SQL:2011; a subset of the SQL/JSON functions of a pre-publication SQL:2016 draft; `ANSI` mode) with subsections on extensions, differences (`SELECT INTO TABLE`, `UPDATE`, foreign keys, `--` comments) and constraints. **PostgreSQL (for comparison, docs 19):** "Out of 177 mandatory features required for full Core conformance, PostgreSQL conforms to at least 170", and its own per-code lists D.1/D.2 are "approximate". **Not read:** MySQL's subpages beyond their titles, SQLite's `lang.html`, PostgreSQL's D.1/D.2 lists. **Consequence:** a `rel.*` leaf for SQLite or MySQL gets its row from a test, as now; the feature-code names stay a naming basis, and no code is claimed `yes` from documentation. Building our own per-code table for them would mean running the SQL standard's feature tests against each engine, which is a separate, larger row.
 - The SQL standard's feature-code list (the coverage basis for `rel.*`, §2.2): only the PostgreSQL
   documentation's conformance appendix introduction was read ("at least 170 of 177 mandatory Core
   features"); its per-code list, and the SQLite and MySQL surveys, were not. OpenDAL's roughly 100
