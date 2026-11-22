@@ -13,6 +13,15 @@
     sqlite-off  SQLite synchronous=OFF                 the KNOWN-BAD CONTROL: must LOSE keys in at
                                                        least one cycle, or the harness proves nothing
 
+  With -BlobBinary (machine_vm_blob; blob.durable, files instead of keys), the same cut is made on:
+    std-synced         write+fsync, rename, fsync the directory    must HOLD (the positive control)
+    std-unsynced       a plain write, no sync                      the KNOWN-BAD CONTROL: must LOSE
+    opendal-fs         OpendalBlob::fs, write                      MEASURED: HELD or LOST is the finding;
+    opendal-fs-atomic  OpendalBlob::fs + atomic_write_dir          neither fails the run, but a row
+                                                                   `blob.durable` is recorded only for one
+                                                                   that HELD in every cycle, with both
+                                                                   controls passing in the same run
+
   Each cycle uses a fresh database, so keys from an earlier cycle cannot satisfy a later check. The
   host learns of an acknowledgement when the line `acked N` arrives over SSH, so what it checks is
   "every key the host had seen acknowledged"; more may have been acknowledged in the guest.
@@ -31,6 +40,11 @@ param(
     [string]$StateDir = 'C:\ProgramData\persistant-machine-durability',
     [string]$WorkDir = (Join-Path $env:TEMP 'persistant-machine-durability'),
     [string[]]$Backends = @('sqlite', 'postgres', 'mysql'),
+    # blob.durable: the Linux machine_vm_blob binary, and which of its backends to cut. Empty = no blob step.
+    [string]$BlobBinary = '',
+    [string[]]$BlobBackends = @('std-synced', 'opendal-fs', 'opendal-fs-atomic'),
+    [int]$BlobCycles = 3,
+    [int]$BlobControlCycles = 3,
     [int]$Cycles = 5,
     [int]$ControlCycles = 4,
     [int]$AckTarget = 300,
@@ -143,7 +157,11 @@ function Wait-Database([string]$Backend) {
     throw "$Backend did not come up after the boot"
 }
 
+$BlobSet = @('std-synced', 'std-unsynced', 'opendal-fs', 'opendal-fs-atomic')
+function Get-Tool([string]$Backend) { if ($Backend -in $BlobSet) { 'machine_vm_blob' } else { 'machine_vm' } }
+
 function Get-Spec([string]$Backend, [string]$Name) {
+    if ($Backend -in $BlobSet) { return "/var/lib/pa/$Name" }
     switch ($Backend) {
         { $_ -in 'sqlite', 'sqlite-off' } { "/var/lib/pa/$Name.db" }
         'postgres' { "postgres://pa:pa-test-only@127.0.0.1/$Name" }
@@ -154,11 +172,12 @@ function Get-Spec([string]$Backend, [string]$Name) {
 function Initialize-Store([string]$Backend, [string]$Name) {
     # A fresh store, made durable before the test starts, so only the writes under test are at risk.
     $cmd = switch ($Backend) {
+        { $_ -in $BlobSet } { "sudo rm -rf /var/lib/pa/$Name /var/lib/pa/$Name.scratch; sudo mkdir -p /var/lib/pa/$Name && sudo chown pa /var/lib/pa/$Name; sync" }
         { $_ -in 'sqlite', 'sqlite-off' } { "rm -f /var/lib/pa/$Name.db*; sync" }
         'postgres' { "sudo -u postgres psql -qc 'DROP DATABASE IF EXISTS $Name' -c 'CREATE DATABASE $Name' && sync" }
         'mysql' { "sudo mysql -e 'DROP DATABASE IF EXISTS $Name; CREATE DATABASE $Name;' && sync" }
     }
-    if ($Backend -eq 'sqlite-off') { $cmd += '; sudo mount -o remount,commit=3600 /' }
+    if ($Backend -in 'sqlite-off', 'std-unsynced') { $cmd += '; sudo mount -o remount,commit=3600 /' }
     $r = Invoke-Guest $cmd
     if ($r.Code -ne 0) { throw "could not prepare $Backend store $Name`: $($r.Out)" }
 }
@@ -168,7 +187,7 @@ function Start-PowerCut([string]$Backend, [string]$Spec, [int]$Target) {
     # moment the host has seen $Target of them. Returns how many the host had seen.
     $psi = [System.Diagnostics.ProcessStartInfo]::new('ssh')
     # .NET Framework has no ArgumentList: build the string, quoting each element.
-    $psi.Arguments = (($SshOpts + @("pa@$Guest", "machine_vm write $Backend '$Spec'")) | ForEach-Object { '"' + $_ + '"' }) -join ' '
+    $psi.Arguments = (($SshOpts + @("pa@$Guest", "$(Get-Tool $Backend) write $Backend '$Spec'")) | ForEach-Object { '"' + $_ + '"' }) -join ' '
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
@@ -291,12 +310,29 @@ try {
     if ($r.Code -ne 0 -or $r.Out -notmatch "^$want ") { throw "pa-small-db in the guest is not the file sent (want sha256 $want): $($r.Out)" }
     $r = Invoke-Guest 'sudo install -m 755 /tmp/machine_vm /usr/local/bin/machine_vm && sync && machine_vm 2>&1 | head -1'
     if ($r.Code -ne 0 -and $r.Out -notmatch 'usage') { throw "machine_vm does not run in the guest: $($r.Out)" }
+    if ($BlobBinary) {
+        $ErrorActionPreference = 'Continue'
+        & scp @SshOpts $BlobBinary "pa@${Guest}:/tmp/machine_vm_blob" 2>&1 | Out-Null
+        $scpCode = $LASTEXITCODE
+        $ErrorActionPreference = 'Stop'
+        if ($scpCode -ne 0) { throw 'could not copy machine_vm_blob into the guest' }
+        $r = Invoke-Guest 'sudo install -m 755 /tmp/machine_vm_blob /usr/local/bin/machine_vm_blob && sync && machine_vm_blob 2>&1 | head -1'
+        if ($r.Code -ne 0 -and $r.Out -notmatch 'usage') { throw "machine_vm_blob does not run in the guest: $($r.Out)" }
+    }
 
     # --- power cuts -------------------------------------------------------------------------------
     $plan = @()
     foreach ($b in $Backends) { for ($i = 1; $i -le $Cycles; $i++) { $plan += , @($b, $i, 'hold') } }
     for ($i = 1; $i -le $ControlCycles; $i++) { $plan += , @('sqlite-off', $i, 'control') }
+    if ($BlobBinary) {
+        foreach ($b in $BlobBackends) {
+            $role = if ($b -eq 'std-synced') { 'hold' } else { 'measure' }
+            for ($i = 1; $i -le $BlobCycles; $i++) { $plan += , @($b, $i, $role) }
+        }
+        for ($i = 1; $i -le $BlobControlCycles; $i++) { $plan += , @('std-unsynced', $i, 'control') }
+    }
     $controlLost = 0
+    $blobControlLost = 0
     foreach ($step in $plan) {
         $backend, $i, $role = $step
         $name = "c_$($backend.Replace('-', '_'))_$i"
@@ -305,9 +341,15 @@ try {
         $seen = Start-PowerCut $backend $spec $AckTarget
         Restart-Guest
         Wait-Database $backend
-        $c = Invoke-Guest "machine_vm check $backend '$spec' $seen"
-        if ($role -eq 'control') {
-            if ($c.Code -eq 1) { $controlLost++; Add-Result 'powercut' $backend $i 'LOST (as the control must)' $c.Out }
+        $c = Invoke-Guest "$(Get-Tool $backend) check $backend '$spec' $seen"
+        if ($role -eq 'measure') {
+            # blob.durable on an OpenDAL fs backend: HELD or LOST is the finding, not a failure. Only a
+            # checker that could not read (an error) is one, because then nothing was measured.
+            if ($c.Code -eq 0) { Add-Result 'powercut' $backend $i 'HELD' "$seen acknowledged, $($c.Out)" }
+            elseif ($c.Code -eq 1) { Add-Result 'powercut' $backend $i 'LOST (blob.durable not shown)' $c.Out }
+            else { $failures.Add("$backend cycle ${i}: checker exit $($c.Code): $($c.Out)"); Add-Result 'powercut' $backend $i 'ERROR' $c.Out }
+        } elseif ($role -eq 'control') {
+            if ($c.Code -eq 1) { if ($backend -eq 'std-unsynced') { $blobControlLost++ } else { $controlLost++ }; Add-Result 'powercut' $backend $i 'LOST (as the control must)' $c.Out }
             elseif ($c.Code -eq 0) { Add-Result 'powercut' $backend $i 'held (control did not lose)' $c.Out }
             else { $failures.Add("control $backend cycle ${i}: checker exit $($c.Code): $($c.Out)"); Add-Result 'powercut' $backend $i 'ERROR' $c.Out }
         } elseif ($c.Code -eq 0) {
@@ -316,6 +358,9 @@ try {
             $failures.Add("$backend cycle ${i}: acknowledged $seen, checker exit $($c.Code): $($c.Out)")
             Add-Result 'powercut' $backend $i 'FAILED' $c.Out
         }
+    }
+    if ($BlobBinary -and $BlobControlCycles -gt 0 -and $blobControlLost -eq 0) {
+        $failures.Add("the known-bad blob control (std-unsynced) lost nothing in $BlobControlCycles cycles: the harness cannot show a loss, so no blob result above counts")
     }
     if ($ControlCycles -gt 0 -and $controlLost -eq 0) {
         $failures.Add("the known-bad control (sqlite-off) lost nothing in $ControlCycles cycles: the harness cannot show a loss, so no backend result above counts")

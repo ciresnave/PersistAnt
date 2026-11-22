@@ -17,6 +17,8 @@ on:
     paths:
       - 'scripts/machine-durability/**'
       - 'crates/persistant-sqlx/examples/machine_vm.rs'
+      - 'crates/persistant-opendal/examples/machine_vm_blob.rs'
+      - 'crates/persistant-opendal/src/**'
       - 'crates/persistant-kv/src/**'
       - '.github/workflows/machine-durability.yml'
   schedule:
@@ -37,17 +39,20 @@ jobs:
         with:
           toolchain: stable
       - run: cargo build --locked --release -p persistant-sqlx --example machine_vm --features sqlite,mysql
+      - run: cargo build --locked --release -p persistant-opendal --example machine_vm_blob
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: machine_vm
-          path: target/release/examples/machine_vm
+          path: |
+            target/release/examples/machine_vm
+            target/release/examples/machine_vm_blob
           if-no-files-found: error
 
   power-loss:
     name: Power loss (Hyper-V guest, self-hosted)
     needs: guest-binary
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -59,6 +64,7 @@ jobs:
         run: >
           ./scripts/machine-durability/run.ps1
           -Binary "$PWD\guest\machine_vm"
+          -BlobBinary "$PWD\guest\machine_vm_blob"
           -WorkDir "$env:RUNNER_TEMP\machine-durability"
           -ResultFile "$env:RUNNER_TEMP\machine-durability-result.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
