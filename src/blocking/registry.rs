@@ -96,6 +96,11 @@ impl KvHandle {
         self.inner.as_ref().expect("present until dropped")
     }
 
+    /// See [`Handle::version_notes`]: `unverified patch of verified <version>` lines, if any.
+    pub fn version_notes(&self) -> &[String] {
+        self.handle().version_notes()
+    }
+
     /// The id of the backend that was opened (the string stored in configuration).
     pub fn id(&self) -> &'static str {
         self.handle().id()

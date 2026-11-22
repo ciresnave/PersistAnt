@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.33 — A newer patch of a recorded server version opens, and says it is unverified
+
+`open_named` now accepts a PostgreSQL, MySQL or MariaDB server that is a newer **patch** of a recorded version (PostgreSQL `16.16` after `16.15`; MySQL `8.4.12` after `8.4.11`), matching it against that version's rows, and reports it in the new `Handle::version_notes()` (and `KvHandle::version_notes()`): `postgres 16.16: unverified patch of verified 16.15`. A patch is per server family: PostgreSQL's series is the major number, MySQL's and MariaDB's is `major.minor`. A new minor or major, a patch older than every recorded one, an unparseable version and a different driver prefix stay refused, with the nearest recorded version named. Behaviour change: a server patch that was refused at open now opens (CireSnave 2026-11-21, ROADMAP row 46 option B). Tests: patch up, minor up, major up and patch down for each family, each boundary mutated (`<` to `<=`, `<` to `>`, PostgreSQL series 1 to 2, series check dropped, driver prefix check dropped) and caught.
+
 ## 0.18.32 — OpenDAL rows are recorded per version, and the fresh-lock job collects them
 
 `matrix/opendal.tsv` is now compared per OpenDAL version in CI (the rows of the version a run built, as for SQLite), so a newer OpenDAL adds rows without rewriting older ones, and a lockfile that still resolves an older recorded OpenDAL stays served. The weekly `fresh-lock` job also generates the OpenDAL rows against a re-resolved lock, fails when no row names the OpenDAL it built, and puts the new rows in its issue ("Fresh lock: rows to record"). `tests/checked_in_matrix_opendal.rs` counts rows per OpenDAL version (159 for 0.59.5 plus the one process-lock row). Verified: the per-version filter against a file with extra older-version rows (the unfiltered diff shows them, the filtered one does not).
