@@ -17,6 +17,7 @@ pub mod choose;
 pub mod concurrency;
 pub mod conformance;
 pub mod contract;
+pub mod ledger;
 mod memory;
 pub mod retention;
 pub mod speed;
