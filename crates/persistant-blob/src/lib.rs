@@ -18,6 +18,7 @@ pub mod concurrency;
 pub mod conformance;
 pub mod contract;
 mod memory;
+pub mod retention;
 pub mod speed;
 pub mod stats;
 pub mod stream;
