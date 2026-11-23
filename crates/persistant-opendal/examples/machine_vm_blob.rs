@@ -6,6 +6,9 @@
 //! ```text
 //! machine_vm_blob write <backend> <dir>           put numbered files, print "acked N" after each put returns
 //! machine_vm_blob check <backend> <dir> <count>   files 0..count must all be present with their value
+//! machine_vm_blob row backend=<b> cycles=N held=N errors=N acked=N synced_cycles=N synced_held=N
+//!                     unsynced_cycles=N unsynced_lost=N
+//!                                                 print the `blob.durable` matrix row for what the host measured
 //! ```
 //!
 //! `<backend>` is
@@ -154,9 +157,58 @@ async fn check(store: &Store, count: u32) -> ExitCode {
     }
 }
 
+/// `row key=value ...`: the host measured; this prints the matrix row (or nothing, if nothing was
+/// measured) through the same function the matrix test checks. Exit 2 on a bad argument.
+fn row(args: &[String]) -> ExitCode {
+    let get = |k: &str| {
+        args.iter()
+            .find_map(|a| a.strip_prefix(&format!("{k}=")))
+            .map(str::to_string)
+    };
+    let num = |k: &str| get(k).and_then(|v| v.parse::<u32>().ok());
+    let (Some(backend), Some(cycles), Some(held), Some(errors), Some(acked)) = (
+        get("backend"),
+        num("cycles"),
+        num("held"),
+        num("errors"),
+        num("acked"),
+    ) else {
+        eprintln!("row: backend, cycles, held, errors and acked are required");
+        return ExitCode::from(2);
+    };
+    let (Some(synced_cycles), Some(synced_held), Some(unsynced_cycles), Some(unsynced_lost)) = (
+        num("synced_cycles"),
+        num("synced_held"),
+        num("unsynced_cycles"),
+        num("unsynced_lost"),
+    ) else {
+        eprintln!("row: the control counts are required");
+        return ExitCode::from(2);
+    };
+    let m = persistant_opendal::machine::Measured {
+        backend,
+        cycles,
+        held,
+        errors,
+        acked,
+        synced_cycles,
+        synced_held,
+        unsynced_cycles,
+        unsynced_lost,
+    };
+    if let Some(r) = persistant_opendal::machine::blob_durable_row(&m, opendal::raw::VERSION) {
+        // Rows only: the host writes the file's header and joins the backends.
+        print!("{}", persistant_core::Matrix::from_rows(vec![r]).to_tsv());
+    }
+    ExitCode::SUCCESS
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let a: Vec<String> = std::env::args().skip(1).collect();
+    if a.first().map(String::as_str) == Some("row") {
+        return row(&a[1..]);
+    }
     let usage = "usage: machine_vm_blob <write|check> <backend> <dir> [count]";
     let (Some(cmd), Some(backend), Some(dir)) = (a.first(), a.get(1), a.get(2)) else {
         eprintln!("{usage}");

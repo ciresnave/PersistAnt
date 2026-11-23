@@ -168,3 +168,31 @@ fn every_recorded_opendal_version_carries_the_same_rows() {
         "no other OpenDAL version is recorded: {by_version:?}"
     );
 }
+
+/// `matrix/opendal-machine.tsv` is written by the machine-durability run, not by `opendal_matrix`
+/// (ROADMAP row 4). Whatever rows it holds are `blob.durable` on an OpenDAL fs backend, carry their
+/// test and environment, and an `on` row says every cycle held.
+#[test]
+fn the_machine_file_holds_only_what_the_power_cut_measured() {
+    let m = Matrix::parse(include_str!("../matrix/opendal-machine.tsv"))
+        .expect("the machine matrix parses");
+    for r in m.rows() {
+        assert_eq!(r.subject.as_str(), "blob.durable");
+        assert!(r.backend.starts_with("opendal-fs"), "{}", r.backend);
+        assert_eq!(r.metadata.get("test"), Some("machine::blob.durable"));
+        assert!(r.metadata.get("os").is_some());
+        assert_eq!(r.enabled, r.reason.is_none());
+        if r.enabled {
+            assert_eq!(r.metadata.get("cycles"), r.metadata.get("held"));
+            assert!(r.note.contains("UNVERIFIED"), "an on row states its limits");
+        }
+    }
+    // The hosted-Linux file never carries it: the two files do not overlap.
+    let hosted = matrix();
+    assert!(
+        hosted
+            .rows()
+            .iter()
+            .all(|r| r.subject.as_str() != "blob.durable")
+    );
+}

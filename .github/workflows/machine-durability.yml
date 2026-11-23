@@ -19,6 +19,7 @@ on:
       - 'crates/persistant-sqlx/examples/machine_vm.rs'
       - 'crates/persistant-opendal/examples/machine_vm_blob.rs'
       - 'crates/persistant-opendal/src/**'
+      - 'matrix/opendal-machine.tsv'
       - 'crates/persistant-kv/src/**'
       - '.github/workflows/machine-durability.yml'
   schedule:
@@ -67,9 +68,24 @@ jobs:
           -BlobBinary "$PWD\guest\machine_vm_blob"
           -WorkDir "$env:RUNNER_TEMP\machine-durability"
           -ResultFile "$env:RUNNER_TEMP\machine-durability-result.json"
+          -MatrixFile "$env:RUNNER_TEMP\machine-durability-matrix.tsv"
+      # The rows of this run against the checked-in matrix/opendal-machine.tsv (ROADMAP row 4): red when
+      # a recorded backend no longer holds, a notice when a version has no recorded row yet.
+      - name: Compare the generated rows with matrix/opendal-machine.tsv
+        shell: powershell
+        run: >
+          ./scripts/machine-durability/compare-matrix.ps1
+          -Generated "$env:RUNNER_TEMP\machine-durability-matrix.tsv"
+          -Checked "matrix/opendal-machine.tsv"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: machine-durability-result
           path: ${{ runner.temp }}/machine-durability-result.json
           if-no-files-found: warn
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: machine-durability-matrix
+          path: ${{ runner.temp }}/machine-durability-matrix.tsv
+          if-no-files-found: ignore

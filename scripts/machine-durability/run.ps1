@@ -48,7 +48,9 @@ param(
     [int]$Cycles = 5,
     [int]$ControlCycles = 4,
     [int]$AckTarget = 300,
-    [string]$ResultFile = ''
+    [string]$ResultFile = '',
+    # With -BlobBinary: where to write the matrix rows for `blob.durable` (matrix/opendal-machine.tsv's format).
+    [string]$MatrixFile = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -361,6 +363,37 @@ try {
     }
     if ($BlobBinary -and $BlobControlCycles -gt 0 -and $blobControlLost -eq 0) {
         $failures.Add("the known-bad blob control (std-unsynced) lost nothing in $BlobControlCycles cycles: the harness cannot show a loss, so no blob result above counts")
+    }
+    # The matrix rows of this run (ROADMAP row 4): built by the guest binary from the counts read off
+    # the results above, so the rule (both controls, every cycle) lives in one tested function
+    # (persistant_opendal::machine). A backend with an errored cycle gets no row.
+    if ($BlobBinary -and $MatrixFile) {
+        function Get-BlobCount([string]$Backend, [string]$Verdict) {
+            @($results | Where-Object { $_.test -eq 'powercut' -and $_.backend -eq $Backend -and $_.verdict -like $Verdict }).Count
+        }
+        $header = $null
+        $lines = New-Object System.Collections.Generic.List[string]
+        foreach ($b in 'opendal-fs', 'opendal-fs-atomic') {
+            if ($b -notin $BlobBackends) { continue }
+            $rowArgs = "backend=$b cycles=$(Get-BlobCount $b '*') held=$(Get-BlobCount $b 'HELD') errors=$(Get-BlobCount $b 'ERROR') acked=$AckTarget " +
+                "synced_cycles=$(Get-BlobCount 'std-synced' '*') synced_held=$(Get-BlobCount 'std-synced' 'HELD') " +
+                "unsynced_cycles=$(Get-BlobCount 'std-unsynced' '*') unsynced_lost=$(Get-BlobCount 'std-unsynced' 'LOST*')"
+            $r = Invoke-Guest "machine_vm_blob row $rowArgs"
+            if ($r.Code -ne 0) { $failures.Add("matrix row for ${b}: $(Format-Guest $r)"); continue }
+            $out = @($r.Out -split "`n" | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -ne '' })
+            if ($out.Count -ge 2) { if (-not $header) { $header = $out[0] }; $lines.Add($out[1]) }
+        }
+        if ($lines.Count -gt 0) {
+            $head = @(
+                '# blob.durable rows measured by the machine-durability test: a Hyper-V guest (Ubuntu 24.04, ext4) power-cut on the self-hosted runner.',
+                '# Written by scripts/machine-durability/run.ps1 from the guest binary; never edited by hand. Rows carry no run id, so two agreeing runs give the same rows.',
+                "# machine: $env:COMPUTERNAME; run: $env:GITHUB_RUN_ID; commit: $env:GITHUB_SHA; generated: $((Get-Date).ToUniversalTime().ToString('s'))Z",
+                $header)
+            [System.IO.File]::WriteAllText($MatrixFile, ((@($head) + $lines) -join "`n") + "`n", (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host "wrote $($lines.Count) blob.durable row(s) to $MatrixFile"
+        } else {
+            Write-Host 'no blob.durable row: nothing was measured for an OpenDAL fs backend'
+        }
     }
     if ($ControlCycles -gt 0 -and $controlLost -eq 0) {
         $failures.Add("the known-bad control (sqlite-off) lost nothing in $ControlCycles cycles: the harness cannot show a loss, so no backend result above counts")
