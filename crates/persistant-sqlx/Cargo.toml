@@ -48,6 +48,9 @@ name = "matrix_sqlite"
 required-features = ["sqlite"]
 
 [[example]]
+name = "consumer_ci"
+
+[[example]]
 name = "matrix_mysql"
 required-features = ["mysql"]
 
