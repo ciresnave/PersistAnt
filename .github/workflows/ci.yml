@@ -320,6 +320,18 @@ jobs:
       - name: cargo test --locked persistant registry (MariaDB)
         run: cargo test --locked -p persistant --features registry-mysql --test registry_servers --test registry_password_leak --no-fail-fast
 
+      # ROADMAP row 18: the consumer-CI check on MariaDB; the known-bad control (a leaf that does not exist) must exit 2.
+      - name: consumer_ci example (MariaDB)
+        run: |
+          set -o pipefail
+          export PERSISTANT_CI_URL="$PERSISTANT_TEST_MYSQL_URL"
+          PERSISTANT_NEEDS=kv.get,kv.put,kv.put_if_absent,kv.ttl cargo run --locked -q -p persistant-sqlx --features mysql --example consumer_ci
+          set +e
+          PERSISTANT_NEEDS=kv.get,kv.no_such_leaf cargo run --locked -q -p persistant-sqlx --features mysql --example consumer_ci
+          code=$?
+          set -e
+          test "$code" = 2 || { echo "control broken: a leaf that does not exist exited $code, not 2"; exit 1; }
+
       - name: cargo test --locked persistant-migrate (against MariaDB)
         run: cargo test --locked -p persistant-migrate --no-fail-fast
 
@@ -377,6 +389,18 @@ jobs:
 
       - name: cargo test --locked persistant registry (MySQL)
         run: cargo test --locked -p persistant --features registry-mysql --test registry_servers --test registry_password_leak --no-fail-fast
+
+      # ROADMAP row 18: the consumer-CI check on MySQL; the known-bad control (a leaf that does not exist) must exit 2.
+      - name: consumer_ci example (MySQL)
+        run: |
+          set -o pipefail
+          export PERSISTANT_CI_URL="$PERSISTANT_TEST_MYSQL_URL"
+          PERSISTANT_NEEDS=kv.get,kv.put,kv.put_if_absent,kv.ttl cargo run --locked -q -p persistant-sqlx --features mysql --example consumer_ci
+          set +e
+          PERSISTANT_NEEDS=kv.get,kv.no_such_leaf cargo run --locked -q -p persistant-sqlx --features mysql --example consumer_ci
+          code=$?
+          set -e
+          test "$code" = 2 || { echo "control broken: a leaf that does not exist exited $code, not 2"; exit 1; }
 
       - name: cargo test --locked persistant-migrate (against MySQL)
         run: cargo test --locked -p persistant-migrate --no-fail-fast

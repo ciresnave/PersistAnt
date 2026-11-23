@@ -9,8 +9,8 @@
 //!   cargo run -q -p persistant-sqlx --features sqlite --example consumer_ci
 //! ```
 //!
-//! `PERSISTANT_CI_URL` is a `postgres://` URL, or `sqlite:<path>` (a file the run creates and keeps) with
-//! the `sqlite` feature. `PERSISTANT_NEEDS` is a comma-separated list of key-value leaf ids. The suite
+//! `PERSISTANT_CI_URL` is a `postgres://` URL, a `mysql://` URL (MySQL or MariaDB; build with `--features
+//! mysql`), or `sqlite:<path>` (a file the run creates and keeps) with the `sqlite` feature. `PERSISTANT_NEEDS` is a comma-separated list of key-value leaf ids. The suite
 //! runs against a throwaway `persistant_kv` table set in that database, so point it at a scratch
 //! database or a staging copy of the production server, never at data you need.
 //!
@@ -63,7 +63,7 @@ async fn run() -> ExitCode {
         std::env::var("PERSISTANT_NEEDS"),
     ) else {
         eprintln!(
-            "set PERSISTANT_CI_URL (postgres://... or sqlite:<path>) and PERSISTANT_NEEDS (kv.get,kv.put,...)"
+            "set PERSISTANT_CI_URL (postgres://..., mysql://... or sqlite:<path>) and PERSISTANT_NEEDS (kv.get,kv.put,...)"
         );
         return ExitCode::from(2);
     };
@@ -81,6 +81,16 @@ async fn run() -> ExitCode {
             Ok(db) => certify(db, "postgres").await,
             Err(e) => Err(format!("connect: {e:?}")),
         }
+    } else if url.starts_with("mysql://") || url.starts_with("mariadb://") {
+        #[cfg(feature = "mysql")]
+        {
+            match persistant_sqlx::MysqlBackend::connect(&url).await {
+                Ok(db) => certify(db, "mysql").await,
+                Err(e) => Err(format!("connect: {e:?}")),
+            }
+        }
+        #[cfg(not(feature = "mysql"))]
+        Err("build with --features mysql for mysql:// URLs".to_string())
     } else if let Some(_path) = url.strip_prefix("sqlite:") {
         #[cfg(feature = "sqlite")]
         {
@@ -92,7 +102,7 @@ async fn run() -> ExitCode {
         #[cfg(not(feature = "sqlite"))]
         Err("build with --features sqlite for sqlite: URLs".to_string())
     } else {
-        Err("PERSISTANT_CI_URL must start with postgres:// or sqlite:".to_string())
+        Err("PERSISTANT_CI_URL must start with postgres://, mysql:// or sqlite:".to_string())
     };
     let rows = match rows {
         Ok(r) => r,
