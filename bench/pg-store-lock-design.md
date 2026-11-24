@@ -1,6 +1,6 @@
 # Row 47: replace the one global batch lock with per-key (striped) locks (design, before any code)
 
-Evidence (bench/pg-store-lock-variant.txt, committed with this note): on PostgreSQL 16, skipping only the `SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE`
+Evidence (bench/pg-store-lock-variant.txt [in the next PR], committed with this note): on PostgreSQL 16, skipping only the `SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE`
 statement in `KvOnRelational::batch_once` takes the store-token ratio at 8 workers from 12.5x to 2.9x and makes it stop growing with workers. The cost of that row is a serial section:
 every batch on a database waits for every other. This is a design change to batch locking; nothing below is built.
 

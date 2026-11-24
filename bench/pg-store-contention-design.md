@@ -1,6 +1,6 @@
 # Row 30 follow-up: why does "store token" go from 2.9x (1 connection) to 10.6x (8 workers)? (design, written before the run)
 
-Observed (bench/pg-vs-auth-sql.txt, bench/pg-vs-auth-sql-concurrent.txt): store token = a `get` then one `Indexed::replace`
+Observed (bench/pg-vs-auth-sql.txt [in the next PR], bench/pg-vs-auth-sql-concurrent.txt [in the next PR]): store token = a `get` then one `Indexed::replace`
 batch. Reads (token check, session, kv get) keep their ratio under 8 workers; only the store moves.
 
 ## Hypothesis

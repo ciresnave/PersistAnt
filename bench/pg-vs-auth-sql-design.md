@@ -1,7 +1,7 @@
 # Row 30, open half: the key-value layer against auth-framework's own PostgreSQL SQL: design note
 
 Written 2026-11-24 BEFORE any run, as the cluster PM asked. The run, its result and anything this note
-got wrong are recorded in `bench/pg-vs-auth-sql.txt`, never by editing this file afterwards.
+got wrong are recorded in `bench/pg-vs-auth-sql.txt` (in the next PR), never by editing this file afterwards.
 
 ## The question
 `bench/pg-vs-sqlx.txt` answered the first half: PersistAnt's relational layer costs nothing visible next
@@ -55,5 +55,5 @@ One PostgreSQL 16 container, one database, the same seeded data, same pool setti
   show a ratio well below 1; a control that runs the SAME statement as both sides must centre on 1.0.
 
 ## Deliverable
-`crates/persistant-sqlx/examples/pg_vs_auth_sql.rs` and `bench/pg-vs-auth-sql.txt`; row 30 updated with
+`crates/persistant-sqlx/examples/pg_vs_auth_sql.rs` and `bench/pg-vs-auth-sql.txt` (in the next PR); row 30 updated with
 the figures, the load, the n and the spread, and what remains open.

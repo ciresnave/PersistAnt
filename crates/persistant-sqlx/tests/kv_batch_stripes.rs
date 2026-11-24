@@ -3,7 +3,7 @@
 //!
 //! The pair that makes removal of the global lock SAFE and USEFUL: same-key and overlapping-key workers
 //! lose no update and never deadlock (safe), and a batch on other keys is not held up by a held lock (useful).
-//! The benchmark in `bench/pg-store-lock-variant.txt` priced the lock with workers on DIFFERENT keys; it
+//! The benchmark in `bench/pg-store-lock-variant.txt` (in the next PR) priced the lock with workers on DIFFERENT keys; it
 //! could not show safety, these tests are what do.
 //!
 //! Needs `PERSISTANT_TEST_DATABASE_URL`; without it they print a note and pass unless
