@@ -1,0 +1,111 @@
+diff --git a/crates/persistant-kv/src/lib.rs b/crates/persistant-kv/src/lib.rs
+index 5920349..41f017c 100644
+--- a/crates/persistant-kv/src/lib.rs
++++ b/crates/persistant-kv/src/lib.rs
+@@ -64,6 +64,6 @@ pub use fault::Faulty;
+ pub use lease::{Holder, Lease};
+ pub use memory::{Defect, MemoryKv};
+ pub use on_blob::KvOnBlob;
+-pub use on_relational::KvOnRelational;
++pub use on_relational::{BENCH_NO_BATCH_LOCK, BENCH_RETRIES, KvOnRelational};
+ #[cfg(feature = "tracing")]
+ pub use traced::Traced;
+diff --git a/crates/persistant-kv/src/on_relational.rs b/crates/persistant-kv/src/on_relational.rs
+index 1638371..bf54a1e 100644
+--- a/crates/persistant-kv/src/on_relational.rs
++++ b/crates/persistant-kv/src/on_relational.rs
+@@ -30,6 +30,10 @@ pub struct KvOnRelational<R> {
+ 
+ /// How many times `batch` runs a batch the server aborted as a deadlock or serialisation victim.
+ const BATCH_ATTEMPTS: usize = 16;
++/// MEASUREMENT PATCH ONLY (bench/no-batch-lock.patch), never committed: skip the batch lock row.
++pub static BENCH_NO_BATCH_LOCK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++/// MEASUREMENT PATCH ONLY: count of batches that ended as a deadlock/serialisation retry.
++pub static BENCH_RETRIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+ 
+ /// Why one attempt at a batch did not finish.
+ enum BatchFail {
+@@ -263,7 +267,9 @@ impl<R: RelationalBackend> KvOnRelational<R> {
+         // and the server aborted one as a deadlock victim. SQLite's write transaction already
+         // excludes. The retry in `batch` is the backstop, not the plan: a deadlock costs the
+         // server's detection time.
+-        if *self.tr.dialect() != Dialect::Sqlite {
++        if *self.tr.dialect() != Dialect::Sqlite
++            && !BENCH_NO_BATCH_LOCK.load(std::sync::atomic::Ordering::Relaxed)
++        {
+             tx.query(
+                 "SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE",
+                 &[],
+@@ -671,7 +677,9 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
+         for _ in 0..BATCH_ATTEMPTS {
+             match self.batch_once(ops).await {
+                 Ok(applied) => return Ok(applied),
+-                Err(BatchFail::Retry) => {}
++                Err(BatchFail::Retry) => {
++                    BENCH_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++                }
+                 Err(BatchFail::Kv(e)) => return Err(e),
+             }
+         }
+diff --git a/crates/persistant-sqlx/examples/pg_store_contention.rs b/crates/persistant-sqlx/examples/pg_store_contention.rs
+index 3665059..0511c7d 100644
+--- a/crates/persistant-sqlx/examples/pg_store_contention.rs
++++ b/crates/persistant-sqlx/examples/pg_store_contention.rs
+@@ -9,7 +9,7 @@
+ //! time per call. A sampler on its own connection counts `pg_stat_activity` wait events during each side.
+ 
+ use persistant_kv::index::Indexed;
+-use persistant_kv::{KvBackend, KvOnRelational};
++use persistant_kv::{BENCH_NO_BATCH_LOCK, BENCH_RETRIES, KvBackend, KvOnRelational};
+ use persistant_relational::RelationalBackend;
+ use persistant_sqlx::PgBackend;
+ use std::collections::BTreeMap;
+@@ -28,6 +28,7 @@ const WARM: usize = 5;
+ enum Op {
+     Store,
+     PutOnly,
++    StoreNoLock,
+     ControlSame,
+     ControlSlow,
+ }
+@@ -112,13 +113,13 @@ fn pct(v: &[f64], p: f64) -> f64 {
+ async fn run_one(op: Op, direct: bool, pool: &sqlx::PgPool, kv: &KvOnRelational<PgBackend>, i: usize) {
+     let i = i % SEED;
+     match (op, direct) {
+-        (Op::Store, true) | (Op::PutOnly, true) | (Op::ControlSame, _) | (Op::ControlSlow, _) => {
++        (Op::Store, true) | (Op::StoreNoLock, true) | (Op::PutOnly, true) | (Op::ControlSame, _) | (Op::ControlSlow, _) => {
+             if op == Op::ControlSlow && direct {
+                 sqlx::query("SELECT pg_sleep(0.002)").execute(pool).await.unwrap();
+             }
+             direct_store_token(pool, i).await;
+         }
+-        (Op::Store, false) => persist_store_token(kv, i).await,
++        (Op::Store, false) | (Op::StoreNoLock, false) => persist_store_token(kv, i).await,
+         (Op::PutOnly, false) => {
+             kv.put(&format!("tok:tok-{i}"), tok_json(i).into_bytes(), None).await.unwrap();
+         }
+@@ -189,7 +190,7 @@ async fn main() {
+     let mut counter = 0usize;
+     let mut summary = Vec::new();
+     for w in [1usize, 2, 4, 8] {
+-        for op in [Op::Store, Op::PutOnly, Op::ControlSame, Op::ControlSlow] {
++        for op in [Op::Store, Op::StoreNoLock, Op::PutOnly, Op::ControlSame, Op::ControlSlow] {
+             let mut ratios = Vec::new();
+             let (mut dsum, mut psum) = (0f64, 0f64);
+             for pair in 0..(WARM + pairs) {
+@@ -199,6 +200,7 @@ async fn main() {
+                     if pair >= WARM {
+                         side.store(if d { 1 } else { 2 }, Ordering::Relaxed);
+                     }
++                    BENCH_NO_BATCH_LOCK.store(op == Op::StoreNoLock, Ordering::Relaxed);
+                     let s = Instant::now();
+                     let b = counter;
+                     counter += w * BATCH;
+@@ -235,6 +237,7 @@ async fn main() {
+         }
+         c.clear();
+     }
++    println!("# batch retries (deadlock/serialisation victims) over the whole run: {}", BENCH_RETRIES.load(Ordering::Relaxed));
+     println!("# ratio = persistant / direct per pair (above 1: the key-value layer is slower)");
+     for s in summary {
+         println!("{s}");

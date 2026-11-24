@@ -103,6 +103,8 @@ pub struct SqliteBackend {
     migrating: std::sync::Arc<tokio::sync::Mutex<()>>,
     full_sync: bool,
     secure_delete: bool,
+    /// [`open_secure_wal`](SqliteBackend::open_secure_wal): a truncating checkpoint after every write.
+    checkpoint_writes: bool,
 }
 
 /// Create `path` empty and owner-only if it is not there, so SQLite finds an existing zero-length
@@ -249,6 +251,47 @@ impl SqliteBackend {
         Ok(me)
     }
 
+    /// As [`open_secure`](Self::open_secure) but in WAL mode: `journal_mode=WAL`, `secure_delete` on
+    /// for every connection, and a truncating `wal_checkpoint` after **every** write (each
+    /// [`execute`](RelationalBackend::execute) and each transaction commit), so the page images the
+    /// log kept of a deleted or overwritten value are folded in and gone as soon as the write
+    /// returns. This is the opt-in form that closes the "WAL: earlier page images stay in the `-wal`"
+    /// limit of `open_secure` without asking for `execute_erased` on each delete.
+    ///
+    /// **Cost, measured:** see `bench/secure-wal-cost.txt` (`examples/secure_wal_cost.rs`): every
+    /// write waits for a checkpoint and a log truncation, which gives back most of what WAL gains
+    /// over the rollback journal. Use it only for data that must not outlive a delete.
+    ///
+    /// **Best effort under readers:** a truncating checkpoint cannot finish while another connection
+    /// holds a read of the log. The write has been committed by then, so it is not reported as an
+    /// error; the log is truncated by the next write that finds no reader (only
+    /// `execute_erased` and `kv.delete_erased` promise it and fail when they cannot). **Not
+    /// covered:** a file system, snapshot or backup that keeps copies, and the rollback `-journal`
+    /// of a crashed write. It reports itself as `sqlite` and declares nothing about durability.
+    pub async fn open_secure_wal(path: impl AsRef<Path>) -> Result<Self, RelError> {
+        owner_only_if_new(path.as_ref(), true)?;
+        let opts = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .pragma("secure_delete", "ON")
+            .busy_timeout(Duration::from_secs(30));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(8)
+            .connect_with(opts)
+            .await
+            .map_err(classify)?;
+        let mut me = Self::from_pool(pool).await?;
+        me.secure_delete = true;
+        me.checkpoint_writes = true;
+        Ok(me)
+    }
+
+    /// Whether this backend checkpoints after every write ([`open_secure_wal`](Self::open_secure_wal)).
+    pub fn checkpoint_writes(&self) -> bool {
+        self.checkpoint_writes
+    }
+
     /// Whether this backend was opened with [`open_secure`](Self::open_secure). A pool handed to
     /// [`from_pool`](Self::from_pool) is never assumed to have the setting.
     pub fn secure_delete(&self) -> bool {
@@ -268,6 +311,7 @@ impl SqliteBackend {
             migrating: Default::default(),
             full_sync: false,
             secure_delete: false,
+            checkpoint_writes: false,
         })
     }
 
@@ -316,10 +360,15 @@ impl RelationalBackend for SqliteBackend {
 
     async fn execute(&self, sql: &str, params: &[Value]) -> Result<u64, RelError> {
         let q = bind(sqlx::query(AssertSqlSafe(sql.to_string())), params)?;
-        q.execute(&self.pool)
+        let n = q
+            .execute(&self.pool)
             .await
             .map(|r| r.rows_affected())
-            .map_err(classify)
+            .map_err(classify)?;
+        if self.checkpoint_writes {
+            truncate_wal_if_free(&self.pool).await?;
+        }
+        Ok(n)
     }
 
     /// Run the statement on one connection with `secure_delete` on (freed content is zeroed as the
@@ -375,6 +424,7 @@ impl RelationalBackend for SqliteBackend {
                 .map_err(classify)?,
             pool: self.pool.clone(),
             erasing: None,
+            checkpoint: self.checkpoint_writes,
         })
     }
 }
@@ -387,6 +437,8 @@ pub struct SqliteTx {
     /// `Some(previous)`: [`erase_on_commit`](RelationalTx::erase_on_commit) turned `secure_delete`
     /// on for this connection, which had `previous`.
     erasing: Option<i64>,
+    /// Truncate the log after the commit, without failing if a reader holds it.
+    checkpoint: bool,
 }
 
 /// Fold the write-ahead log into the database and truncate it, so the page images it held before
@@ -394,6 +446,22 @@ pub struct SqliteTx {
 /// means a reader or writer kept it from finishing, which is an error here (the caller was
 /// promised erasure), after a few short retries.
 async fn truncate_wal(pool: &sqlx::SqlitePool) -> Result<(), RelError> {
+    if truncate_wal_once(pool).await? {
+        Ok(())
+    } else {
+        Err(RelError::Backend(
+            "the write-ahead log could not be truncated: a reader or writer held it".to_string(),
+        ))
+    }
+}
+
+/// As [`truncate_wal`], but a log a reader holds is `Ok(())`, not an error: the next write tries again.
+async fn truncate_wal_if_free(pool: &sqlx::SqlitePool) -> Result<(), RelError> {
+    truncate_wal_once(pool).await.map(|_| ())
+}
+
+/// `Ok(true)` when the log was truncated, `Ok(false)` when a reader or writer kept it busy.
+async fn truncate_wal_once(pool: &sqlx::SqlitePool) -> Result<bool, RelError> {
     use sqlx::Row as _;
     let mut conn = pool.acquire().await.map_err(classify)?;
     // A truncating checkpoint waits for readers through the busy handler, which here is the pool's
@@ -407,9 +475,7 @@ async fn truncate_wal(pool: &sqlx::SqlitePool) -> Result<(), RelError> {
         .execute(&mut *conn)
         .await
         .map_err(classify)?;
-    let mut outcome = Err(RelError::Backend(
-        "the write-ahead log could not be truncated: a reader or writer held it".to_string(),
-    ));
+    let mut outcome = Ok(false);
     for _ in 0..4 {
         let row = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
             .fetch_one(&mut *conn)
@@ -418,7 +484,7 @@ async fn truncate_wal(pool: &sqlx::SqlitePool) -> Result<(), RelError> {
         let busy = row.and_then(|r| r.try_get::<i64, _>(0).map_err(classify));
         match busy {
             Ok(0) => {
-                outcome = Ok(());
+                outcome = Ok(true);
                 break;
             }
             Ok(_) => {}
@@ -470,7 +536,12 @@ impl RelationalTx for SqliteTx {
 
     async fn commit(mut self) -> Result<(), RelError> {
         let Some(before) = self.erasing else {
-            return self.tx.commit().await.map_err(classify);
+            let (checkpoint, pool) = (self.checkpoint, self.pool.clone());
+            self.tx.commit().await.map_err(classify)?;
+            if checkpoint {
+                truncate_wal_if_free(&pool).await?;
+            }
+            return Ok(());
         };
         // The statements have run with the pragma on; put the connection's setting back, commit,
         // then truncate the log.

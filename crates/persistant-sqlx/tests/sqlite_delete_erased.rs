@@ -96,3 +96,51 @@ async fn erased_delete_leaves_no_canary_in_any_file() {
         assert!(hits.is_empty(), "durable={durable}: canary in {hits:?}");
     }
 }
+
+/// `open_secure_wal`: a plain `delete` (no `execute_erased`) leaves no canary in the database, its
+/// `-wal` or its `-journal`. Controls: the default WAL profile (`open_durable`) still has it after the
+/// same plain delete, and so does a WAL database with only `secure_delete` on (no checkpoint).
+async fn secure_wal_trial(profile: &str) -> Vec<String> {
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("persistant-securewal-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("db.sqlite");
+    let db = match profile {
+        "secure-wal" => SqliteBackend::open_secure_wal(&path).await.unwrap(),
+        "durable" => SqliteBackend::open_durable(&path).await.unwrap(),
+        other => panic!("{other}"),
+    };
+    fill(&db).await;
+    assert_eq!(
+        db.execute("DELETE FROM t WHERE k = $1", &[Value::Int(100)])
+            .await
+            .unwrap(),
+        1
+    );
+    let hits = holds_canary(&dir);
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
+    hits
+}
+
+#[tokio::test]
+async fn secure_wal_plain_delete_leaves_no_canary() {
+    assert!(
+        SqliteBackend::open_secure_wal(std::env::temp_dir().join(format!(
+            "persistant-securewal-flag-{}.sqlite",
+            std::process::id()
+        )))
+        .await
+        .unwrap()
+        .checkpoint_writes()
+    );
+    let hits = secure_wal_trial("secure-wal").await;
+    assert!(hits.is_empty(), "canary in {hits:?}");
+}
+
+#[tokio::test]
+async fn control_the_default_wal_profile_keeps_the_canary_after_a_plain_delete() {
+    let hits = secure_wal_trial("durable").await;
+    assert!(!hits.is_empty(), "the control found nothing");
+}

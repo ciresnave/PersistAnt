@@ -26,6 +26,24 @@ pub struct KvOnRelational<R> {
     tr: Translator,
     name: String,
     version: String,
+    /// Batches the server aborted as a deadlock or serialisation victim and `batch` ran again.
+    retries: std::sync::atomic::AtomicU64,
+}
+
+/// How many stripe rows `persistant_kv_batch` holds on PostgreSQL (ids `1..=BATCH_STRIPES`); see [`batch_stripe`].
+pub const BATCH_STRIPES: i64 = 256;
+
+/// The `persistant_kv_batch` row that guards `key` on PostgreSQL: FNV-1a (64-bit) over the key's bytes, modulo
+/// [`BATCH_STRIPES`], plus one. A fixed, process-independent hash, so every process that opens the same database
+/// agrees. A batch locks the stripes of every key it names, in ascending order (`bench/pg-store-lock-design.md`).
+#[must_use]
+pub fn batch_stripe(key: &str) -> i64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in key.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    1 + i64::try_from(h % BATCH_STRIPES.unsigned_abs()).unwrap_or(0)
 }
 
 /// How many times `batch` runs a batch the server aborted as a deadlock or serialisation victim.
@@ -146,6 +164,17 @@ impl<R: RelationalBackend> KvOnRelational<R> {
             Ok(_) | Err(RelError::UniqueViolation { .. }) => {}
             Err(e) => return Err(err(e)),
         }
+        if *tr.dialect() == Dialect::Postgres {
+            // The other stripes (id 1 is stripe 1). One statement; a database that has them is left alone.
+            db.execute(
+                &format!(
+                    "INSERT INTO persistant_kv_batch (id) SELECT g FROM generate_series(2, {BATCH_STRIPES}) g                      ON CONFLICT DO NOTHING"
+                ),
+                &[],
+            )
+            .await
+            .map_err(err)?;
+        }
         let name = format!("kv-on-relational:{}", db.backend());
         let version = format!(
             "{}.{}+{}",
@@ -158,6 +187,7 @@ impl<R: RelationalBackend> KvOnRelational<R> {
             tr,
             name,
             version,
+            retries: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -263,12 +293,39 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         // and the server aborted one as a deadlock victim. SQLite's write transaction already
         // excludes. The retry in `batch` is the backstop, not the plan: a deadlock costs the
         // server's detection time.
-        if *self.tr.dialect() != Dialect::Sqlite {
-            tx.query(
-                "SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE",
-                &[],
-            )
-            .await?;
+        // PostgreSQL: one row per stripe of the keys the batch names, taken one statement at a time in ascending
+        // order (a total order, so two batches cannot wait on each other); batches on other keys do not wait.
+        // MySQL and MariaDB keep the one row (stripe 1): their locking is unmeasured and not covered by the
+        // stripe tests. SQLite's write transaction already excludes.
+        match self.tr.dialect() {
+            Dialect::Sqlite => {}
+            Dialect::Postgres => {
+                let mut stripes: BTreeSet<i64> = BTreeSet::new();
+                for op in ops {
+                    match op {
+                        BatchOp::Require { key, .. }
+                        | BatchOp::Put { key, .. }
+                        | BatchOp::Delete { key }
+                        | BatchOp::DeleteErased { key } => {
+                            stripes.insert(batch_stripe(key));
+                        }
+                    }
+                }
+                for id in stripes {
+                    tx.query(
+                        "SELECT id FROM persistant_kv_batch WHERE id = $1 FOR UPDATE",
+                        &[Value::Int(id)],
+                    )
+                    .await?;
+                }
+            }
+            _ => {
+                tx.query(
+                    "SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE",
+                    &[],
+                )
+                .await?;
+            }
         }
         // Keys a precondition says are absent: their `Put` must not overwrite a row another
         // writer inserted after the check, so it is an insert-or-reclaim-expired, and a miss
@@ -360,6 +417,12 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         }
     }
 
+    /// How many batches were aborted by the server (deadlock or serialisation victim) and run again since this
+    /// store was opened. Zero is the plan; `bench/pg-store-lock-design.md` tests that it stays zero.
+    pub fn batch_retries(&self) -> u64 {
+        self.retries.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// The underlying relational backend.
     pub fn backend_handle(&self) -> &R {
         &self.db
@@ -423,12 +486,18 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
             .call_bound()
             .ok_or_else(|| KvError::Unsupported("no call timeout configured".to_string()))?;
         // The row every batch locks first (SQLite: its one writer lock, taken by a write to the row).
-        let lock = if *self.tr.dialect() == Dialect::Sqlite {
-            "UPDATE persistant_kv_batch SET id = id WHERE id = 1"
-        } else {
-            "SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE"
-        };
         let key = "persistant-conformance/kv.bounded_call/blocked";
+        // On PostgreSQL the row is the probe key's stripe.
+        let stripe = if *self.tr.dialect() == Dialect::Postgres {
+            batch_stripe(key)
+        } else {
+            1
+        };
+        let lock = if *self.tr.dialect() == Dialect::Sqlite {
+            "UPDATE persistant_kv_batch SET id = id WHERE id = 1".to_string()
+        } else {
+            format!("SELECT id FROM persistant_kv_batch WHERE id = {stripe} FOR UPDATE")
+        };
         let seen: std::sync::Mutex<Option<(Duration, Result<bool, KvError>)>> =
             std::sync::Mutex::new(None);
         let during = Box::pin(async {
@@ -444,7 +513,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         });
         let at_most = bound * 6 + Duration::from_secs(1);
         self.db
-            .with_lock_held(lock, at_most, during)
+            .with_lock_held(&lock, at_most, during)
             .await
             .map_err(err)?;
         let seen = seen.into_inner().unwrap_or_else(|e| e.into_inner());
@@ -671,7 +740,10 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         for _ in 0..BATCH_ATTEMPTS {
             match self.batch_once(ops).await {
                 Ok(applied) => return Ok(applied),
-                Err(BatchFail::Retry) => {}
+                Err(BatchFail::Retry) => {
+                    self.retries
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 Err(BatchFail::Kv(e)) => return Err(e),
             }
         }

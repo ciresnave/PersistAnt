@@ -64,6 +64,6 @@ pub use fault::Faulty;
 pub use lease::{Holder, Lease};
 pub use memory::{Defect, MemoryKv};
 pub use on_blob::KvOnBlob;
-pub use on_relational::KvOnRelational;
+pub use on_relational::{BATCH_STRIPES, KvOnRelational, batch_stripe};
 #[cfg(feature = "tracing")]
 pub use traced::Traced;

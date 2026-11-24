@@ -146,3 +146,10 @@ required-features = ["bridge"]
 [[test]]
 name = "sqlite_text_erased_retry"
 required-features = ["sqlite"]
+
+[[example]]
+name = "secure_wal_cost"
+required-features = ["sqlite"]
+
+[[example]]
+name = "pg_vs_auth_sql"
