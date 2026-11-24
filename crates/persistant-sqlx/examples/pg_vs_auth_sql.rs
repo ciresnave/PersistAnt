@@ -3,7 +3,7 @@
 //! The design (what is compared, what is not, the statistic, the load fields) is
 //! `bench/pg-vs-auth-sql-design.md`, written before this ran. Read it first.
 //!
-//! `PERSISTANT_TEST_DATABASE_URL=postgres://... PAIRS=30 cargo run -q --release -p persistant-sqlx --example pg_vs_auth_sql`
+//! `PERSISTANT_TEST_DATABASE_URL=postgres://... PAIRS=30 [CONC=8] cargo run -q --release -p persistant-sqlx --example pg_vs_auth_sql`
 //!
 //! Per operation: interleaved pairs in one session (A,B then B,A alternating), 5 warm-up pairs
 //! discarded, each side a batch of `BATCH` calls; the per-pair ratio persistant/direct is the datum.
@@ -135,6 +135,12 @@ async fn persist_store_token(kv: &KvOnRelational<PgBackend>, i: usize) {
     assert!(ok);
 }
 
+async fn worker(op: Op, direct: bool, pool: &sqlx::PgPool, kv: &KvOnRelational<PgBackend>, base: usize) {
+    for k in 0..BATCH {
+        run_one(op, direct, pool, kv, base + k).await;
+    }
+}
+
 fn load() -> String {
     let ps = "$p=Get-Process; $c=@($p|?{$_.Name -match '^(cargo|rustc)'}).Count; $k=@($p|?{$_.Name -match 'claude'}).Count; $u=(Get-CimInstance Win32_Processor|Measure-Object LoadPercentage -Average).Average; \"$c $k $u\"";
     let out = Command::new("powershell").args(["-NoProfile", "-Command", ps]).output();
@@ -159,6 +165,7 @@ fn pct(v: &[f64], p: f64) -> f64 {
 async fn main() {
     let url = std::env::var("PERSISTANT_TEST_DATABASE_URL").expect("set PERSISTANT_TEST_DATABASE_URL");
     let pairs: usize = std::env::var("PAIRS").ok().and_then(|v| v.parse().ok()).unwrap_or(30);
+    let conc = std::env::var("CONC").is_ok_and(|v| v == "8");
     let pg = PgBackend::connect(&url).await.expect("connect");
     let pool = pg.pool().clone();
     for t in ["auth_tokens", "sessions", "kv_store", "persistant_kv"] {
@@ -192,6 +199,7 @@ async fn main() {
         kv.put(&format!("ses:ses-{i}"), ses_json(i).into_bytes(), None).await.unwrap();
         kv.put(&format!("kv:key-{i}"), vec![7u8; 100], None).await.unwrap();
     }
+    println!("# concurrency {}", if conc { "8 workers" } else { "1" });
     println!("# postgres {}; {SEED} rows per table, {BATCH} calls per side per pair, {WARM} warm-up pairs discarded, {pairs} measured pairs per op", pg.version());
     println!("op\tpair\tdirect_ns_per_call\tpersist_ns_per_call\tratio\tcargo_rustc\tclaude\thost_cpu_pct\tcontainer_cpu");
     let mut counter = 0usize;
@@ -203,11 +211,28 @@ async fn main() {
             let order: [bool; 2] = if pair % 2 == 0 { [true, false] } else { [false, true] };
             for side in order {
                 let s = Instant::now();
-                for _ in 0..BATCH {
-                    counter += 1;
-                    run_one(op, side, &pool, &kv, counter).await;
+                if conc {
+                    // 8 workers on the shared pool (16 connections), each BATCH calls: throughput per call.
+                    let b = counter;
+                    counter += 8 * BATCH;
+                    tokio::join!(
+                        worker(op, side, &pool, &kv, b),
+                        worker(op, side, &pool, &kv, b + BATCH),
+                        worker(op, side, &pool, &kv, b + 2 * BATCH),
+                        worker(op, side, &pool, &kv, b + 3 * BATCH),
+                        worker(op, side, &pool, &kv, b + 4 * BATCH),
+                        worker(op, side, &pool, &kv, b + 5 * BATCH),
+                        worker(op, side, &pool, &kv, b + 6 * BATCH),
+                        worker(op, side, &pool, &kv, b + 7 * BATCH),
+                    );
+                    t[if side { 0 } else { 1 }] = s.elapsed().as_nanos() as f64 / (8 * BATCH) as f64;
+                } else {
+                    for _ in 0..BATCH {
+                        counter += 1;
+                        run_one(op, side, &pool, &kv, counter).await;
+                    }
+                    t[if side { 0 } else { 1 }] = s.elapsed().as_nanos() as f64 / BATCH as f64;
                 }
-                t[if side { 0 } else { 1 }] = s.elapsed().as_nanos() as f64 / BATCH as f64;
             }
             if pair < WARM {
                 continue;
