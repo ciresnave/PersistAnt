@@ -1,0 +1,4 @@
+# blob.durable rows measured by the machine-durability test: a Hyper-V guest (Ubuntu 24.04, ext4) power-cut on the self-hosted runner.
+# Written from the `machine-durability-matrix` artifact of a main run (scripts/machine-durability/run.ps1); never edited by hand.
+# No row yet: the first one is added from the artifact of the push run that follows the merge of this file.
+subject_kind	subject	backend	version	config	enabled	reason	metadata	note

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.35 — Added: `KvOnBlob::purge_prefix_older_than`; Ledger killed-process test; consumer_ci on PostgreSQL in CI
+
+`KvOnBlob::purge_prefix_older_than(prefix, cutoff, period_of)` (ROADMAP row 19): the blob prefix sweep of 0.18.34, with the period read from the **kv key** (raw and hex layouts), keys that are not this store's records and keys `period_of` cannot read kept. Same key discipline and limit as the blob function (a key names its period and is never written again after it); it is not `kv.purge_expired`. Tests on both layouts with the at-cutoff control; mutation (pass the blob key to `period_of`) fails both.
+
+`persistant_blob::ledger::Ledger` gets its killed-process test (`persistant-opendal/tests/ledger_killed.rs`): a child process killed inside a step leaves `.claim` without `.done`, the next run returns `Claimed("<when> <who>")` and does not run the step, and only after the operator removes the claim does it run; the control, the same child left to finish, records the step done. Test only, no behaviour change.
+
+The Relational (PostgreSQL), MariaDB and MySQL CI jobs run the `consumer_ci` example on its service container (ROADMAP row 18): it must pass for `kv.get,kv.put,kv.put_if_absent,kv.ttl`, and the known-bad control (a leaf id that does not exist) must exit 2. Verified on a local PostgreSQL 16 first: exit 0 and exit 2. `consumer_ci` takes a `mysql://` URL (build with `--features mysql`) for MySQL and MariaDB.
+
+`blob.durable` was measured twice on the Hyper-V guest (runs 45091758886 and, scheduled, 45181235222): `opendal-fs` and `opendal-fs-atomic` HELD 3 of 3 cycles each time, controls as required (`std-synced` HELD, `std-unsynced` LOST). The matrix row now has its path: `matrix/opendal-machine.tsv` (own file; the hosted-Linux `opendal.tsv` generator is untouched), written by the machine-durability run (`machine_vm_blob row`, `persistant_opendal::machine`: an `on` row needs every cycle held, the synced control held and the unsynced control lost; the file header names the machine and run), uploaded as artifact `machine-durability-matrix` and compared by `scripts/machine-durability/compare-matrix.ps1` (notice when a version has no recorded row, red when recorded rows differ). The file is empty of rows until a run with this code adds them; no capability change yet.
+
 ## 0.18.34 — Published versions resolve to a recorded OpenDAL; the OpenDAL key is the version that ran
 
 Checked on 2026-11-22 against the crates.io tarballs: a fresh `cargo update` of a project depending on `persistant =0.18.28` and on `=0.18.30` (feature `registry`) resolves `opendal 0.59.5`, which `matrix/opendal.tsv` records, so both open without a refusal. `0.18.27` was never published (crates.io lists 0.18.30, 0.18.28, 0.18.23, ...), so there is nothing to check for it. The OpenDAL matrix key is the runtime `opendal::raw::VERSION` (the library that ran, `0.59.5`), not the `0.59.4` floor in `Cargo.toml`: the rows record the behaviour of the library that was exercised. `opendal_rows_are_keyed_by_the_version_that_ran` pins this with a known-bad control. No code change.

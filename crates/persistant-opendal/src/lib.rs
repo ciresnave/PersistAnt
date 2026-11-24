@@ -12,6 +12,7 @@
 pub mod crash;
 mod delete_erased;
 mod file_mode;
+pub mod machine;
 mod plaintext;
 mod process_lock;
 

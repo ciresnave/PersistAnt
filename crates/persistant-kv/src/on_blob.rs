@@ -226,6 +226,27 @@ impl<B: BlobBackend> KvOnBlob<B> {
         }
     }
 
+    /// Delete every key starting with `prefix` whose period, read from the **kv key** by `period_of`, is
+    /// strictly before `cutoff` (ROADMAP row 19). The key discipline and its limit are those of
+    /// [`persistant_blob::retention::purge_prefix_older_than`], which this calls: correct only when a
+    /// key names its period and is never written again once that period has passed. Files under the
+    /// prefix that are not this store's records, and keys `period_of` cannot read, are kept. It is not
+    /// `kv.purge_expired`: it reads the period from the key, never the entry's expiry.
+    pub async fn purge_prefix_older_than<P: Ord>(
+        &self,
+        prefix: &str,
+        cutoff: &P,
+        period_of: impl Fn(&str) -> Option<P>,
+    ) -> Result<persistant_blob::retention::Purged, KvError> {
+        Ok(persistant_blob::retention::purge_prefix_older_than(
+            &self.blob,
+            &self.blob_prefix(prefix),
+            cutoff,
+            |blob_key| self.key_of(blob_key).and_then(|k| period_of(&k)),
+        )
+        .await?)
+    }
+
     /// Move every record written under the raw layout (`kv/<key>`) to this store's layout. A
     /// no-op (returning 0) for a store whose layout is raw. Safe to repeat and to run beside other
     /// users of the store: a record is copied with an exclusive create, so a newer value already at
@@ -623,5 +644,42 @@ mod layout_tests {
             0,
             "repeating it moves nothing"
         );
+    }
+    fn year_of(key: &str) -> Option<u32> {
+        key.strip_prefix("events/")?.get(..4)?.parse().ok()
+    }
+
+    async fn purge_case(kv: KvOnBlob<MemoryBlob>) {
+        for k in [
+            "events/2001/a",
+            "events/2002/a",
+            "events/2003/a",
+            "events/junk",
+        ] {
+            kv.put(k, b"v".to_vec(), None).await.unwrap();
+        }
+        kv.put("other/2001/a", b"v".to_vec(), None).await.unwrap();
+        let r = kv
+            .purge_prefix_older_than("events/", &2003, year_of)
+            .await
+            .unwrap();
+        assert_eq!(r.deleted, 2);
+        assert_eq!(r.kept, 1);
+        assert_eq!(r.unparsed, 1);
+        // Known-bad control: the period AT the cutoff survives (a `<=` would delete it).
+        assert!(kv.get("events/2003/a").await.unwrap().is_some());
+        assert!(kv.get("events/2001/a").await.unwrap().is_none());
+        assert!(kv.get("events/junk").await.unwrap().is_some());
+        assert!(kv.get("other/2001/a").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn purge_prefix_older_than_reads_the_kv_key_on_the_raw_layout() {
+        purge_case(KvOnBlob::new(MemoryBlob::new())).await;
+    }
+
+    #[tokio::test]
+    async fn purge_prefix_older_than_reads_the_kv_key_on_the_hex_layout() {
+        purge_case(hex_store()).await;
     }
 }

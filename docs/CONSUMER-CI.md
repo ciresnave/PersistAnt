@@ -58,6 +58,6 @@ backend-check:
 * **A pass is for that server and that run.** A different version or setting is a different run. It says
   nothing about power loss, disk-full behaviour or concurrency beyond what each leaf's test states
   (`docs/DESIGN-DURABILITY-MACHINE.md`).
-* **MySQL** is not wired into this example yet (`matrix_mysql` generates its rows); say if you need it.
+* **MySQL and MariaDB** take a `mysql://` URL and a build with `--features mysql` (`cargo run -q -p persistant-sqlx --features mysql --example consumer_ci`); CI runs it on both servers.
 * Run against a *production-like* server, not a container of another major version, or the pass is about
   the container.

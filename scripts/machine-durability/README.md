@@ -8,6 +8,7 @@ CireSnave 2026-10-18, board 229: A).
 |---|---|
 | `crates/persistant-sqlx/examples/machine_vm.rs` | runs **in the guest**: `write` (prints `acked N` after each put returns), `check` (keys 0..N present), `enospc` (write until a put fails) |
 | `crates/persistant-opendal/examples/machine_vm_blob.rs` | runs **in the guest**: `write` / `check` for `blob.durable` on files: `std-synced` (must HOLD), `std-unsynced` (known-bad control, must LOSE), and the two things measured, `opendal-fs` and `opendal-fs-atomic` (HELD or LOST is the finding; a matrix row only for one that HELD in every cycle, with both controls passing in the same run). `run.ps1 -BlobBinary` cuts power on them; the first run is the nightly after this lands |
+| `compare-matrix.ps1` | compares the rows a run generated (`-MatrixFile`, artifact `machine-durability-matrix`) with `matrix/opendal-machine.tsv`: a notice when a version has no recorded row, red when recorded rows differ |
 | `pa-small-db.sh` | runs **in the guest**: a small volume over the PostgreSQL or MySQL data directory for the disk-full check (`on`, `free`, `off`) |
 | `guest-user-data.yaml` | cloud-init for the guest: PostgreSQL, MySQL, a test user, sysctls that keep unflushed data in cache, a fillable 8 MB ext4 volume |
 | `New-SeedIso.ps1` | writes the cloud-init ISO with the IMAPI2 COM API (nothing to install) |
