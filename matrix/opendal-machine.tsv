@@ -1,4 +1,6 @@
 # blob.durable rows measured by the machine-durability test: a Hyper-V guest (Ubuntu 24.04, ext4) power-cut on the self-hosted runner.
-# Written from the `machine-durability-matrix` artifact of a main run (scripts/machine-durability/run.ps1); never edited by hand.
-# No row yet: the first one is added from the artifact of the push run that follows the merge of this file.
+# Written by scripts/machine-durability/run.ps1 from the guest binary; never edited by hand. Rows carry no run id, so two agreeing runs give the same rows.
+# machine: TUF-LAPTOP; run: 45302864576; commit: e1ca6b91d210a9e1d2fe9af48ecb44746429a506; generated: 2026-11-24T01:20:58Z
 subject_kind	subject	backend	version	config	enabled	reason	metadata	note
+capability	blob.durable	opendal-fs	0.59.5	atomic_write_dir=unset	yes		acked=300;arch=x86_64;cycles=3;fs=ext4;held=3;host=hyperv;kill=power_cut;os=linux;probe=machine::blob.durable	guest power loss on ext4 under Hyper-V; UNVERIFIED: the physical disk's volatile cache and host power loss, NTFS and other filesystems, torn sector writes, remote object stores
+capability	blob.durable	opendal-fs-atomic	0.59.5	atomic_write_dir=set	yes		acked=300;arch=x86_64;cycles=3;fs=ext4;held=3;host=hyperv;kill=power_cut;os=linux;probe=machine::blob.durable	guest power loss on ext4 under Hyper-V; UNVERIFIED: the physical disk's volatile cache and host power loss, NTFS and other filesystems, torn sector writes, remote object stores
