@@ -1,0 +1,9 @@
+secure_wal_cost (crates/persistant-sqlx/examples/secure_wal_cost.rs), measured 2026-11-24 on the lane's Windows laptop (TUF-LAPTOP), release build, local NTFS temp dir, UNCONTROLLED load: other lanes and builds were running. Profiles are interleaved per round so the load hits them alike; the claim is the per-round ratio, not the absolute rate.
+`wal` is open_durable (WAL, synchronous=FULL, no secure delete); `secure-journal` is open_secure; `secure-wal` is open_secure_wal (WAL, secure_delete, a truncating checkpoint after every write).
+14 | persistant-migrate = { version = "0.18.35", path = "crates/persistant-migrate" }
+help: consider removing the workspace dependency `persistant-migrate`
+500 single-row autocommit inserts per profile per round, 9 rounds (warm-up discarded)
+wal             median       400 writes/s   ratio to wal: median 1.00 (min 1.00, max 1.00)
+secure-journal  median       102 writes/s   ratio to wal: median 0.26 (min 0.21, max 0.90)
+secure-wal      median       123 writes/s   ratio to wal: median 0.31 (min 0.19, max 0.87)
+Reading: secure-wal wrote at a median 0.31 of plain WAL's rate (about a third; per-round range 0.19 to 0.87 under this load); secure-journal 0.26 (0.21 to 0.90). The two secure profiles are not separable in this run. One run on a loaded box; a quiet-box rerun would narrow the spread.

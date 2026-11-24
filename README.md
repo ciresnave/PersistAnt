@@ -181,6 +181,10 @@ Much of it is built since (key-value and relational kinds, SQLite, PostgreSQL, M
   `sqlite-secure` (`SqliteBackend::open_secure`: `secure_delete` on for every connection, rollback journal): a plain
   overwrite or delete then leaves no old bytes in the file (`storage.secure_delete`, read back from the files). It is not
   WAL (`secure_delete` does not reach a WAL file's earlier page images), so `sqlite-full` does not claim it.
+  `SqliteBackend::open_secure_wal` is the opt-in WAL form (not in the registry): `secure_delete` plus a truncating
+  checkpoint after every write, so a plain delete leaves no bytes in the `-wal` either (tested, with the default WAL
+  profile as the control). Cost, measured once on a loaded box: about a third of plain WAL's write rate
+  (`bench/secure-wal-cost.txt`). A reader holding the log defers the truncation to the next write.
 - **A backend version nobody recorded is refused, not guessed at.** `open_named` matches the recorded rows on the
   version the opened backend reports at run time: the bundled SQLite of the resolved `libsqlite3-sys`, the resolved
   OpenDAL, the server's own version for PostgreSQL, MySQL and MariaDB. A newer one is refused at open with
