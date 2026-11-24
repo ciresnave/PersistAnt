@@ -164,6 +164,17 @@ impl<R: RelationalBackend> KvOnRelational<R> {
             Ok(_) | Err(RelError::UniqueViolation { .. }) => {}
             Err(e) => return Err(err(e)),
         }
+        if *tr.dialect() == Dialect::Postgres {
+            // The other stripes (id 1 is stripe 1). One statement; a database that has them is left alone.
+            db.execute(
+                &format!(
+                    "INSERT INTO persistant_kv_batch (id) SELECT g FROM generate_series(2, {BATCH_STRIPES}) g                      ON CONFLICT DO NOTHING"
+                ),
+                &[],
+            )
+            .await
+            .map_err(err)?;
+        }
         let name = format!("kv-on-relational:{}", db.backend());
         let version = format!(
             "{}.{}+{}",
@@ -282,12 +293,39 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         // and the server aborted one as a deadlock victim. SQLite's write transaction already
         // excludes. The retry in `batch` is the backstop, not the plan: a deadlock costs the
         // server's detection time.
-        if *self.tr.dialect() != Dialect::Sqlite {
-            tx.query(
-                "SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE",
-                &[],
-            )
-            .await?;
+        // PostgreSQL: one row per stripe of the keys the batch names, taken one statement at a time in ascending
+        // order (a total order, so two batches cannot wait on each other); batches on other keys do not wait.
+        // MySQL and MariaDB keep the one row (stripe 1): their locking is unmeasured and not covered by the
+        // stripe tests. SQLite's write transaction already excludes.
+        match self.tr.dialect() {
+            Dialect::Sqlite => {}
+            Dialect::Postgres => {
+                let mut stripes: BTreeSet<i64> = BTreeSet::new();
+                for op in ops {
+                    match op {
+                        BatchOp::Require { key, .. }
+                        | BatchOp::Put { key, .. }
+                        | BatchOp::Delete { key }
+                        | BatchOp::DeleteErased { key } => {
+                            stripes.insert(batch_stripe(key));
+                        }
+                    }
+                }
+                for id in stripes {
+                    tx.query(
+                        "SELECT id FROM persistant_kv_batch WHERE id = $1 FOR UPDATE",
+                        &[Value::Int(id)],
+                    )
+                    .await?;
+                }
+            }
+            _ => {
+                tx.query(
+                    "SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE",
+                    &[],
+                )
+                .await?;
+            }
         }
         // Keys a precondition says are absent: their `Put` must not overwrite a row another
         // writer inserted after the check, so it is an insert-or-reclaim-expired, and a miss
@@ -448,12 +486,18 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
             .call_bound()
             .ok_or_else(|| KvError::Unsupported("no call timeout configured".to_string()))?;
         // The row every batch locks first (SQLite: its one writer lock, taken by a write to the row).
-        let lock = if *self.tr.dialect() == Dialect::Sqlite {
-            "UPDATE persistant_kv_batch SET id = id WHERE id = 1"
-        } else {
-            "SELECT id FROM persistant_kv_batch WHERE id = 1 FOR UPDATE"
-        };
         let key = "persistant-conformance/kv.bounded_call/blocked";
+        // On PostgreSQL the row is the probe key's stripe.
+        let stripe = if *self.tr.dialect() == Dialect::Postgres {
+            batch_stripe(key)
+        } else {
+            1
+        };
+        let lock = if *self.tr.dialect() == Dialect::Sqlite {
+            "UPDATE persistant_kv_batch SET id = id WHERE id = 1".to_string()
+        } else {
+            format!("SELECT id FROM persistant_kv_batch WHERE id = {stripe} FOR UPDATE")
+        };
         let seen: std::sync::Mutex<Option<(Duration, Result<bool, KvError>)>> =
             std::sync::Mutex::new(None);
         let during = Box::pin(async {
@@ -469,7 +513,7 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         });
         let at_most = bound * 6 + Duration::from_secs(1);
         self.db
-            .with_lock_held(lock, at_most, during)
+            .with_lock_held(&lock, at_most, during)
             .await
             .map_err(err)?;
         let seen = seen.into_inner().unwrap_or_else(|e| e.into_inner());

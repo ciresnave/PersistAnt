@@ -76,13 +76,26 @@ async fn persist_store_token(kv: &KvOnRelational<PgBackend>, i: usize) {
     let idx_ref = [idx[0].as_str(), idx[1].as_str()];
     let existing = kv.get(&primary).await.unwrap().expect("seeded");
     let ok = Indexed::new(kv)
-        .replace(&primary, &existing, tok_json(i).into_bytes(), &idx_ref, &idx_ref, None)
+        .replace(
+            &primary,
+            &existing,
+            tok_json(i).into_bytes(),
+            &idx_ref,
+            &idx_ref,
+            None,
+        )
         .await
         .unwrap();
     assert!(ok);
 }
 
-async fn worker(op: Op, direct: bool, pool: &sqlx::PgPool, kv: &KvOnRelational<PgBackend>, base: usize) {
+async fn worker(
+    op: Op,
+    direct: bool,
+    pool: &sqlx::PgPool,
+    kv: &KvOnRelational<PgBackend>,
+    base: usize,
+) {
     for k in 0..BATCH {
         run_one(op, direct, pool, kv, base + k).await;
     }
@@ -90,13 +103,21 @@ async fn worker(op: Op, direct: bool, pool: &sqlx::PgPool, kv: &KvOnRelational<P
 
 fn load() -> String {
     let ps = "$p=Get-Process; $c=@($p|?{$_.Name -match '^(cargo|rustc)'}).Count; $k=@($p|?{$_.Name -match 'claude'}).Count; $u=(Get-CimInstance Win32_Processor|Measure-Object LoadPercentage -Average).Average; \"$c $k $u\"";
-    let out = Command::new("powershell").args(["-NoProfile", "-Command", ps]).output();
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-Command", ps])
+        .output();
     let host = out
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
     let dock = Command::new("docker")
-        .args(["stats", "--no-stream", "--format", "{{.CPUPerc}}", "persistant-bench-pg"])
+        .args([
+            "stats",
+            "--no-stream",
+            "--format",
+            "{{.CPUPerc}}",
+            "persistant-bench-pg",
+        ])
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -108,19 +129,29 @@ fn pct(v: &[f64], p: f64) -> f64 {
     v[((v.len() - 1) as f64 * p).round() as usize]
 }
 
-
-async fn run_one(op: Op, direct: bool, pool: &sqlx::PgPool, kv: &KvOnRelational<PgBackend>, i: usize) {
+async fn run_one(
+    op: Op,
+    direct: bool,
+    pool: &sqlx::PgPool,
+    kv: &KvOnRelational<PgBackend>,
+    i: usize,
+) {
     let i = i % SEED;
     match (op, direct) {
         (Op::Store, true) | (Op::PutOnly, true) | (Op::ControlSame, _) | (Op::ControlSlow, _) => {
             if op == Op::ControlSlow && direct {
-                sqlx::query("SELECT pg_sleep(0.002)").execute(pool).await.unwrap();
+                sqlx::query("SELECT pg_sleep(0.002)")
+                    .execute(pool)
+                    .await
+                    .unwrap();
             }
             direct_store_token(pool, i).await;
         }
         (Op::Store, false) => persist_store_token(kv, i).await,
         (Op::PutOnly, false) => {
-            kv.put(&format!("tok:tok-{i}"), tok_json(i).into_bytes(), None).await.unwrap();
+            kv.put(&format!("tok:tok-{i}"), tok_json(i).into_bytes(), None)
+                .await
+                .unwrap();
         }
     }
 }
@@ -129,19 +160,29 @@ async fn run_one(op: Op, direct: bool, pool: &sqlx::PgPool, kv: &KvOnRelational<
 async fn join_all<'a>(mut fs: Vec<Pin<Box<dyn Future<Output = ()> + 'a>>>) {
     std::future::poll_fn(|cx| {
         fs.retain_mut(|f| f.as_mut().poll(cx).is_pending());
-        if fs.is_empty() { std::task::Poll::Ready(()) } else { std::task::Poll::Pending }
+        if fs.is_empty() {
+            std::task::Poll::Ready(())
+        } else {
+            std::task::Poll::Pending
+        }
     })
     .await
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let url = std::env::var("PERSISTANT_TEST_DATABASE_URL").expect("set PERSISTANT_TEST_DATABASE_URL");
-    let pairs: usize = std::env::var("PAIRS").ok().and_then(|v| v.parse().ok()).unwrap_or(15);
+    let url =
+        std::env::var("PERSISTANT_TEST_DATABASE_URL").expect("set PERSISTANT_TEST_DATABASE_URL");
+    let pairs: usize = std::env::var("PAIRS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(15);
     let pg = PgBackend::connect(&url).await.expect("connect");
     let pool = pg.pool().clone();
     for t in ["auth_tokens", "persistant_kv"] {
-        let _ = sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {t}"))).execute(&pool).await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {t}")))
+            .execute(&pool)
+            .await;
     }
     // auth-framework @ 0cec4464, PostgresStorage::migrate (the tokens table).
     for ddl in [
@@ -150,26 +191,41 @@ async fn main() {
         "CREATE INDEX idx_auth_tokens_access_token ON auth_tokens (access_token)",
         "CREATE INDEX idx_auth_tokens_expires_at ON auth_tokens (expires_at)",
     ] {
-        sqlx::query(sqlx::AssertSqlSafe(ddl.to_string())).execute(&pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(ddl.to_string()))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     let kv = KvOnRelational::open(pg.clone()).await.expect("kv open");
     for i in 0..SEED {
         direct_store_token(&pool, i).await;
-        let idx = [format!("tokacc:{}", tok_access(i)), format!("tokuser:user-{}:tok-{i}", i % 500)];
-        assert!(Indexed::new(&kv)
-            .insert(&format!("tok:tok-{i}"), tok_json(i).into_bytes(), &[idx[0].as_str(), idx[1].as_str()], None)
-            .await.unwrap());
+        let idx = [
+            format!("tokacc:{}", tok_access(i)),
+            format!("tokuser:user-{}:tok-{i}", i % 500),
+        ];
+        assert!(
+            Indexed::new(&kv)
+                .insert(
+                    &format!("tok:tok-{i}"),
+                    tok_json(i).into_bytes(),
+                    &[idx[0].as_str(), idx[1].as_str()],
+                    None
+                )
+                .await
+                .unwrap()
+        );
     }
     // Sampler: its own connection, every 10 ms, counts other backends by (side, state, wait event).
     let side = Arc::new(AtomicUsize::new(0)); // 0 none, 1 direct, 2 persist
-    let counts: Arc<Mutex<BTreeMap<(usize, String), usize>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    let counts: Arc<Mutex<BTreeMap<(usize, String), usize>>> =
+        Arc::new(Mutex::new(BTreeMap::new()));
     {
         let (pool, side, counts) = (pool.clone(), side.clone(), counts.clone());
         tokio::spawn(async move {
             loop {
                 let s = side.load(Ordering::Relaxed);
-                if s != 0 {
-                    if let Ok(rows) = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+                if s != 0
+                    && let Ok(rows) = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
                         "SELECT state, wait_event_type, wait_event FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND state IN ('active','idle in transaction')",
                     ).fetch_all(&pool).await {
                         let mut c = counts.lock().unwrap();
@@ -179,13 +235,17 @@ async fn main() {
                         }
                         *c.entry((s, "SAMPLES".into())).or_default() += 1;
                     }
-                }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         });
     }
-    println!("# postgres {}; {SEED} rows; {BATCH} calls per worker per side per pair; {WARM} warm-up pairs discarded; {pairs} measured pairs per cell; pool 16", pg.version());
-    println!("workers\top\tpair\tdirect_ns_per_call\tpersist_ns_per_call\tratio\tcargo_rustc\tclaude\thost_cpu_pct\tcontainer_cpu");
+    println!(
+        "# postgres {}; {SEED} rows; {BATCH} calls per worker per side per pair; {WARM} warm-up pairs discarded; {pairs} measured pairs per cell; pool 16",
+        pg.version()
+    );
+    println!(
+        "workers\top\tpair\tdirect_ns_per_call\tpersist_ns_per_call\tratio\tcargo_rustc\tclaude\thost_cpu_pct\tcontainer_cpu"
+    );
     let mut counter = 0usize;
     let mut summary = Vec::new();
     for w in [1usize, 2, 4, 8] {
@@ -194,7 +254,11 @@ async fn main() {
             let (mut dsum, mut psum) = (0f64, 0f64);
             for pair in 0..(WARM + pairs) {
                 let mut t = [0f64; 2];
-                let order: [bool; 2] = if pair % 2 == 0 { [true, false] } else { [false, true] };
+                let order: [bool; 2] = if pair % 2 == 0 {
+                    [true, false]
+                } else {
+                    [false, true]
+                };
                 for d in order {
                     if pair >= WARM {
                         side.store(if d { 1 } else { 2 }, Ordering::Relaxed);
@@ -202,8 +266,12 @@ async fn main() {
                     let s = Instant::now();
                     let b = counter;
                     counter += w * BATCH;
-                    let fs: Vec<Pin<Box<dyn Future<Output = ()> + '_>>> =
-                        (0..w).map(|k| Box::pin(worker(op, d, &pool, &kv, b + k * BATCH)) as Pin<Box<dyn Future<Output = ()> + '_>>).collect();
+                    let fs: Vec<Pin<Box<dyn Future<Output = ()> + '_>>> = (0..w)
+                        .map(|k| {
+                            Box::pin(worker(op, d, &pool, &kv, b + k * BATCH))
+                                as Pin<Box<dyn Future<Output = ()> + '_>>
+                        })
+                        .collect();
                     join_all(fs).await;
                     t[if d { 0 } else { 1 }] = s.elapsed().as_nanos() as f64 / (w * BATCH) as f64;
                     side.store(0, Ordering::Relaxed);
@@ -215,7 +283,13 @@ async fn main() {
                 ratios.push(ratio);
                 dsum += t[0];
                 psum += t[1];
-                println!("{w}\t{op:?}\t{}\t{:.0}\t{:.0}\t{ratio:.3}\t{}", pair - WARM, t[0], t[1], load());
+                println!(
+                    "{w}\t{op:?}\t{}\t{:.0}\t{:.0}\t{ratio:.3}\t{}",
+                    pair - WARM,
+                    t[0],
+                    t[1],
+                    load()
+                );
             }
             ratios.sort_by(|a, b| a.partial_cmp(b).unwrap());
             summary.push(format!(
@@ -228,10 +302,21 @@ async fn main() {
         let mut c = counts.lock().unwrap();
         for sd in [1usize, 2] {
             let total = c.get(&(sd, "SAMPLES".into())).copied().unwrap_or(0);
-            let mut rows: Vec<_> = c.iter().filter(|((s, k), _)| *s == sd && k != "SAMPLES").map(|((_, k), v)| (k.clone(), *v)).collect();
-            rows.sort_by(|a, b| b.1.cmp(&a.1));
-            summary.push(format!("W={w}\twaits side={} samples={total}\t{}", if sd == 1 { "direct" } else { "persist" },
-                rows.iter().take(6).map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" ; ")));
+            let mut rows: Vec<_> = c
+                .iter()
+                .filter(|((s, k), _)| *s == sd && k != "SAMPLES")
+                .map(|((_, k), v)| (k.clone(), *v))
+                .collect();
+            rows.sort_by_key(|a| std::cmp::Reverse(a.1));
+            summary.push(format!(
+                "W={w}\twaits side={} samples={total}\t{}",
+                if sd == 1 { "direct" } else { "persist" },
+                rows.iter()
+                    .take(6)
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(" ; ")
+            ));
         }
         c.clear();
     }
