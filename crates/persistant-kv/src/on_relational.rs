@@ -26,6 +26,24 @@ pub struct KvOnRelational<R> {
     tr: Translator,
     name: String,
     version: String,
+    /// Batches the server aborted as a deadlock or serialisation victim and `batch` ran again.
+    retries: std::sync::atomic::AtomicU64,
+}
+
+/// How many stripe rows `persistant_kv_batch` holds on PostgreSQL (ids `1..=BATCH_STRIPES`); see [`batch_stripe`].
+pub const BATCH_STRIPES: i64 = 256;
+
+/// The `persistant_kv_batch` row that guards `key` on PostgreSQL: FNV-1a (64-bit) over the key's bytes, modulo
+/// [`BATCH_STRIPES`], plus one. A fixed, process-independent hash, so every process that opens the same database
+/// agrees. A batch locks the stripes of every key it names, in ascending order (`bench/pg-store-lock-design.md`).
+#[must_use]
+pub fn batch_stripe(key: &str) -> i64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in key.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    1 + i64::try_from(h % BATCH_STRIPES.unsigned_abs()).unwrap_or(0)
 }
 
 /// How many times `batch` runs a batch the server aborted as a deadlock or serialisation victim.
@@ -158,6 +176,7 @@ impl<R: RelationalBackend> KvOnRelational<R> {
             tr,
             name,
             version,
+            retries: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -358,6 +377,12 @@ impl<R: RelationalBackend> KvOnRelational<R> {
         } else {
             " FOR UPDATE"
         }
+    }
+
+    /// How many batches were aborted by the server (deadlock or serialisation victim) and run again since this
+    /// store was opened. Zero is the plan; `bench/pg-store-lock-design.md` tests that it stays zero.
+    pub fn batch_retries(&self) -> u64 {
+        self.retries.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The underlying relational backend.
@@ -671,7 +696,10 @@ impl<R: RelationalBackend + 'static> KvBackend for KvOnRelational<R> {
         for _ in 0..BATCH_ATTEMPTS {
             match self.batch_once(ops).await {
                 Ok(applied) => return Ok(applied),
-                Err(BatchFail::Retry) => {}
+                Err(BatchFail::Retry) => {
+                    self.retries
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 Err(BatchFail::Kv(e)) => return Err(e),
             }
         }
