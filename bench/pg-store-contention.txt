@@ -1,0 +1,284 @@
+Row 30 follow-up: why store token costs 10.6x at 8 workers (design: bench/pg-store-contention-design.md, committed at 6355592 before this ran)
+
+Measured: 2026-11-24, branch chore/portfolio-pin on main e1ca6b9 (0.18.35) plus the example crates/persistant-sqlx/examples/pg_store_contention.rs.
+Rerun:    PERSISTANT_TEST_DATABASE_URL=postgres://... PAIRS=15 cargo run -q --release -p persistant-sqlx --example pg_store_contention
+Where:    Windows 11 laptop, postgres:16 (16.16) in Docker, loopback, 2000 rows, pool of 16. Workers = join on one thread.
+Load:     NOT quiet (about 22 claude, 5 cargo/rustc processes; host CPU per pair in the raw lines). Interleaved pairs, 5 warm-up discarded, n = 15 pairs per cell.
+
+Result: ratio persistant/direct per pair (median, IQR) and mean time per call
+W  op            median  p25    p75    direct ns/call  persist ns/call
+1  store         3.14    3.07   3.40   3,690,140       10,994,601
+2  store         3.73    3.63   3.92   1,889,087        6,991,836
+4  store         6.08    5.61   6.62   1,105,908        6,313,135
+8  store        10.67   10.54  11.08     560,798        6,063,428
+1  put_only      0.98    0.93   1.02   3,599,851        3,591,023
+2  put_only      0.95    0.85   1.01   2,977,098        2,648,219
+4  put_only      0.99    0.94   1.07   1,135,473        1,084,144
+8  put_only      0.99    0.97   1.00     581,364          568,637
+(control_same medians 0.99, 0.98, 0.99, 1.01 at W=1,2,4,8; control_slow 0.44, 0.42, 0.48, 0.54: the harness sees the 2 ms slowdown at every W)
+
+Wait events sampled on a separate connection every 10 ms during the persist side (counts are backend-samples; top entries only)
+W=8 persist (1774 ticks): Lock/tuple 7099, Lock/transactionid 1344, LWLock/WALWrite 1095, idle in transaction/ClientRead 918, IO/WALSync 685, no-wait 437
+W=8 direct  (674 ticks):  LWLock/WALWrite 1221, Timeout/PgSleep 603 (control_slow's own sleep), IO/WALSync 541, no-wait 318; NO Lock/tuple, NO Lock/transactionid
+W=4 persist: Lock/tuple 904, Lock/transactionid 697.   W=2 persist: Lock/transactionid 82, no Lock/tuple.   W=1 persist: none.
+
+Reading, against the three refutation tests in the design note
+1. Scaling. persist per call: 11.0 ms (W=1), 7.0, 6.3, 6.1 ms (W=8). W=8/W=1 = 0.55. The design said "refuted if below ~0.6", so on its letter
+   this test refutes the strict form of my prediction ("stays near its 1-worker value"). What the data show instead is a PLATEAU: W=4 to W=8 is
+   6.3 to 6.1 ms (0.96) while direct keeps falling (1.11 to 0.56 ms). The W=1 to W=2 drop is explained by W=1 also containing idle-in-transaction
+   client time (a second worker fills it); the sampler shows `idle in transaction/ClientRead` at W=1. A ceiling of about 6 ms per store, however many workers,
+   is a serial section; it is not proof of which lock.
+2. Wait events. At W=8 the persist side shows lock waits (Lock/tuple + Lock/transactionid = 8,443 of about 11,600 sampled non-idle backends in the six top entries, about 73
+   percent); the direct side shows none. This is the share the design said would support the hypothesis (above 20 percent). It does not name the lock row: pg_stat_activity
+   does not say which tuple.
+3. Control put_only (one plain put, no batch, same record, same direct upsert): ratio 0.99 at W=8, no growth. A single-statement write by the layer scales like the direct one.
+   So the cost is in the BATCH path, not in the layer's storage layout or per-statement overhead.
+
+Conclusion (what is measured, and what is not)
+Measured: the store-token cost at 8 workers comes from the batch path serialising on lock waits (about 6 ms per store at any W of 4 or more, lock waits only on the persist side, a plain put does not
+show it). Consistent with the code comment in crates/persistant-kv/src/on_relational.rs `batch_once` (a single `persistant_kv_batch` row taken FOR UPDATE by every batch), but I did not
+test that row by itself: a variant of the layer with the lock row removed was not run, so "that row is the cause" is the best-supported reading, not a measurement.
+NOT measured: a layer change (per-key or striped locking; the comment says the lock exists because racing batches deadlocked on missing rows, so removing it needs a design); MySQL; a request mix;
+store at W above 8; the quiet-box rerun (still blocked: load above).
+
+Raw pairs: workers, op, pair, direct ns/call, persist ns/call, ratio, cargo+rustc, claude, host CPU percent, container CPU
+1	Store	0	3193432	11826028	3.703	5 24 43	0.05%
+1	Store	1	3312640	12230340	3.692	5 24 69	0.07%
+1	Store	2	4252564	12555700	2.953	5 24 71	0.07%
+1	Store	3	3818524	11078052	2.901	5 24 65	0.03%
+1	Store	4	3308592	10377164	3.136	5 24 65	0.03%
+1	Store	5	3149532	10483284	3.329	5 24 68	0.02%
+1	Store	6	3163460	10605516	3.353	5 24 80	0.02%
+1	Store	7	3324432	10364280	3.118	5 24 65	0.05%
+1	Store	8	6217824	11342764	1.824	5 24 60	0.03%
+1	Store	9	3211828	10848676	3.378	5 24 53	0.05%
+1	Store	10	3582328	10978476	3.065	5 24 76	0.03%
+1	Store	11	3351852	10434888	3.113	5 24 55	0.05%
+1	Store	12	2953812	10031376	3.396	5 24 62	0.02%
+1	Store	13	5497680	11232292	2.043	6 24 65	0.03%
+1	Store	14	3013600	10530180	3.494	6 24 59	0.03%
+1	PutOnly	0	3036648	2981844	0.982	6 24 56	0.03%
+1	PutOnly	1	3465176	3163784	0.913	9 24 69	0.08%
+1	PutOnly	2	3668036	3725372	1.016	9 24 68	0.03%
+1	PutOnly	3	3639060	3212188	0.883	9 24 74	0.07%
+1	PutOnly	4	3293652	3303000	1.003	10 24 63	0.02%
+1	PutOnly	5	3372788	3249068	0.963	10 24 57	0.00%
+1	PutOnly	6	4539544	5538236	1.220	9 24 80	0.03%
+1	PutOnly	7	4480584	4272916	0.954	7 24 71	0.03%
+1	PutOnly	8	3331764	3378308	1.014	8 24 74	0.04%
+1	PutOnly	9	3455352	3414004	0.988	8 24 83	0.00%
+1	PutOnly	10	3407120	3165032	0.929	8 24 74	0.00%
+1	PutOnly	11	3510748	3245424	0.924	9 24 66	0.00%
+1	PutOnly	12	3279244	3606200	1.100	8 24 63	0.00%
+1	PutOnly	13	4150848	3689284	0.889	6 24 68	0.01%
+1	PutOnly	14	3367208	3920692	1.164	8 24 71	0.00%
+1	ControlSame	0	3392168	3408384	1.005	10 24 65	0.06%
+1	ControlSame	1	3346052	3264064	0.975	8 24 74	0.04%
+1	ControlSame	2	3159632	3485256	1.103	9 24 71	0.02%
+1	ControlSame	3	3297184	3258332	0.988	9 24 77	0.00%
+1	ControlSame	4	3567004	3544428	0.994	8 24 71	0.00%
+1	ControlSame	5	4108540	3708940	0.903	9 22 73	0.03%
+1	ControlSame	6	3356712	3694136	1.101	9 22 68	0.03%
+1	ControlSame	7	3611460	3404980	0.943	9 22 68	0.03%
+1	ControlSame	8	3615952	4072820	1.126	9 22 77	0.05%
+1	ControlSame	9	11691564	11181460	0.956	10 22 79	0.10%
+1	ControlSame	10	7198920	7858804	1.092	8 22 65	0.07%
+1	ControlSame	11	3847208	3900396	1.014	8 22 60	0.03%
+1	ControlSame	12	3331796	3244032	0.974	9 22 57	0.03%
+1	ControlSame	13	3545868	3106808	0.876	9 22 68	0.03%
+1	ControlSame	14	3356300	3288004	0.980	8 22 62	0.00%
+1	ControlSlow	0	7761764	3095804	0.399	10 22 52	0.00%
+1	ControlSlow	1	7184216	3338392	0.465	7 22 55	0.01%
+1	ControlSlow	2	7507308	3279328	0.437	6 22 69	0.06%
+1	ControlSlow	3	7451332	3240420	0.435	6 22 71	0.03%
+1	ControlSlow	4	9252240	3774416	0.408	6 22 76	0.06%
+1	ControlSlow	5	7450624	3334252	0.448	6 22 69	0.02%
+1	ControlSlow	6	7660684	3203904	0.418	6 22 63	0.00%
+1	ControlSlow	7	7502600	3242672	0.432	6 22 65	0.02%
+1	ControlSlow	8	7392732	3399704	0.460	6 22 55	0.00%
+1	ControlSlow	9	7243468	3133900	0.433	7 22 56	0.03%
+1	ControlSlow	10	7413640	4236308	0.571	9 22 71	0.02%
+1	ControlSlow	11	9315672	4541332	0.487	10 22 50	0.31%
+1	ControlSlow	12	7773232	3491668	0.449	10 22 52	0.30%
+1	ControlSlow	13	15638100	6381432	0.408	9 22 73	0.47%
+1	ControlSlow	14	13571404	7951136	0.586	9 22 53	0.48%
+2	Store	0	2753784	6068854	2.204	8 22 34	0.19%
+2	Store	1	1581062	6509864	4.117	8 22 63	0.23%
+2	Store	2	1979294	7272582	3.674	8 22 54	1.09%
+2	Store	3	2422330	11427590	4.718	7 24 77	0.23%
+2	Store	4	1666498	7621500	4.573	7 24 57	0.18%
+2	Store	5	1544520	5760462	3.730	7 24 51	0.19%
+2	Store	6	1837032	6619632	3.603	7 24 50	0.19%
+2	Store	7	1711194	6600856	3.857	7 24 54	0.22%
+2	Store	8	1971582	7147018	3.625	9 24 68	0.18%
+2	Store	9	1633210	6251082	3.827	8 22 31	0.16%
+2	Store	10	1483104	5813794	3.920	6 22 34	0.16%
+2	Store	11	1638034	5969172	3.644	8 22 87	0.27%
+2	Store	12	2101462	7624752	3.628	8 22 68	0.26%
+2	Store	13	2228868	7484002	3.358	6 22 66	0.20%
+2	Store	14	1784336	6706378	3.758	6 22 68	0.20%
+2	PutOnly	0	1484254	1441426	0.971	6 22 68	0.18%
+2	PutOnly	1	1672364	1589376	0.950	5 22 46	0.02%
+2	PutOnly	2	1524454	1503364	0.986	5 22 54	0.03%
+2	PutOnly	3	2095498	1774714	0.847	5 22 44	0.00%
+2	PutOnly	4	3772736	1853998	0.491	5 22 54	0.01%
+2	PutOnly	5	1897912	1777548	0.937	5 22 52	0.00%
+2	PutOnly	6	1670862	1621512	0.970	5 22 62	0.09%
+2	PutOnly	7	4176590	3249448	0.778	5 22 55	0.07%
+2	PutOnly	8	4459590	5260076	1.179	5 22 69	0.00%
+2	PutOnly	9	2933692	2448672	0.835	5 22 42	0.00%
+2	PutOnly	10	1658018	1744052	1.052	5 22 65	0.07%
+2	PutOnly	11	4809398	4506776	0.937	5 22 73	0.05%
+2	PutOnly	12	5488150	3809028	0.694	5 22 83	0.07%
+2	PutOnly	13	5414692	5479964	1.012	5 22 32	0.07%
+2	PutOnly	14	1598254	1663336	1.041	5 22 25	0.06%
+2	ControlSame	0	1514404	1480538	0.978	5 22 37	0.02%
+2	ControlSame	1	1643552	1647372	1.002	5 22 97	0.02%
+2	ControlSame	2	34988202	29678100	0.848	5 22 100	0.00%
+2	ControlSame	3	21443136	18458372	0.861	5 22 100	0.02%
+2	ControlSame	4	15182660	14568580	0.960	5 22 100	0.00%
+2	ControlSame	5	2649416	2187606	0.826	5 22 52	0.01%
+2	ControlSame	6	1442546	1796712	1.246	5 22 45	0.00%
+2	ControlSame	7	1501722	1532284	1.020	5 22 31	0.03%
+2	ControlSame	8	1550662	1497058	0.965	5 22 100	0.02%
+2	ControlSame	9	1594422	1932384	1.212	5 22 100	0.02%
+2	ControlSame	10	1570764	1642794	1.046	5 22 100	0.01%
+2	ControlSame	11	1555660	1531294	0.984	5 22 100	0.00%
+2	ControlSame	12	1623496	1590434	0.980	5 22 100	0.00%
+2	ControlSame	13	2141230	2323376	1.085	5 22 100	0.01%
+2	ControlSame	14	1536688	1507984	0.981	5 22 100	0.03%
+2	ControlSlow	0	5385782	2174240	0.404	5 22 100	0.03%
+2	ControlSlow	1	3899894	1553016	0.398	5 22 100	0.02%
+2	ControlSlow	2	3635630	1930148	0.531	5 22 100	0.02%
+2	ControlSlow	3	5574308	1554488	0.279	5 22 100	0.02%
+2	ControlSlow	4	5028206	2401362	0.478	5 22 100	0.03%
+2	ControlSlow	5	3751844	1538770	0.410	5 22 100	0.02%
+2	ControlSlow	6	3621588	1501302	0.415	5 22 100	0.03%
+2	ControlSlow	7	3660202	1564070	0.427	5 22 100	0.00%
+2	ControlSlow	8	3668932	1563826	0.426	5 22 100	0.00%
+2	ControlSlow	9	4769436	1828310	0.383	5 22 100	0.00%
+2	ControlSlow	10	3812192	1675972	0.440	5 22 100	0.03%
+2	ControlSlow	11	3663026	1801336	0.492	5 22 100	0.03%
+2	ControlSlow	12	3630772	1681350	0.463	5 22 100	0.03%
+2	ControlSlow	13	3824894	1606656	0.420	5 22 100	0.01%
+2	ControlSlow	14	4068250	1715400	0.422	5 22 100	0.00%
+4	Store	0	1356449	6545597	4.826	5 22 100	0.03%
+4	Store	1	1283012	6389376	4.980	5 22 100	0.02%
+4	Store	2	984326	6254433	6.354	5 22 100	0.02%
+4	Store	3	1036060	5897754	5.692	5 22 100	6.57%
+4	Store	4	951997	6184118	6.496	5 22 100	0.17%
+4	Store	5	995001	6051850	6.082	5 22 100	0.18%
+4	Store	6	1112413	6245313	5.614	5 22 100	0.18%
+4	Store	7	966484	5963781	6.171	5 22 100	0.18%
+4	Store	8	980069	6754547	6.892	5 22 100	0.18%
+4	Store	9	1001518	5974879	5.966	5 22 100	0.19%
+4	Store	10	1861547	6008216	3.228	5 22 100	0.18%
+4	Store	11	885017	7306138	8.255	5 22 100	1.01%
+4	Store	12	906615	6953208	7.669	5 22 100	0.17%
+4	Store	13	1349966	6093614	4.514	5 22 100	0.16%
+4	Store	14	918151	6074198	6.616	5 22 100	0.18%
+4	PutOnly	0	1971029	2104367	1.068	5 22 100	0.28%
+4	PutOnly	1	1610925	1834348	1.139	5 22 100	0.19%
+4	PutOnly	2	2136540	1507348	0.706	5 22 85	0.18%
+4	PutOnly	3	1221098	890035	0.729	5 22 42	0.15%
+4	PutOnly	4	898371	892936	0.994	5 22 48	0.22%
+4	PutOnly	5	1091872	848728	0.777	5 22 17	0.17%
+4	PutOnly	6	860949	1002494	1.164	5 22 50	0.03%
+4	PutOnly	7	912267	908910	0.996	5 22 59	0.07%
+4	PutOnly	8	878951	878412	0.999	5 22 39	0.02%
+4	PutOnly	9	919608	864543	0.940	5 22 45	0.02%
+4	PutOnly	10	888579	1019737	1.148	5 22 56	0.02%
+4	PutOnly	11	987576	893314	0.905	5 22 28	0.00%
+4	PutOnly	12	852753	863973	1.013	5 22 54	0.00%
+4	PutOnly	13	883185	839646	0.951	5 22 43	0.00%
+4	PutOnly	14	918396	913368	0.995	5 22 19	0.02%
+4	ControlSame	0	980630	938208	0.957	5 22 71	0.09%
+4	ControlSame	1	1026582	975605	0.950	5 22 71	0.03%
+4	ControlSame	2	1003910	996511	0.993	5 22 79	0.05%
+4	ControlSame	3	989553	978996	0.989	5 22 71	0.03%
+4	ControlSame	4	900945	908981	1.009	5 22 70	0.03%
+4	ControlSame	5	939502	949463	1.011	5 22 63	0.03%
+4	ControlSame	6	1571724	954534	0.607	5 22 57	0.02%
+4	ControlSame	7	905404	922989	1.019	5 22 51	0.00%
+4	ControlSame	8	874239	919162	1.051	5 22 64	6.71%
+4	ControlSame	9	912135	909669	0.997	5 22 48	0.02%
+4	ControlSame	10	876140	850214	0.970	5 22 59	0.02%
+4	ControlSame	11	920832	1068114	1.160	5 22 28	0.02%
+4	ControlSame	12	903887	946141	1.047	5 22 26	0.00%
+4	ControlSame	13	859434	829492	0.965	5 22 25	0.01%
+4	ControlSame	14	887285	878843	0.990	5 22 30	0.00%
+4	ControlSlow	0	1935545	921690	0.476	5 22 56	0.03%
+4	ControlSlow	1	1880259	910936	0.484	5 22 62	0.03%
+4	ControlSlow	2	1858542	941202	0.506	5 22 60	0.03%
+4	ControlSlow	3	1857759	940534	0.506	5 22 51	0.02%
+4	ControlSlow	4	2061203	967677	0.469	5 22 52	0.02%
+4	ControlSlow	5	1880066	875862	0.466	5 22 45	0.00%
+4	ControlSlow	6	1933059	905623	0.468	5 22 46	0.02%
+4	ControlSlow	7	1810933	898503	0.496	5 22 49	0.02%
+4	ControlSlow	8	1829662	881685	0.482	5 22 34	0.02%
+4	ControlSlow	9	1822954	876181	0.481	5 22 38	0.00%
+4	ControlSlow	10	1798818	895888	0.498	5 22 57	0.01%
+4	ControlSlow	11	1819053	913353	0.502	5 22 58	0.00%
+4	ControlSlow	12	1823975	948180	0.520	5 22 49	0.02%
+4	ControlSlow	13	1884596	934920	0.496	5 22 51	0.02%
+4	ControlSlow	14	12654264	862193	0.068	5 22 41	0.03%
+8	Store	0	537098	5726189	10.661	5 22 33	0.02%
+8	Store	1	539618	5978892	11.080	5 22 26	0.02%
+8	Store	2	601178	5849684	9.730	5 22 77	0.04%
+8	Store	3	616521	7002920	11.359	5 22 71	0.03%
+8	Store	4	580334	7230782	12.460	5 22 62	0.03%
+8	Store	5	596137	6284456	10.542	5 22 55	0.03%
+8	Store	6	573879	5997967	10.452	5 22 34	0.03%
+8	Store	7	542044	6000684	11.070	5 22 43	0.03%
+8	Store	8	588093	5970274	10.152	5 22 48	0.02%
+8	Store	9	561592	5993366	10.672	5 22 48	0.05%
+8	Store	10	541170	5910288	10.921	5 22 35	0.02%
+8	Store	11	533086	5974812	11.208	5 22 29	0.02%
+8	Store	12	526911	5710999	10.839	5 22 20	0.02%
+8	Store	13	538242	5663730	10.523	5 22 34	0.02%
+8	Store	14	536068	5656378	10.552	5 22 38	0.02%
+8	PutOnly	0	553368	553450	1.000	5 22 46	0.03%
+8	PutOnly	1	615540	595465	0.967	5 22 72	0.19%
+8	PutOnly	2	522570	535280	1.024	5 22 79	0.03%
+8	PutOnly	3	631318	616973	0.977	5 22 51	0.00%
+8	PutOnly	4	549941	542119	0.986	5 22 63	0.01%
+8	PutOnly	5	588044	548566	0.933	5 22 51	0.00%
+8	PutOnly	6	571348	523894	0.917	5 22 70	0.00%
+8	PutOnly	7	525016	525248	1.000	5 22 70	0.02%
+8	PutOnly	8	633657	612354	0.966	5 22 73	0.03%
+8	PutOnly	9	638952	608856	0.953	5 22 52	0.03%
+8	PutOnly	10	540190	567185	1.050	5 22 65	0.00%
+8	PutOnly	11	626628	578247	0.923	5 22 71	0.00%
+8	PutOnly	12	581738	586932	1.009	5 22 63	0.04%
+8	PutOnly	13	573526	566456	0.988	5 22 62	0.20%
+8	PutOnly	14	568630	568531	1.000	5 22 71	0.17%
+8	ControlSame	0	564640	571652	1.012	5 22 41	0.15%
+8	ControlSame	1	569956	539803	0.947	5 22 51	0.14%
+8	ControlSame	2	577004	593298	1.028	5 22 48	0.25%
+8	ControlSame	3	539988	542452	1.005	5 22 53	0.12%
+8	ControlSame	4	551562	552185	1.001	5 22 45	0.16%
+8	ControlSame	5	544276	550676	1.012	5 22 40	0.15%
+8	ControlSame	6	601592	576970	0.959	5 22 42	0.14%
+8	ControlSame	7	550018	559496	1.017	5 22 62	0.71%
+8	ControlSame	8	619483	614944	0.993	5 22 71	0.12%
+8	ControlSame	9	592100	584578	0.987	5 22 57	0.12%
+8	ControlSame	10	567961	563919	0.993	5 22 62	0.15%
+8	ControlSame	11	595742	578005	0.970	5 22 30	0.13%
+8	ControlSame	12	563085	593056	1.053	5 22 40	0.15%
+8	ControlSame	13	540714	575886	1.065	5 22 62	0.12%
+8	ControlSame	14	553616	595570	1.076	5 22 39	0.14%
+8	ControlSlow	0	1013321	566326	0.559	5 22 48	0.15%
+8	ControlSlow	1	3939274	545804	0.139	5 22 47	5.23%
+8	ControlSlow	2	1011424	540334	0.534	5 22 46	0.17%
+8	ControlSlow	3	1030204	650462	0.631	5 22 38	0.17%
+8	ControlSlow	4	1029564	556628	0.541	5 22 40	0.14%
+8	ControlSlow	5	1143934	565738	0.495	5 22 28	0.15%
+8	ControlSlow	6	1037450	531166	0.512	5 22 74	0.03%
+8	ControlSlow	7	1169489	644788	0.551	5 22 74	0.06%
+8	ControlSlow	8	1106776	654180	0.591	5 22 73	0.03%
+8	ControlSlow	9	1066000	815484	0.765	5 22 59	0.19%
+8	ControlSlow	10	1091476	644619	0.591	5 22 49	0.04%
+8	ControlSlow	11	1214722	529246	0.436	5 22 50	0.03%
+8	ControlSlow	12	1038622	549780	0.529	5 22 49	0.00%
+8	ControlSlow	13	1023534	548202	0.536	5 22 62	0.02%
+8	ControlSlow	14	1363394	528312	0.387	5 22 22	0.04%
