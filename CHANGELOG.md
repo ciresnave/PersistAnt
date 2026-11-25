@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.37 — Added: the five PostgreSQL benchmark result files that 0.18.36's notes cite
+
+Adds `bench/pg-store-contention.txt`, `bench/pg-store-lock-variant.txt`, `bench/pg-store-lock-stripes.txt`, `bench/pg-vs-auth-sql.txt` and `bench/pg-vs-auth-sql-concurrent.txt`: the recorded runs behind the row 30 and row 47 numbers in the 0.18.36 entry, which named them before they were in the tree. Result text only, no code, no test and no dependency change.
+
+What the files show (one run each, on a loaded box, a private `postgres:16` container): the first run (`pg-store-lock-variant.txt`) priced the batch lock with workers on different keys, so by itself it does not show that removing the lock is safe; the safety evidence is the `kv_batch_stripes.rs` tests in 0.18.36 (same key, overlapping keys, absent keys in opposite order, rollback and cut-off). Striped locks (`pg-store-lock-stripes.txt`): token store against the direct upsert at 1, 2, 4 and 8 workers is 4.26, 4.43, 3.88 and 3.87 times (was 3.1, 3.7, 6.1 and 10.7); the predicted 2.7 to 3.0 at 8 workers was NOT met, because the striped path takes extra lock statements, consistently across worker counts. MySQL and MariaDB keep the one lock row and are unmeasured.
+
+Mixed versions on one store: `open` in 0.18.36 inserts stripe rows 2..=256 into `persistant_kv_batch` (ON CONFLICT DO NOTHING). Reading the older code, an older persistant only touches row 1, so it should ignore the extra rows and a rollback leaves 255 harmless rows; this was NOT tested (no downgrade run). An older and a newer process on one store at the same time do not exclude each other (old locks row 1, new locks stripes), so the deadlock the single row prevented can return there; the deadlock retry is the backstop.
+
 ## 0.18.36 — Added: matrix/opendal-machine.tsv carries its first blob.durable rows (opendal-fs, opendal-fs-atomic)
 
 `matrix/opendal-machine.tsv` now holds the `blob.durable` rows from the `machine-durability-matrix` artifact of push run 45302864576 (main `e1ca6b9`, OpenDAL 0.59.5): `opendal-fs` and `opendal-fs-atomic` are `yes`, 3 of 3 power-cut cycles held with 300 of 300 keys acked, controls as required. Scope as the file states: a Hyper-V guest power cut on ext4. UNVERIFIED: the physical disk's volatile cache and host power loss, NTFS and other filesystems, torn sector writes, remote object stores. The file is copied from the artifact, not edited. No code change.

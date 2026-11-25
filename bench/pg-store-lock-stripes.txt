@@ -1,0 +1,300 @@
+Row 47: the striped batch locks, rerun of the same interleaved harness (design: bench/pg-store-lock-design.md; build commit after 2ec7b71)
+
+Measured: 2026-11-24, branch chore/portfolio-pin = main e1ca6b9 (0.18.35) + the row 47 commits; the UNCHANGED example crates/persistant-sqlx/examples/pg_store_contention.rs (Store / PutOnly / controls; no patch).
+Rerun:    PERSISTANT_TEST_DATABASE_URL=postgres://... PAIRS=15 cargo run -q --release -p persistant-sqlx --example pg_store_contention
+Where:    Windows 11 laptop, a private postgres:16 (16.16) container, loopback, 2000 rows, pool 16, 8 workers = join on one thread. Box NOT quiet (other lanes running; load per pair in the raw lines).
+
+Store ratio persistant/direct, median (p25-p75), n=15 pairs per cell
+W   before (one global lock row,   as built (stripes)   no lock row at all
+    bench/pg-store-contention.txt   this file            (variant, bench/pg-store-lock-variant.txt)
+1   3.14 (3.07-3.40)  [3.75 in the variant run]   4.26 (4.15-4.43)   3.28
+2   3.73                                          4.43 (4.34-4.47)   3.36
+4   6.08                                          3.88 (3.80-4.06)   2.85
+8   10.67 [12.46 in the variant run]              3.87 (3.73-3.94)   2.87
+Controls (same run): PutOnly 0.98 at every W; ControlSame 0.99, 0.99, 0.98, 0.99; ControlSlow 0.44, 0.46, 0.51, 0.52. persist ns/call at W=8: 2,364,178 (variant-run global lock: 9,691,653).
+Wait events at W=8, persist side: Lock/transactionid 154 samples (global lock: Lock/tuple 9,967 + Lock/transactionid 1,816 in the variant run); the lock waits are gone.
+
+Reading, against the prediction in the design note (a prediction, written before the build)
+- Prediction: W=8 near the no-lock figure (2.7 to 3.0), W=1 slightly above 3.75; refuted if W=8 stays above about 6x. Measured: W=8 is 3.87 (IQR 3.73-3.94): NOT inside 2.7-3.0, but far below the refutation line (6x), and no longer growing with workers
+  (4.43 at W=2, 3.88 at W=4, 3.87 at W=8). The plateau of the old lock (a ceiling of about 6 ms per store) is gone: 9.7 ms to 2.4 ms per call at W=8.
+- The remainder (3.87 against 2.87 with no lock row): each batch takes up to 3 lock statements (one per stripe of 3 distinct keys) in place of 1, one round trip each; that is also why W=1 rose from about 3.1-3.75 to 4.26. This reading (statement count) is
+  consistent with the numbers; it was not isolated by a further variant, and a stripe collision between two concurrent stores (about 3 percent per pair of batches at 256 stripes) was not separated from it.
+- Same-run controls held, as above. Box not quiet; one run.
+- NOT measured: MySQL or MariaDB (their batches keep the one row, unchanged, so this file says nothing about them); more than 8 workers; fewer stripe statements (a single statement taking several stripes in order is the next idea, not built, and needs its own order proof).
+
+Tests (crates/persistant-sqlx/tests/kv_batch_stripes.rs, PostgreSQL; committed red first at 2ec7b71, green after the build)
+ red before the build: disjoint_stripes_run_while_a_stripe_is_held, a_refused_or_cut_off_batch_leaves_no_partial_rows (a held stripe row did not hold a batch: with one global row it holds nothing). The other four passed on the old code (control).
+ green after: all 6. Existing suites after the build: kv_on_postgres, kv_on_sqlite, bounded, bounded_sqlite, persistant-kv unit tests, clippy -D warnings, fmt: all pass.
+ Mutation 1, batch_once locks stripe 1 for every key (the global lock again): disjoint_stripes... and a_refused_or_cut_off... FAIL.
+ Mutation 2, stripes locked in the batch's own op order instead of ascending: absent_keys_in_opposite_order... FAILS (198 deadlock retries over 200 rounds) and overlapping_keys_in_opposite_order... FAILS ("still a deadlock or serialisation victim after 16 attempts" returned as an error).
+ The earlier safety run priced the lock with workers on DIFFERENT keys (bench/pg-store-lock-variant.txt): it could not show removal safe. These tests (same key, overlapping keys in opposite order, absent keys in opposite order, rollback mid-batch, a cut-off batch) are what do.
+
+Raw output of the run:
+14 | persistant-migrate = { version = "0.18.35", path = "crates/persistant-migrate" }
+# postgres 16.16; 2000 rows; 25 calls per worker per side per pair; 5 warm-up pairs discarded; 15 measured pairs per cell; pool 16
+workers	op	pair	direct_ns_per_call	persist_ns_per_call	ratio	cargo_rustc	claude	host_cpu_pct	container_cpu
+1	Store	0	3752836	15983456	4.259	3 24 17	0.03%
+1	Store	1	3488888	15442536	4.426	3 24 13	0.03%
+1	Store	2	4008168	17128944	4.274	3 26 27	0.02%
+1	Store	3	4057184	15485516	3.817	3 26 23	0.02%
+1	Store	4	3786348	15774448	4.166	3 26 24	0.04%
+1	Store	5	3614296	15879580	4.394	3 26 14	0.04%
+1	Store	6	3658940	17286696	4.725	3 26 20	0.04%
+1	Store	7	3712860	15807028	4.257	3 26 20	0.04%
+1	Store	8	3499848	15542204	4.441	3 26 13	0.02%
+1	Store	9	4355168	16002680	3.674	3 26 20	0.05%
+1	Store	10	3459352	15646436	4.523	3 26 4	0.03%
+1	Store	11	3585708	14870808	4.147	3 26 9	0.04%
+1	Store	12	3364116	14637648	4.351	3 26 6	0.17%
+1	Store	13	3877600	14891432	3.840	3 26 5	0.20%
+1	Store	14	3721308	15402880	4.139	3 26 2	0.14%
+1	PutOnly	0	3452652	3373536	0.977	3 26 9	0.17%
+1	PutOnly	1	3557256	3347028	0.941	3 26 17	0.12%
+1	PutOnly	2	3463868	3814176	1.101	3 26 8	0.15%
+1	PutOnly	3	3929800	3374340	0.859	3 26 5	0.13%
+1	PutOnly	4	3488328	3689988	1.058	3 26 13	0.11%
+1	PutOnly	5	3435740	3453912	1.005	3 26 11	0.10%
+1	PutOnly	6	3442980	3375288	0.980	3 26 6	0.14%
+1	PutOnly	7	3400128	3402064	1.001	3 26 8	0.16%
+1	PutOnly	8	3376308	3253052	0.963	3 26 14	0.13%
+1	PutOnly	9	3502896	3239348	0.925	3 26 9	0.11%
+1	PutOnly	10	3500560	3774500	1.078	3 26 20	0.13%
+1	PutOnly	11	3449120	3399244	0.986	3 26 6	0.10%
+1	PutOnly	12	4790156	4001612	0.835	3 26 6	0.12%
+1	PutOnly	13	3981044	3747636	0.941	3 26 17	0.13%
+1	PutOnly	14	4153228	4184636	1.008	3 26 35	0.13%
+1	ControlSame	0	4053952	4147768	1.023	3 26 6	0.12%
+1	ControlSame	1	4435276	25742012	5.804	3 26 15	5.81%
+1	ControlSame	2	4167488	3893632	0.934	3 26 6	0.14%
+1	ControlSame	3	4141580	3764320	0.909	3 26 9	0.13%
+1	ControlSame	4	3394516	3487672	1.027	3 26 9	0.54%
+1	ControlSame	5	3682276	3355900	0.911	3 26 4	0.00%
+1	ControlSame	6	3458828	3534384	1.022	3 26 23	0.02%
+1	ControlSame	7	3511076	3411204	0.972	3 26 11	0.00%
+1	ControlSame	8	3350420	3394132	1.013	3 26 7	0.05%
+1	ControlSame	9	3479056	3712456	1.067	3 26 10	0.02%
+1	ControlSame	10	3446316	3406360	0.988	3 26 10	0.03%
+1	ControlSame	11	3566040	3486648	0.978	3 26 19	1.76%
+1	ControlSame	12	3658516	3567600	0.975	3 26 23	0.00%
+1	ControlSame	13	3624064	3413856	0.942	3 26 21	0.00%
+1	ControlSame	14	3454144	3431132	0.993	4 26 18	0.00%
+1	ControlSlow	0	7897340	3402904	0.431	4 26 3	0.02%
+1	ControlSlow	1	8077348	3507760	0.434	4 26 40	0.02%
+1	ControlSlow	2	9992336	3517340	0.352	3 26 20	0.00%
+1	ControlSlow	3	8022008	3471536	0.433	6 26 46	0.00%
+1	ControlSlow	4	8270408	3667492	0.443	9 26 38	0.00%
+1	ControlSlow	5	8030228	3417340	0.426	10 26 21	0.03%
+1	ControlSlow	6	8113032	3670900	0.452	10 26 44	0.03%
+1	ControlSlow	7	8518936	3742804	0.439	10 26 48	0.03%
+1	ControlSlow	8	8499820	3727512	0.439	10 26 53	0.03%
+1	ControlSlow	9	8970536	3636556	0.405	10 26 29	0.00%
+1	ControlSlow	10	8383440	3551672	0.424	10 26 40	0.01%
+1	ControlSlow	11	8450064	3672800	0.435	10 26 23	0.02%
+1	ControlSlow	12	8321132	3887192	0.467	9 26 22	0.02%
+1	ControlSlow	13	8288272	3787604	0.457	9 26 26	0.02%
+1	ControlSlow	14	8574120	3834708	0.447	8 26 27	0.00%
+2	Store	0	1848242	8191136	4.432	9 26 30	0.02%
+2	Store	1	1937966	8284430	4.275	9 26 46	0.03%
+2	Store	2	1920658	8475078	4.413	9 26 19	0.03%
+2	Store	3	1884932	8424486	4.469	8 26 29	0.04%
+2	Store	4	2024976	8436160	4.166	9 26 17	0.03%
+2	Store	5	1962516	8249638	4.204	9 26 19	0.02%
+2	Store	6	1838210	8357634	4.547	9 26 20	0.05%
+2	Store	7	1917342	8345220	4.352	9 26 26	0.02%
+2	Store	8	1901218	8505038	4.473	9 26 37	5.89%
+2	Store	9	2010338	8391672	4.174	8 26 26	0.02%
+2	Store	10	1847728	8310436	4.498	9 26 26	0.05%
+2	Store	11	1914312	9117476	4.763	9 26 56	0.02%
+2	Store	12	1862938	8330292	4.472	8 26 29	0.06%
+2	Store	13	1911958	8288392	4.335	8 26 40	0.02%
+2	Store	14	1915532	8536818	4.457	8 26 32	0.05%
+2	PutOnly	0	1970506	1874476	0.951	8 26 52	0.03%
+2	PutOnly	1	1952454	1920772	0.984	8 26 65	0.06%
+2	PutOnly	2	1967432	2076102	1.055	6 26 59	0.63%
+2	PutOnly	3	1885602	1917450	1.017	6 26 40	0.00%
+2	PutOnly	4	2088010	1944590	0.931	6 26 42	0.00%
+2	PutOnly	5	1839718	1836618	0.998	6 26 23	0.00%
+2	PutOnly	6	1893746	1897408	1.002	6 26 62	0.10%
+2	PutOnly	7	1909678	1824268	0.955	6 26 48	0.03%
+2	PutOnly	8	1906974	1839474	0.965	6 26 49	0.03%
+2	PutOnly	9	1848038	1857584	1.005	6 26 53	0.03%
+2	PutOnly	10	1874300	1864328	0.995	6 26 36	0.00%
+2	PutOnly	11	2096360	1844464	0.880	6 26 68	0.00%
+2	PutOnly	12	1876656	1815148	0.967	6 26 45	0.00%
+2	PutOnly	13	1886312	1825318	0.968	7 26 32	0.02%
+2	PutOnly	14	1856498	2956446	1.592	7 26 19	0.02%
+2	ControlSame	0	1823544	1874332	1.028	7 26 37	0.05%
+2	ControlSame	1	1893376	1823400	0.963	7 26 22	0.00%
+2	ControlSame	2	1843164	1917944	1.041	7 26 12	0.01%
+2	ControlSame	3	2021664	1825806	0.903	7 26 12	0.00%
+2	ControlSame	4	2847936	1841858	0.647	7 26 14	0.00%
+2	ControlSame	5	1912532	1865222	0.975	7 26 16	0.02%
+2	ControlSame	6	1921528	1920814	1.000	7 26 34	0.02%
+2	ControlSame	7	1976230	1850434	0.936	6 26 19	0.84%
+2	ControlSame	8	1901610	1897800	0.998	6 26 17	0.00%
+2	ControlSame	9	1852142	1821720	0.984	3 26 16	0.00%
+2	ControlSame	10	1839642	1865022	1.014	4 26 42	0.00%
+2	ControlSame	11	1986456	1957692	0.986	8 26 44	0.02%
+2	ControlSame	12	2949164	1899060	0.644	8 26 21	0.02%
+2	ControlSame	13	1901722	1967638	1.035	8 26 37	0.02%
+2	ControlSame	14	1949894	1942380	0.996	8 26 39	0.01%
+2	ControlSlow	0	4379542	1950826	0.445	7 26 74	0.02%
+2	ControlSlow	1	4440726	2035886	0.458	8 26 46	0.31%
+2	ControlSlow	2	4576476	1956176	0.427	8 26 70	0.23%
+2	ControlSlow	3	4395346	2002004	0.455	8 26 42	0.16%
+2	ControlSlow	4	4344070	2065714	0.476	9 26 42	0.19%
+2	ControlSlow	5	4244506	1988216	0.468	9 26 42	0.16%
+2	ControlSlow	6	4338512	1948124	0.449	10 26 37	0.17%
+2	ControlSlow	7	4269438	1898822	0.445	8 26 34	0.19%
+2	ControlSlow	8	4333944	1908514	0.440	11 26 62	0.15%
+2	ControlSlow	9	4432230	2069720	0.467	12 26 65	0.16%
+2	ControlSlow	10	4672572	2165322	0.463	12 26 76	0.23%
+2	ControlSlow	11	4701528	2457344	0.523	10 26 76	0.21%
+2	ControlSlow	12	4664078	2058840	0.441	11 26 62	0.24%
+2	ControlSlow	13	4455088	2182350	0.490	11 26 62	0.22%
+2	ControlSlow	14	5738944	2158594	0.376	11 26 66	0.23%
+4	Store	0	1193111	5017980	4.206	11 26 76	0.19%
+4	Store	1	1263495	4904835	3.882	10 26 77	0.19%
+4	Store	2	1237949	4790228	3.869	11 26 71	0.20%
+4	Store	3	1113916	4524807	4.062	8 26 84	0.20%
+4	Store	4	1133930	4423922	3.901	8 26 39	0.20%
+4	Store	5	1094951	5176335	4.727	8 26 59	0.43%
+4	Store	6	1133292	4445442	3.923	8 26 71	0.04%
+4	Store	7	1225674	4661858	3.804	8 26 68	0.04%
+4	Store	8	1162300	4383516	3.771	8 26 37	0.03%
+4	Store	9	1125915	4607927	4.093	8 26 77	0.03%
+4	Store	10	1140105	4420739	3.877	8 26 65	0.05%
+4	Store	11	1181681	4418258	3.739	8 26 55	0.06%
+4	Store	12	1704088	4364320	2.561	8 26 71	0.04%
+4	Store	13	1180637	4430864	3.753	8 26 80	0.06%
+4	Store	14	1168214	4458259	3.816	8 26 43	0.04%
+4	PutOnly	0	1152718	1115773	0.968	8 26 63	0.05%
+4	PutOnly	1	1164456	1195123	1.026	8 26 57	0.03%
+4	PutOnly	2	1150096	1158933	1.008	8 26 63	0.02%
+4	PutOnly	3	1152745	1132285	0.982	8 26 59	0.02%
+4	PutOnly	4	1163722	1140635	0.980	8 26 59	0.00%
+4	PutOnly	5	1182569	1327840	1.123	8 26 74	0.00%
+4	PutOnly	6	1140169	1169230	1.025	7 26 71	0.01%
+4	PutOnly	7	1173352	1095886	0.934	8 26 79	0.03%
+4	PutOnly	8	1112340	1174833	1.056	6 26 77	0.02%
+4	PutOnly	9	1110110	1083617	0.976	6 26 64	0.02%
+4	PutOnly	10	1160640	1134999	0.978	6 26 90	0.02%
+4	PutOnly	11	1183568	1106617	0.935	6 26 53	0.03%
+4	PutOnly	12	1166443	1126948	0.966	6 26 71	0.02%
+4	PutOnly	13	1200793	1222242	1.018	6 26 36	0.03%
+4	PutOnly	14	1174211	1238048	1.054	6 26 60	0.03%
+4	ControlSame	0	1099276	1111955	1.012	5 26 64	0.04%
+4	ControlSame	1	1147119	1119097	0.976	5 26 45	0.04%
+4	ControlSame	2	1137263	1129860	0.993	7 26 70	0.07%
+4	ControlSame	3	1135718	1107359	0.975	6 26 30	0.03%
+4	ControlSame	4	1124480	1151306	1.024	8 26 76	0.03%
+4	ControlSame	5	1169095	1124219	0.962	8 26 37	0.02%
+4	ControlSame	6	1096354	1112430	1.015	6 26 62	0.02%
+4	ControlSame	7	1669793	1099148	0.658	6 26 31	0.00%
+4	ControlSame	8	1144204	1087872	0.951	6 26 27	0.02%
+4	ControlSame	9	1117007	1081765	0.968	6 26 43	0.02%
+4	ControlSame	10	1146103	1111226	0.970	6 26 54	0.03%
+4	ControlSame	11	1117538	1092655	0.978	6 26 42	0.02%
+4	ControlSame	12	1043892	1053487	1.009	6 26 20	0.03%
+4	ControlSame	13	1125775	1203967	1.069	7 26 54	0.02%
+4	ControlSame	14	1142442	1133073	0.992	7 26 38	0.02%
+4	ControlSlow	0	2114151	1131550	0.535	9 26 43	0.02%
+4	ControlSlow	1	2262016	1138791	0.503	9 26 35	0.03%
+4	ControlSlow	2	2234286	1192012	0.534	8 26 45	0.00%
+4	ControlSlow	3	2497512	1220611	0.489	9 26 26	0.03%
+4	ControlSlow	4	2231062	1177906	0.528	6 26 66	0.03%
+4	ControlSlow	5	2177436	1089890	0.501	6 26 37	0.02%
+4	ControlSlow	6	2284037	1131304	0.495	5 26 97	0.02%
+4	ControlSlow	7	3334462	1813549	0.544	5 26 87	0.00%
+4	ControlSlow	8	2532896	1367992	0.540	5 26 84	0.03%
+4	ControlSlow	9	2188917	1115125	0.509	5 26 39	0.03%
+4	ControlSlow	10	2165214	1107315	0.511	5 26 30	0.08%
+4	ControlSlow	11	2143217	1084967	0.506	5 26 11	0.00%
+4	ControlSlow	12	2068458	1107849	0.536	5 26 23	0.00%
+4	ControlSlow	13	2081266	1049866	0.504	5 26 14	0.00%
+4	ControlSlow	14	2079663	1081652	0.520	5 26 12	0.03%
+8	Store	0	654408	2274092	3.475	5 26 27	0.02%
+8	Store	1	734656	2260346	3.077	5 26 40	0.02%
+8	Store	2	595032	2412355	4.054	5 26 60	0.03%
+8	Store	3	600486	2363959	3.937	5 26 20	0.03%
+8	Store	4	602578	2280854	3.785	5 26 23	0.04%
+8	Store	5	615026	2377739	3.866	5 26 57	0.03%
+8	Store	6	624849	2330942	3.730	5 26 31	0.03%
+8	Store	7	632344	2319086	3.667	5 26 54	0.04%
+8	Store	8	603460	2351377	3.896	5 26 74	0.03%
+8	Store	9	646330	2419340	3.743	5 26 63	0.03%
+8	Store	10	606609	2368955	3.905	5 26 62	0.04%
+8	Store	11	626534	2436864	3.889	5 26 42	0.02%
+8	Store	12	605278	2506376	4.141	5 26 51	0.02%
+8	Store	13	670016	2316210	3.457	5 26 50	0.03%
+8	Store	14	597814	2444180	4.089	5 26 42	0.03%
+8	PutOnly	0	634151	622532	0.982	5 31 74	0.18%
+8	PutOnly	1	639781	583256	0.912	5 30 52	0.15%
+8	PutOnly	2	589840	599044	1.016	5 30 48	0.16%
+8	PutOnly	3	594008	579757	0.976	5 30 54	0.13%
+8	PutOnly	4	611566	612190	1.001	5 30 31	0.16%
+8	PutOnly	5	658160	626911	0.953	5 30 65	0.16%
+8	PutOnly	6	588393	603237	1.025	5 30 39	0.15%
+8	PutOnly	7	874232	622172	0.712	5 30 68	0.14%
+8	PutOnly	8	669026	602958	0.901	5 30 66	0.15%
+8	PutOnly	9	614068	579992	0.945	5 30 34	0.12%
+8	PutOnly	10	624352	589985	0.945	5 30 39	0.11%
+8	PutOnly	11	609893	598720	0.982	5 30 51	0.19%
+8	PutOnly	12	588174	585280	0.995	5 30 45	0.15%
+8	PutOnly	13	605769	607152	1.002	5 30 39	0.14%
+8	PutOnly	14	639185	579059	0.906	5 30 79	0.17%
+8	ControlSame	0	605893	601714	0.993	5 30 48	0.20%
+8	ControlSame	1	592674	641248	1.082	5 30 53	0.13%
+8	ControlSame	2	603076	610377	1.012	5 30 37	0.20%
+8	ControlSame	3	605490	583418	0.964	5 30 34	0.16%
+8	ControlSame	4	571724	609293	1.066	5 30 31	6.05%
+8	ControlSame	5	611940	600470	0.981	4 28 42	0.13%
+8	ControlSame	6	615128	589664	0.959	4 28 35	0.13%
+8	ControlSame	7	615309	603164	0.980	4 28 47	0.16%
+8	ControlSame	8	580254	594912	1.025	4 28 26	0.13%
+8	ControlSame	9	601808	590901	0.982	4 28 31	0.25%
+8	ControlSame	10	595956	585948	0.983	4 28 32	0.00%
+8	ControlSame	11	616350	610843	0.991	4 28 21	0.00%
+8	ControlSame	12	577639	595311	1.031	4 28 70	0.00%
+8	ControlSame	13	578897	578251	0.999	4 28 25	0.05%
+8	ControlSame	14	600475	595736	0.992	4 28 34	0.61%
+8	ControlSlow	0	1166110	643684	0.552	4 28 61	0.02%
+8	ControlSlow	1	1166918	577896	0.495	4 28 57	0.02%
+8	ControlSlow	2	1131546	595433	0.526	4 28 30	0.03%
+8	ControlSlow	3	1127080	613356	0.544	4 28 65	0.00%
+8	ControlSlow	4	1149592	592530	0.515	4 28 61	0.02%
+8	ControlSlow	5	1153660	574974	0.498	4 28 26	0.02%
+8	ControlSlow	6	1148346	617018	0.537	4 28 37	0.02%
+8	ControlSlow	7	1131158	577998	0.511	4 28 27	0.00%
+8	ControlSlow	8	1156425	607142	0.525	4 28 19	4.86%
+8	ControlSlow	9	1138030	599624	0.527	4 28 58	0.02%
+8	ControlSlow	10	1165451	602825	0.517	4 28 51	0.02%
+8	ControlSlow	11	1167412	602491	0.516	4 28 57	0.02%
+8	ControlSlow	12	1164944	643934	0.553	4 28 48	0.00%
+8	ControlSlow	13	1191354	587372	0.493	4 28 72	0.00%
+8	ControlSlow	14	1194708	601026	0.503	4 28 15	0.00%
+# ratio = persistant / direct per pair (above 1: the key-value layer is slower)
+W=1	Store	n=15	median 4.259	p25 4.147	p75 4.426	min 3.674	max 4.725	mean direct 3729508 ns/call, mean persist 15718819 ns/call
+W=1	PutOnly	n=15	median 0.980	p25 0.941	p75 1.008	min 0.835	max 1.101	mean direct 3661604 ns/call, mean persist 3562024 ns/call
+W=1	ControlSame	n=15	median 0.988	p25 0.972	p75 1.023	min 0.909	max 5.804	mean direct 3694903 ns/call, mean persist 5049938 ns/call
+W=1	ControlSlow	n=15	median 0.435	p25 0.431	p75 0.447	min 0.352	max 0.467	mean direct 8427268 ns/call, mean persist 3633075 ns/call
+W=1	waits side=direct samples=526	active/-/-=247 ; active/IO/WALSync=77 ; active/Timeout/PgSleep=75 ; active/IO/WALWrite=17 ; active/Client/ClientRead=1
+W=1	waits side=persist samples=761	active/-/-=282 ; active/IO/WALSync=108 ; idle in transaction/Client/ClientRead=82 ; idle in transaction/-/-=75 ; active/IO/WALWrite=23
+W=2	Store	n=15	median 4.432	p25 4.335	p75 4.473	min 4.166	max 4.763	mean direct 1913258 ns/call, mean persist 8416260 ns/call
+W=2	PutOnly	n=15	median 0.984	p25 0.965	p75 1.005	min 0.880	max 1.592	mean direct 1923486 ns/call, mean persist 1952963 ns/call
+W=2	ControlSame	n=15	median 0.986	p25 0.963	p75 1.014	min 0.644	max 1.041	mean direct 2041374 ns/call, mean persist 1884741 ns/call
+W=2	ControlSlow	n=15	median 0.455	p25 0.445	p75 0.468	min 0.376	max 0.523	mean direct 4532467 ns/call, mean persist 2056430 ns/call
+W=2	waits side=direct samples=576	active/-/-=257 ; active/IO/WALSync=158 ; active/Timeout/PgSleep=154 ; active/LWLock/WALWrite=16 ; active/IO/WALWrite=10 ; active/Client/ClientRead=1
+W=2	waits side=persist samples=788	active/-/-=346 ; idle in transaction/Client/ClientRead=280 ; active/IO/WALSync=176 ; idle in transaction/-/-=116 ; active/LWLock/WALWrite=20 ; active/IO/WALWrite=18
+W=4	Store	n=15	median 3.877	p25 3.804	p75 4.062	min 2.561	max 4.727	mean direct 1203951 ns/call, mean persist 4601953 ns/call
+W=4	PutOnly	n=15	median 0.982	p25 0.976	p75 1.026	min 0.934	max 1.123	mean direct 1159195 ns/call, mean persist 1161534 ns/call
+W=4	ControlSame	n=15	median 0.978	p25 0.970	p75 1.012	min 0.658	max 1.069	mean direct 1161071 ns/call, mean persist 1114628 ns/call
+W=4	ControlSlow	n=15	median 0.511	p25 0.504	p75 0.535	min 0.489	max 0.544	mean direct 2292973 ns/call, mean persist 1187359 ns/call
+W=4	waits side=direct samples=646	active/IO/WALSync=439 ; active/-/-=323 ; active/Timeout/PgSleep=307 ; active/LWLock/WALWrite=198 ; active/IO/WALWrite=4 ; active/Client/ClientRead=3
+W=4	waits side=persist samples=885	idle in transaction/Client/ClientRead=811 ; active/IO/WALSync=467 ; active/-/-=464 ; active/LWLock/WALWrite=218 ; idle in transaction/-/-=126 ; active/Lock/transactionid=30
+W=8	Store	n=15	median 3.866	p25 3.730	p75 3.937	min 3.077	max 4.141	mean direct 627695 ns/call, mean persist 2364178 ns/call
+W=8	PutOnly	n=15	median 0.976	p25 0.945	p75 1.001	min 0.712	max 1.025	mean direct 636040 ns/call, mean persist 599483 ns/call
+W=8	ControlSame	n=15	median 0.992	p25 0.982	p75 1.025	min 0.959	max 1.082	mean direct 598174 ns/call, mean persist 599417 ns/call
+W=8	ControlSlow	n=15	median 0.517	p25 0.511	p75 0.537	min 0.493	max 0.553	mean direct 1156849 ns/call, mean persist 602487 ns/call
+W=8	waits side=direct samples=670	active/LWLock/WALWrite=910 ; active/Timeout/PgSleep=513 ; active/IO/WALSync=509 ; active/-/-=396 ; active/Client/ClientRead=9 ; active/LWLock/BufferContent=9
+W=8	waits side=persist samples=923	idle in transaction/Client/ClientRead=1985 ; active/LWLock/WALWrite=992 ; active/IO/WALSync=568 ; active/-/-=488 ; active/Lock/transactionid=154 ; idle in transaction/-/-=136
