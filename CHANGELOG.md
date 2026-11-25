@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.38 — Changed: the portfolio workflow pin in ci.yml moves to coderipper 467fd25 (0.48.1)
+
+The `portfolio` job in `.github/workflows/ci.yml` now calls coderipper's `portfolio.yml` at `467fd259d6d062cba4c5683d310f1a6f2b66e763` (coderipper#375, which installs 0.48.1) in place of `dc45e36` (0.47.21). CI configuration only: no code, test, dependency or version change. The PR's own `portfolio` check is the evidence that the new pin runs.
+
 ## 0.18.37 — Added: the five PostgreSQL benchmark result files that 0.18.36's notes cite
 
 Adds `bench/pg-store-contention.txt`, `bench/pg-store-lock-variant.txt`, `bench/pg-store-lock-stripes.txt`, `bench/pg-vs-auth-sql.txt` and `bench/pg-vs-auth-sql-concurrent.txt`: the recorded runs behind the row 30 and row 47 numbers in the 0.18.36 entry, which named them before they were in the tree. Result text only, no code, no test and no dependency change.
